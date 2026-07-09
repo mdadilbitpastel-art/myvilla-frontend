@@ -1,0 +1,116 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #635bff;
+  --color-primary-dark: #514bd8;
+  --color-ink: #2b2b34;
+  --color-heading: #6e7491;
+  --color-body: #4b4b57;
+  --color-muted: #8a8a95;
+  --color-page: #f7f7f8;
+  --color-line: #ececee;
+
+  --font-sans: var(--font-poppins), ui-sans-serif, system-ui, sans-serif;
+}
+
+:root {
+  --background: #f7f7f8;
+  --foreground: #2b2b34;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* thin custom scrollbar to keep the airy look */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #d4d4d8 transparent;
+}
+
+/* ------------------------------------------------------------------ */
+/* Animations                                                          */
+/* ------------------------------------------------------------------ */
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(28px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes kenBurns {
+  from {
+    transform: scale(1.08);
+  }
+  to {
+    transform: scale(1.18);
+  }
+}
+
+@keyframes floatY {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+/* Scroll-reveal: hidden until the .is-visible class is toggled by the
+   IntersectionObserver in <Reveal>. */
+.reveal {
+  opacity: 0;
+  transform: translateY(28px);
+  transition:
+    opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, transform;
+}
+.reveal.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.animate-fade-up {
+  animation: fadeUp 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.animate-fade-in {
+  animation: fadeIn 0.9s ease both;
+}
+.ken-burns {
+  animation: kenBurns 12s ease-in-out infinite alternate;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal,
+  .animate-fade-up,
+  .animate-fade-in,
+  .ken-burns {
+    animation: none !important;
+    transition: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
