@@ -3,10 +3,23 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import Image from "next/image";
+import Link from "next/link";
 import { X, ChevronDown } from "lucide-react";
-import { loginUser, registerUser } from "@/lib/api";
+import { loginUser, registerUser, getRememberedEmail } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
+import {
+  validateEmail,
+  validatePassword,
+  validateConfirm,
+  validatePhone,
+  validateRequired,
+  isValid,
+  type FieldErrors,
+} from "@/lib/validation";
 
 export type AuthMode = "signin" | "register";
+
+type RegisterField = "email" | "phone" | "country" | "password" | "confirm";
 
 const PANEL_IMAGE: Record<AuthMode, string> = {
   signin:
@@ -43,7 +56,7 @@ export default function AuthModal({
     // Clicking it does NOT close (only the cross does).
     <div className="fixed inset-x-0 bottom-0 top-[68px] z-[60] overflow-y-auto bg-black/50">
       <div className="flex min-h-full items-center justify-center p-4">
-        <div className="relative grid w-full max-w-[820px] overflow-hidden rounded-2xl bg-white shadow-2xl lg:grid-cols-[1.4fr_1fr]">
+        <div className="relative grid w-full max-w-[960px] overflow-hidden rounded-2xl bg-white shadow-2xl lg:grid-cols-[1.6fr_1fr]">
         {/* Left — image with cancel + heading (desktop only) */}
         <div className="relative hidden lg:block">
           <Image
@@ -63,7 +76,7 @@ export default function AuthModal({
             <span className="underline underline-offset-2">Cancel</span>
           </button>
 
-          <div className="absolute inset-x-7 bottom-8 text-white">
+          <div className="absolute inset-x-7 top-16 text-white">
             <h3 className="text-[28px] font-bold leading-tight">
               Book best villas around you
             </h3>
@@ -111,17 +124,36 @@ function SigninForm({
   onSwitch: () => void;
   onSuccess: () => void;
 }) {
-  const [email, setEmail] = useState("");
+  const { setUser } = useAuth();
+  // Pre-fill the last "remembered" email so returning users just type a password.
+  const savedEmail = getRememberedEmail();
+  const [email, setEmail] = useState(savedEmail);
   const [password, setPassword] = useState("");
+  const [remember, setRemember] = useState(true);
+  const [errors, setErrors] = useState<FieldErrors<"email" | "password">>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  function clear(field: "email" | "password") {
+    setErrors((e) => ({ ...e, [field]: undefined }));
+    setError("");
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+
+    const nextErrors: FieldErrors<"email" | "password"> = {
+      email: validateEmail(email),
+      password: password ? undefined : "Password is required.",
+    };
+    setErrors(nextErrors);
+    if (!isValid(nextErrors)) return;
+
     setLoading(true);
     try {
-      await loginUser(email.trim(), password);
+      const { user } = await loginUser(email.trim(), password, remember);
+      setUser(user);
       onSuccess();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
@@ -131,24 +163,33 @@ function SigninForm({
   }
 
   return (
-    <form onSubmit={submit}>
+    <form onSubmit={submit} noValidate>
       <h2 className="text-[20px] font-bold text-ink">Welcome back!</h2>
       <p className="mt-1 text-[13px] text-body">
         Continue with your MyVilla credentials
       </p>
 
       <div className="mt-5 space-y-4">
-        <Field label="Email" type="email" placeholder="someone@example.com" value={email} onChange={setEmail} />
-        <Field label="Password" type="password" placeholder="Use a strong password" value={password} onChange={setPassword} />
+        <Field label="Email" type="email" autoComplete="email" placeholder="someone@example.com" value={email} onChange={(v) => { setEmail(v); clear("email"); }} error={errors.email} />
+        <Field label="Password" type="password" autoComplete="current-password" placeholder="Use a strong password" value={password} onChange={(v) => { setPassword(v); clear("password"); }} error={errors.password} />
 
         <div className="flex items-center justify-between">
           <label className="flex cursor-pointer items-center gap-2 text-[13px] text-body">
-            <input type="checkbox" defaultChecked className="h-4 w-4 rounded accent-primary" />
+            <input
+              type="checkbox"
+              checked={remember}
+              onChange={(e) => setRemember(e.target.checked)}
+              className="h-4 w-4 rounded accent-primary"
+            />
             Remember me
           </label>
-          <button type="button" className="text-[13px] text-ink underline underline-offset-2">
+          <Link
+            href="/forgot-password"
+            onClick={onSuccess}
+            className="text-[13px] text-ink underline underline-offset-2"
+          >
             Forget Password?
-          </button>
+          </Link>
         </div>
 
         <FormError message={error} />
@@ -175,30 +216,45 @@ function RegisterForm({
   onSwitch: () => void;
   onSuccess: () => void;
 }) {
+  const { setUser } = useAuth();
   const [email, setEmail] = useState("");
   const [dialCode, setDialCode] = useState("+00");
   const [phone, setPhone] = useState("");
   const [country, setCountry] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [errors, setErrors] = useState<FieldErrors<RegisterField>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  function clear(field: RegisterField) {
+    setErrors((e) => ({ ...e, [field]: undefined }));
+    setError("");
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
-    if (password !== confirm) {
-      setError("Passwords do not match.");
-      return;
-    }
+
+    const nextErrors: FieldErrors<RegisterField> = {
+      email: validateEmail(email),
+      phone: validatePhone(phone),
+      country: validateRequired(country, "Country or region"),
+      password: validatePassword(password),
+      confirm: validateConfirm(password, confirm),
+    };
+    setErrors(nextErrors);
+    if (!isValid(nextErrors)) return;
+
     setLoading(true);
     try {
-      await registerUser({
+      const { user } = await registerUser({
         email: email.trim(),
         password,
-        phoneNumber: phone.trim() ? `${dialCode} ${phone.trim()}` : "",
+        phoneNumber: `${dialCode} ${phone.trim()}`,
         country,
       });
+      setUser(user);
       onSuccess();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
@@ -208,12 +264,12 @@ function RegisterForm({
   }
 
   return (
-    <form onSubmit={submit}>
+    <form onSubmit={submit} noValidate>
       <h2 className="text-[20px] font-bold text-ink">Welcome to MyVilla</h2>
       <p className="mt-1 text-[13px] text-body">Create your account to continue</p>
 
       <div className="mt-4 space-y-3">
-        <Field label="Email" type="email" placeholder="someone@example.com" value={email} onChange={setEmail} />
+        <Field label="Email" type="email" autoComplete="email" placeholder="someone@example.com" value={email} onChange={(v) => { setEmail(v); clear("email"); }} error={errors.email} />
 
         {/* Phone number with dial-code prefix */}
         <div>
@@ -226,11 +282,16 @@ function RegisterForm({
             />
             <input
               value={phone}
-              onChange={(e) => setPhone(e.target.value)}
+              onChange={(e) => { setPhone(e.target.value); clear("phone"); }}
               placeholder="000 - 0000 - 000"
-              className="flex-1 rounded-lg border border-line bg-white px-3.5 py-2.5 text-[14px] text-ink placeholder:text-muted focus:border-primary focus:outline-none"
+              inputMode="tel"
+              aria-invalid={!!errors.phone}
+              className={`flex-1 rounded-lg border bg-white px-3.5 py-2.5 text-[14px] text-ink placeholder:text-muted focus:outline-none ${
+                errors.phone ? "border-red-400 focus:border-red-400" : "border-line focus:border-primary"
+              }`}
             />
           </div>
+          {errors.phone && <p className="mt-1 text-[12px] text-red-600">{errors.phone}</p>}
         </div>
 
         {/* Country select */}
@@ -239,10 +300,11 @@ function RegisterForm({
           <div className="relative">
             <select
               value={country}
-              onChange={(e) => setCountry(e.target.value)}
-              className={`w-full appearance-none rounded-lg border border-line bg-white px-3.5 py-2.5 pr-10 text-[14px] focus:border-primary focus:outline-none ${
-                country ? "text-ink" : "text-muted"
-              }`}
+              onChange={(e) => { setCountry(e.target.value); clear("country"); }}
+              aria-invalid={!!errors.country}
+              className={`w-full appearance-none rounded-lg border bg-white px-3.5 py-2.5 pr-10 text-[14px] focus:outline-none ${
+                errors.country ? "border-red-400 focus:border-red-400" : "border-line focus:border-primary"
+              } ${country ? "text-ink" : "text-muted"}`}
             >
               <option value="">Choose country or region</option>
               {COUNTRIES.map((c) => (
@@ -256,10 +318,11 @@ function RegisterForm({
               className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-primary"
             />
           </div>
+          {errors.country && <p className="mt-1 text-[12px] text-red-600">{errors.country}</p>}
         </div>
 
-        <Field label="Password" type="password" placeholder="Use a strong password" value={password} onChange={setPassword} />
-        <Field label="Confirm Password" type="password" placeholder="Use a strong password" value={confirm} onChange={setConfirm} />
+        <Field label="Password" type="password" autoComplete="new-password" placeholder="Min 8 chars, letters & numbers" value={password} onChange={(v) => { setPassword(v); clear("password"); }} error={errors.password} />
+        <Field label="Confirm Password" type="password" autoComplete="new-password" placeholder="Re-enter your password" value={confirm} onChange={(v) => { setConfirm(v); clear("confirm"); }} error={errors.confirm} />
 
         <FormError message={error} />
         <SubmitButton loading={loading}>Register</SubmitButton>
@@ -310,12 +373,16 @@ function Field({
   placeholder,
   value,
   onChange,
+  error,
+  autoComplete,
 }: {
   label: string;
   type?: string;
   placeholder: string;
   value: string;
   onChange: (v: string) => void;
+  error?: string;
+  autoComplete?: string;
 }) {
   return (
     <div>
@@ -325,8 +392,15 @@ function Field({
         placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-lg border border-line bg-white px-3.5 py-2.5 text-[14px] text-ink placeholder:text-muted focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/15"
+        autoComplete={autoComplete}
+        aria-invalid={!!error}
+        className={`w-full rounded-lg border bg-white px-3.5 py-2.5 text-[14px] text-ink placeholder:text-muted focus:outline-none focus:ring-2 ${
+          error
+            ? "border-red-400 focus:border-red-400 focus:ring-red-500/15"
+            : "border-line focus:border-primary focus:ring-primary/15"
+        }`}
       />
+      {error && <p className="mt-1 text-[12px] text-red-600">{error}</p>}
     </div>
   );
 }

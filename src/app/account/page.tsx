@@ -1,0 +1,226 @@
+"use client";
+
+import Image from "next/image";
+import Link from "next/link";
+import { Star, BadgeCheck, Lock, ArrowRight } from "lucide-react";
+import { useAuth } from "@/lib/auth";
+import VillaCard from "@/components/home/VillaCard";
+import {
+  accountProfile,
+  myVillas,
+  accountReviews,
+  accountRating,
+} from "@/lib/account";
+
+export default function AccountPage() {
+  const { user, ready } = useAuth();
+
+  // Guard: only signed-in users can view their account.
+  if (!ready) return <div className="min-h-[60vh]" />;
+
+  if (!user) {
+    return (
+      <div className="mx-auto flex min-h-[60vh] w-full max-w-[1200px] flex-col items-center justify-center px-5 text-center">
+        <h1 className="text-[22px] font-bold text-ink">You&apos;re signed out</h1>
+        <p className="mt-2 text-[14px] text-body">
+          Please sign in to view your account.
+        </p>
+        <Link
+          href="/"
+          className="mt-5 rounded-lg bg-primary px-5 py-2.5 text-[14px] font-medium text-white transition-colors hover:bg-primary-dark"
+        >
+          Back to home
+        </Link>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto w-full max-w-[1200px] px-5 pb-16 pt-7 lg:px-7">
+      {/* Breadcrumb */}
+      <nav className="text-[14px] text-ink">
+        <Link href="/" className="underline underline-offset-2 hover:text-primary">
+          Home
+        </Link>
+        <span className="mx-1.5 text-muted">/</span>
+        <Link href="#" className="underline underline-offset-2 hover:text-primary">
+          Settings
+        </Link>
+        <span className="mx-1.5 text-muted">/</span>
+        <span className="text-muted">Profile</span>
+      </nav>
+
+      <h1 className="mt-5 text-[30px] font-bold text-ink">My Account</h1>
+
+      {/* Top: profile (left) + My Villas (right) */}
+      <div className="mt-8 grid grid-cols-1 gap-x-12 gap-y-12 lg:grid-cols-[360px_1fr]">
+        <ProfileCard />
+        <MyVillas />
+      </div>
+
+      {/* Bottom: reviews (left) + rating breakdown (right) */}
+      <div className="mt-14 grid grid-cols-1 gap-x-12 gap-y-10 lg:grid-cols-[1fr_360px]">
+        <ReviewsList />
+        <RatingBreakdown />
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Profile card                                                        */
+/* ------------------------------------------------------------------ */
+
+function ProfileCard() {
+  const p = accountProfile;
+  return (
+    <div>
+      {/* Avatar + name */}
+      <div className="flex items-center gap-4">
+        <div className="relative h-[74px] w-[74px] shrink-0 overflow-hidden rounded-full">
+          <Image src={p.avatar} alt={p.name} fill sizes="74px" className="object-cover" />
+        </div>
+        <div>
+          <p className="text-[18px] font-bold text-ink">{p.name}</p>
+          <p className="mt-0.5 text-[14px] text-muted">{p.joined}</p>
+        </div>
+      </div>
+
+      {/* Reviews + identity */}
+      <div className="mt-6 flex items-center gap-8">
+        <div className="flex items-center gap-2">
+          <Star size={18} className="fill-primary text-primary" />
+          <span className="text-[15px] font-semibold text-ink">
+            {p.reviewsCount} Reviews
+          </span>
+        </div>
+        {p.identityVerified && (
+          <div className="flex items-center gap-2">
+            <BadgeCheck size={18} className="fill-primary text-white" />
+            <span className="text-[15px] font-semibold text-ink">Identity Verified</span>
+          </div>
+        )}
+      </div>
+
+      {/* Details */}
+      <div className="mt-5 space-y-1 text-[14px] text-body">
+        <p>Response rate: {p.responseRate}</p>
+        <p>Response time: {p.responseTime}</p>
+        <p>Email: {p.email}</p>
+        <p>Phone: {p.phone}</p>
+      </div>
+
+      <button className="mt-6 rounded-lg border border-primary/50 px-5 py-2 text-[14px] font-medium text-primary transition-colors hover:bg-primary/5">
+        Edit Profile
+      </button>
+
+      {/* Payment protection note */}
+      <div className="mt-8 flex items-start gap-3">
+        <span className="flex h-8 w-7 shrink-0 items-center justify-center rounded-md bg-ink text-white">
+          <Lock size={14} />
+        </span>
+        <p className="max-w-[320px] text-[13px] leading-6 text-body">
+          To protect your payment, never transfer money or communicate outside of
+          the Airbnb website or app.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* My Villas                                                           */
+/* ------------------------------------------------------------------ */
+
+function MyVillas() {
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <h2 className="text-[18px] font-semibold text-heading">My Villas</h2>
+        <button className="flex items-center gap-1.5 text-[14px] text-muted transition-colors hover:text-ink">
+          View all <ArrowRight size={16} />
+        </button>
+      </div>
+
+      {/* Horizontal scroll row — cards bleed off the right edge like the mock. */}
+      <div className="mt-5 -mr-5 flex gap-5 overflow-x-auto pb-2 pr-5 lg:-mr-7 lg:pr-7">
+        {myVillas.map((villa, i) => (
+          <div key={i} className="w-[280px] shrink-0">
+            <VillaCard data={villa} variant="card" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Reviews list                                                        */
+/* ------------------------------------------------------------------ */
+
+function ReviewsList() {
+  return (
+    <div>
+      <h2 className="mb-7 text-[18px] font-semibold text-primary">Reviews</h2>
+      <div className="space-y-8">
+        {accountReviews.map((r, i) => (
+          <div key={i}>
+            <div className="flex items-center gap-3">
+              <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-full">
+                <Image src={r.avatar} alt={r.name} fill sizes="48px" className="object-cover" />
+              </div>
+              <div>
+                <p className="text-[15px] font-semibold text-heading">{r.name}</p>
+                <p className="mt-0.5 text-[13px] text-muted">{r.date}</p>
+                <div className="mt-1 flex gap-0.5">
+                  {Array.from({ length: 5 }).map((_, s) => (
+                    <Star key={s} size={13} className="fill-primary text-primary" />
+                  ))}
+                </div>
+              </div>
+            </div>
+            <p className="mt-3 text-[14px] leading-6 text-body">
+              {r.text}{" "}
+              <a href="#" className="font-medium text-primary underline underline-offset-2">
+                See more.
+              </a>
+            </p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Rating breakdown                                                    */
+/* ------------------------------------------------------------------ */
+
+function RatingBreakdown() {
+  const { rating, reviewsCount, breakdown } = accountRating;
+  return (
+    <div>
+      <div className="mb-5 flex items-center gap-2 text-[15px]">
+        <Star size={18} className="fill-primary text-primary" />
+        <span className="font-semibold text-ink">{rating} Rating</span>
+        <span className="text-muted">·</span>
+        <span className="text-ink">{reviewsCount} reviews</span>
+      </div>
+
+      <div className="space-y-3.5">
+        {breakdown.map((row) => (
+          <div key={row.label} className="flex items-center gap-4">
+            <span className="w-28 shrink-0 text-[14px] text-ink">{row.label}</span>
+            <div className="h-1 flex-1 overflow-hidden rounded-full bg-line">
+              <div
+                className="h-full rounded-full bg-primary"
+                style={{ width: `${(row.score / 5) * 100}%` }}
+              />
+            </div>
+            <span className="w-7 shrink-0 text-right text-[14px] text-ink">{row.score}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
