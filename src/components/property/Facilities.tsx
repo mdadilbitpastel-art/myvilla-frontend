@@ -8,6 +8,9 @@ import {
   AlarmSmoke,
   Tv,
   Wifi,
+  Waves,
+  Bath,
+  Flame,
   ChevronDown,
 } from "lucide-react";
 import type { Facility } from "@/lib/villa";
@@ -19,6 +22,9 @@ const ICONS = {
   smoke: AlarmSmoke,
   tv: Tv,
   wifi: Wifi,
+  pool: Waves,
+  jacuzzi: Bath,
+  bbq: Flame,
 } as const;
 
 // Extra facilities revealed by "See all facilities"

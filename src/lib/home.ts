@@ -1,6 +1,7 @@
 // Mock data for the landing page. Later served from the Django backend.
 
 export type VillaCardData = {
+  id?: string; // real villa id → links to its detail page
   image: string;
   city: string;
   country: string;

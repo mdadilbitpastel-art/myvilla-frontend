@@ -8,3 +8,13 @@
 [INFO] 2026-07-09T12:20:26Z SDK version mismatch: installed=0.0.187, required=0.0.182
 [INFO] 2026-07-09T12:20:26Z Hook input received (336 bytes)
 [INFO] 2026-07-09T12:21:18Z CLI exit code=0
+[INFO] 2026-07-10T07:44:51Z Hook script invoked
+[INFO] 2026-07-10T07:44:53Z PLUGIN_ROOT=/home/adil_alam/.claude/plugins/cache/a5c-ai/babysitter/4.0.152
+[INFO] 2026-07-10T07:45:49Z SDK version mismatch: installed=0.0.187, required=0.0.182
+[INFO] 2026-07-10T07:45:50Z Hook input received (358 bytes)
+[INFO] 2026-07-10T07:46:46Z CLI exit code=0
+[INFO] 2026-07-10T07:52:07Z Hook script invoked
+[INFO] 2026-07-10T07:52:08Z PLUGIN_ROOT=/home/adil_alam/.claude/plugins/cache/a5c-ai/babysitter/4.0.152
+[INFO] 2026-07-10T07:53:56Z SDK version mismatch: installed=0.0.187, required=0.0.182
+[INFO] 2026-07-10T07:53:56Z Hook input received (358 bytes)
+[INFO] 2026-07-10T07:54:44Z CLI exit code=0

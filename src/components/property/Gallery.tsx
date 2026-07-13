@@ -1,5 +1,3 @@
-import Image from "next/image";
-
 export default function Gallery({
   hero,
   thumbs,
@@ -11,13 +9,11 @@ export default function Gallery({
     <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
       {/* Hero image */}
       <div className="relative aspect-[4/3] overflow-hidden rounded-2xl md:aspect-auto md:h-[420px]">
-        <Image
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
           src={hero}
           alt="Villa main view"
-          fill
-          priority
-          sizes="(max-width: 768px) 100vw, 50vw"
-          className="object-cover"
+          className="absolute inset-0 h-full w-full object-cover"
         />
       </div>
 
@@ -28,12 +24,11 @@ export default function Gallery({
             key={i}
             className="relative aspect-square overflow-hidden rounded-2xl md:aspect-auto"
           >
-            <Image
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
               src={src}
               alt={`Villa view ${i + 2}`}
-              fill
-              sizes="(max-width: 768px) 50vw, 25vw"
-              className="object-cover"
+              className="absolute inset-0 h-full w-full object-cover"
             />
           </div>
         ))}

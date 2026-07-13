@@ -9,7 +9,10 @@ export type Facility = {
     | "calendar"
     | "smoke"
     | "tv"
-    | "wifi";
+    | "wifi"
+    | "pool"
+    | "jacuzzi"
+    | "bbq";
 };
 
 export type Review = {

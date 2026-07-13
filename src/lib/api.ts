@@ -145,6 +145,108 @@ export async function updateAvatar(image: string): Promise<AuthUser> {
   return data.updateAvatar;
 }
 
+/* ---- Villas / "Add your Villa" ---- */
+
+export type VillaInput = {
+  title: string;
+  propertyType?: string;
+  city?: string;
+  country?: string;
+  address?: string;
+  description?: string;
+  buildUpArea?: string;
+  bedrooms?: number;
+  bathrooms?: number;
+  guests?: number;
+  services?: string[];
+  pricePerNight?: number;
+  acceptedPayments?: string[];
+  payoutMethod?: string;
+  payoutAccount?: string;
+  images?: string[]; // base64 data-URLs
+};
+
+export type VillaPhoto = { id: string; url: string };
+
+export type Villa = {
+  id: string;
+  title: string;
+  propertyType: string;
+  city: string;
+  country: string;
+  address: string;
+  description: string;
+  buildUpArea: string;
+  bedrooms: number;
+  bathrooms: number;
+  guests: number;
+  services: string[];
+  pricePerNight: number;
+  acceptedPayments: string[];
+  payoutMethod: string;
+  payoutAccount: string;
+  images: string[];
+  photos: VillaPhoto[];
+  coverImage: string;
+  createdAt: string;
+};
+
+const VILLA_SELECTION = `
+  id title propertyType city country address description buildUpArea
+  bedrooms bathrooms guests services pricePerNight
+  acceptedPayments payoutMethod payoutAccount
+  images photos { id url } coverImage createdAt`;
+
+export async function createVilla(input: VillaInput): Promise<Villa> {
+  const data = await gql<{ createVilla: Villa }>(
+    `mutation CreateVilla($data: VillaInput!) {
+       createVilla(data: $data) { ${VILLA_SELECTION} }
+     }`,
+    { data: input }
+  );
+  return data.createVilla;
+}
+
+export async function updateVilla(
+  id: string,
+  input: VillaInput,
+  keepImageIds: string[]
+): Promise<Villa> {
+  const data = await gql<{ updateVilla: Villa }>(
+    `mutation UpdateVilla($id: ID!, $data: VillaInput!, $keepImageIds: [ID!]!) {
+       updateVilla(id: $id, data: $data, keepImageIds: $keepImageIds) { ${VILLA_SELECTION} }
+     }`,
+    { id, data: input, keepImageIds }
+  );
+  return data.updateVilla;
+}
+
+export async function fetchMyVillas(): Promise<Villa[]> {
+  const data = await gql<{ myVillas: Villa[] }>(
+    `query MyVillas { myVillas { ${VILLA_SELECTION} } }`,
+    {}
+  );
+  return data.myVillas;
+}
+
+// Public — all listed villas (landing page). No auth required.
+export async function fetchVillas(limit = 24): Promise<Villa[]> {
+  const data = await gql<{ villas: Villa[] }>(
+    `query Villas($limit: Int!) { villas(limit: $limit) { ${VILLA_SELECTION} } }`,
+    { limit }
+  );
+  return data.villas;
+}
+
+// Public — a single villa by id (detail page). Returns null if not found.
+export async function fetchVilla(id: string): Promise<Villa | null> {
+  const data = await gql<{ villa: Villa | null }>(
+    `query Villa($id: ID!) { villa(id: $id) { ${VILLA_SELECTION} } }`,
+    { id }
+  );
+  return data.villa;
+}
+
 export async function requestPasswordReset(email: string): Promise<void> {
   await gql<{ requestPasswordReset: boolean }>(
     `mutation RequestPasswordReset($email: String!) {

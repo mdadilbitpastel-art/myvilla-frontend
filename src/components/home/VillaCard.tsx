@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import Image from "next/image";
 import Link from "next/link";
 import { Heart } from "lucide-react";
 import type { VillaCardData } from "@/lib/home";
@@ -40,7 +39,7 @@ export default function VillaCard({
 
   return (
     <Link
-      href="/villa"
+      href={data.id ? `/villa/${data.id}` : "/villa"}
       className="group relative block overflow-hidden rounded-2xl bg-white shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl"
     >
       {/* Like button */}
@@ -61,12 +60,11 @@ export default function VillaCard({
 
       {variant === "overlay" ? (
         <div className="relative aspect-[4/5]">
-          <Image
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
             src={data.image}
             alt={`${data.city}, ${data.country}`}
-            fill
-            sizes="(max-width: 640px) 90vw, (max-width: 1024px) 45vw, 22vw"
-            className="object-cover transition-transform duration-500 group-hover:scale-105"
+            className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
           <div className="absolute inset-x-0 bottom-0 p-4 text-white">{meta}</div>
@@ -74,12 +72,11 @@ export default function VillaCard({
       ) : (
         <>
           <div className="relative aspect-[4/3]">
-            <Image
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
               src={data.image}
               alt={`${data.city}, ${data.country}`}
-              fill
-              sizes="(max-width: 640px) 90vw, (max-width: 1024px) 45vw, 22vw"
-              className="object-cover transition-transform duration-500 group-hover:scale-105"
+              className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
             />
           </div>
           <div className="p-4 text-ink">{meta}</div>
