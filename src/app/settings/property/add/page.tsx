@@ -1074,9 +1074,9 @@ function PaymentStep({
 
       <p className="mt-4 max-w-[640px] text-[12px] leading-5 text-body">
         By clicking the button below, I agree to the{" "}
-        <span className="text-ink underline underline-offset-2">Host&apos;s House Rules</span>,{" "}
-        <span className="text-ink underline underline-offset-2">MyVilla&apos;s COVID-19 Safety Requirements</span>{" "}
-        and the <span className="text-ink underline underline-offset-2">Guest Refund Policy.</span>
+        <Link href="/terms" className="text-ink underline underline-offset-2 hover:text-primary">Host&apos;s House Rules</Link>,{" "}
+        <Link href="/terms" className="text-ink underline underline-offset-2 hover:text-primary">MyVilla&apos;s COVID-19 Safety Requirements</Link>{" "}
+        and the <Link href="/terms" className="text-ink underline underline-offset-2 hover:text-primary">Guest Refund Policy.</Link>
       </p>
     </div>
   );

@@ -1,20 +1,45 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Star, ChevronDown } from "lucide-react";
 import type { Villa } from "@/lib/villa";
+import { useAuth } from "@/lib/auth";
 
 export default function ReservationCard({
   pricing,
   rating,
+  villaId,
+  ownerId,
 }: {
   pricing: Villa["pricing"];
   rating: number;
+  /** real villa id — omit for the static demo page (Reserve disabled) */
+  villaId?: string;
+  /** owner's user id — used to block booking your own villa */
+  ownerId?: string;
 }) {
+  const router = useRouter();
+  const { user, openAuth } = useAuth();
   const [guests, setGuests] = useState(pricing.guests);
   const [open, setOpen] = useState(false);
 
   const GUEST_OPTIONS = ["1 guest", "2 guests", "3 guests", "4 guests"];
+
+  const guestCount = parseInt(guests, 10) || 1;
+  const isOwner = !!user && !!ownerId && String(user.id) === String(ownerId);
+  // Default 3-night stay; the Confirm Payment page lets the user review it.
+  const NIGHTS = 3;
+
+  function onReserve() {
+    if (!villaId) return; // demo page — nothing to book
+    if (!user) {
+      openAuth("signin");
+      return;
+    }
+    if (isOwner) return;
+    router.push(`/villa/${villaId}/book?guests=${guestCount}&nights=${NIGHTS}`);
+  }
 
   return (
     <div className="rounded-2xl border border-line bg-white p-6 shadow-[0_8px_30px_rgba(0,0,0,0.06)]">
@@ -77,9 +102,22 @@ export default function ReservationCard({
       </div>
 
       {/* Reserve button */}
-      <button className="mt-4 w-full rounded-xl bg-primary py-3.5 text-[15px] font-semibold text-white transition-colors hover:bg-primary-dark">
-        Reserve
+      <button
+        onClick={onReserve}
+        disabled={isOwner}
+        className={`mt-4 w-full rounded-xl py-3.5 text-[15px] font-semibold text-white transition-colors ${
+          isOwner
+            ? "cursor-not-allowed bg-muted/60"
+            : "bg-primary hover:bg-primary-dark"
+        }`}
+      >
+        {isOwner ? "This is your villa" : "Reserve"}
       </button>
+      {isOwner && (
+        <p className="mt-2 text-center text-[12px] text-muted">
+          You can&apos;t book your own villa.
+        </p>
+      )}
 
       {/* Price breakdown */}
       <div className="mt-6 space-y-3 text-[15px]">

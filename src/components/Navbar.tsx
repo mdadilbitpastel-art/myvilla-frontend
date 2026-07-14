@@ -2,19 +2,29 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { usePathname } from "next/navigation";
 import { Menu, X, ChevronDown, Settings, LogOut } from "lucide-react";
 import AuthModal from "@/components/auth/AuthModal";
 import { useAuth } from "@/lib/auth";
 
 const NAV_LINKS = [
-  { label: "Home", href: "#", active: true },
-  { label: "Villas", href: "#" },
+  { label: "Home", href: "/" },
+  { label: "Villas", href: "/search" },
   { label: "Packages", href: "#" },
   { label: "Promotions", href: "#" },
   { label: "Help", href: "#" },
   { label: "Blog", href: "#" },
   { label: "Signin", href: "#" },
 ];
+
+// Which nav link is active for the current route.
+function isActive(href: string, pathname: string): boolean {
+  if (href === "#") return false;
+  if (href === "/") return pathname === "/";
+  // "Villas" (/search) also stays active while browsing a villa's pages.
+  if (href === "/search") return pathname === "/search" || pathname.startsWith("/villa");
+  return pathname === href || pathname.startsWith(href + "/");
+}
 
 export function Logo({ className = "" }: { className?: string }) {
   return (
@@ -31,6 +41,7 @@ export default function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
   const { user, signOut, authMode, openAuth, closeAuth } = useAuth();
   const loggedIn = !!user;
+  const pathname = usePathname();
 
   function handleLogout() {
     setMenuOpen(false);
@@ -67,7 +78,7 @@ export default function Navbar() {
                   key={link.label}
                   href={link.href}
                   className={`text-[15px] transition-colors hover:text-ink ${
-                    link.active ? "font-medium text-ink" : "text-muted"
+                    isActive(link.href, pathname) ? "font-medium text-ink" : "text-muted"
                   }`}
                 >
                   {link.label}
@@ -159,7 +170,7 @@ export default function Navbar() {
                   href={link.href}
                   onClick={() => setOpen(false)}
                   className={`py-3 text-[15px] ${
-                    link.active ? "font-medium text-ink" : "text-muted"
+                    isActive(link.href, pathname) ? "font-medium text-ink" : "text-muted"
                   }`}
                 >
                   {link.label}

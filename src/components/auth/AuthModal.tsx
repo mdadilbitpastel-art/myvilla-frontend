@@ -329,9 +329,13 @@ function RegisterForm({
 
         <p className="text-center text-[11px] leading-5 text-muted">
           By clicking <span className="text-primary">Register</span> I agree to the{" "}
-          <span className="font-semibold text-ink underline underline-offset-2">
+          <Link
+            href="/terms"
+            onClick={onSuccess}
+            className="font-semibold text-ink underline underline-offset-2 hover:text-primary"
+          >
             Terms &amp; Condition
-          </span>{" "}
+          </Link>{" "}
           of MyVilla
         </p>
 

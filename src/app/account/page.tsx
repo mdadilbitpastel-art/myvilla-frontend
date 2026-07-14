@@ -1,16 +1,33 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { Star, BadgeCheck, Lock, ArrowRight } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import VillaCard from "@/components/home/VillaCard";
+import { fetchMyVillas, type Villa } from "@/lib/api";
+import type { VillaCardData } from "@/lib/home";
 import {
   accountProfile,
-  myVillas,
   accountReviews,
   accountRating,
 } from "@/lib/account";
+
+const FALLBACK_IMG =
+  "https://images.unsplash.com/photo-1571896349842-33c89424de2d?auto=format&fit=crop&w=600&q=80";
+
+function villaToCard(v: Villa): VillaCardData {
+  return {
+    id: v.id,
+    image: v.photos[0]?.url || v.coverImage || FALLBACK_IMG,
+    city: v.city || v.title,
+    country: v.country || v.propertyType || "",
+    price: v.pricePerNight,
+    distance: v.propertyType || "Villa",
+    dates: `${v.bedrooms} BR · ${v.guests} guests`,
+  };
+}
 
 export default function AccountPage() {
   const { user, ready } = useAuth();
@@ -133,23 +150,54 @@ function ProfileCard() {
 /* ------------------------------------------------------------------ */
 
 function MyVillas() {
+  const { user, ready } = useAuth();
+  const [villas, setVillas] = useState<Villa[] | null>(null);
+
+  useEffect(() => {
+    if (ready && user) {
+      fetchMyVillas()
+        .then(setVillas)
+        .catch(() => setVillas([]));
+    }
+  }, [ready, user]);
+
   return (
     <div>
       <div className="flex items-center justify-between">
         <h2 className="text-[18px] font-semibold text-heading">My Villas</h2>
-        <button className="flex items-center gap-1.5 text-[14px] text-muted transition-colors hover:text-ink">
+        <Link
+          href="/settings/property"
+          className="flex items-center gap-1.5 text-[14px] text-muted transition-colors hover:text-ink"
+        >
           View all <ArrowRight size={16} />
-        </button>
+        </Link>
       </div>
 
-      {/* Horizontal scroll row — cards bleed off the right edge like the mock. */}
-      <div className="mt-5 -mr-5 flex gap-5 overflow-x-auto pb-2 pr-5 lg:-mr-7 lg:pr-7">
-        {myVillas.map((villa, i) => (
-          <div key={i} className="w-[280px] shrink-0">
-            <VillaCard data={villa} variant="card" />
-          </div>
-        ))}
-      </div>
+      {villas === null ? (
+        <p className="mt-5 py-8 text-[14px] text-muted">Loading your villas…</p>
+      ) : villas.length === 0 ? (
+        <div className="mt-5 flex flex-col items-start rounded-xl border border-dashed border-line px-5 py-8">
+          <p className="text-[15px] font-semibold text-ink">No villas yet</p>
+          <p className="mt-1 text-[13px] text-muted">
+            You haven&apos;t listed any villa.
+          </p>
+          <Link
+            href="/settings/property/add"
+            className="mt-4 rounded-lg bg-primary px-4 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-primary-dark"
+          >
+            Add Property
+          </Link>
+        </div>
+      ) : (
+        /* Horizontal scroll row — cards bleed off the right edge like the mock. */
+        <div className="mt-5 -mr-5 flex gap-5 overflow-x-auto pb-2 pr-5 lg:-mr-7 lg:pr-7">
+          {villas.map((v) => (
+            <div key={v.id} className="w-[280px] shrink-0">
+              <VillaCard data={villaToCard(v)} variant="card" />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

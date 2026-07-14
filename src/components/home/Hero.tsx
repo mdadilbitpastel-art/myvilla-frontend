@@ -1,15 +1,40 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import Image from "next/image";
-import { MapPin, CircleUserRound, Calendar, ChevronDown } from "lucide-react";
+import { MapPin, CircleUserRound, Calendar } from "lucide-react";
 import { heroSlides } from "@/lib/home";
 
 const TABS = ["Resort", "Hotels", "Rent"];
+const GUEST_OPTIONS = [1, 2, 3, 4, 5, 6, 8, 10];
+
+// Today as a local YYYY-MM-DD string (avoids the UTC off-by-one of toISOString).
+function todayStr(): string {
+  const d = new Date();
+  const p = (x: number) => String(x).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+// Open the native date calendar when the field is clicked/focused (not just the icon).
+function openPicker(e: React.SyntheticEvent<HTMLInputElement>) {
+  const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
+  el.showPicker?.();
+}
 
 export default function Hero() {
+  const router = useRouter();
   const [slide, setSlide] = useState(0);
   const [tab, setTab] = useState("Resort");
+
+  // Search widget state
+  const [location, setLocation] = useState("");
+  const [guests, setGuests] = useState(0);
+  const [checkIn, setCheckIn] = useState("");
+  const [checkOut, setCheckOut] = useState("");
+  // Set after mount so server/client first render match (no hydration mismatch).
+  const [today, setToday] = useState("");
+  useEffect(() => setToday(todayStr()), []);
 
   // Auto-advance the background carousel.
   useEffect(() => {
@@ -18,6 +43,18 @@ export default function Hero() {
     }, 6000);
     return () => clearInterval(id);
   }, []);
+
+  function onSearch() {
+    const sp = new URLSearchParams();
+    if (location.trim()) sp.set("q", location.trim());
+    if (guests) sp.set("guests", String(guests));
+    if (checkIn) sp.set("checkIn", checkIn);
+    if (checkOut) sp.set("checkOut", checkOut);
+    // The "Hotels" tab narrows to hotel-type listings; Resort/Rent show all.
+    if (tab === "Hotels") sp.set("category", "Hotel");
+    const qs = sp.toString();
+    router.push(qs ? `/search?${qs}` : "/search");
+  }
 
   return (
     <section className="relative h-[560px] w-full overflow-hidden sm:h-[600px]">
@@ -79,14 +116,63 @@ export default function Hero() {
 
           {/* Bar */}
           <div className="flex flex-col rounded-lg bg-white p-3 shadow-xl sm:flex-row sm:items-center">
-            <Field icon={<MapPin size={18} className="text-primary" />} label="Location" value="New Orland" />
+            <Field icon={<MapPin size={18} className="text-primary" />} label="Location">
+              <input
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && onSearch()}
+                placeholder="Where are you going?"
+                className="w-full bg-transparent text-[16px] font-semibold text-[#384652] outline-none placeholder:font-normal placeholder:text-[#a1a1a2]"
+              />
+            </Field>
             <Divider />
-            <Field icon={<CircleUserRound size={18} className="text-primary" />} label="Guest" value="6 Guest" />
+            <Field icon={<CircleUserRound size={18} className="text-primary" />} label="Guest">
+              <select
+                value={guests}
+                onChange={(e) => setGuests(parseInt(e.target.value, 10))}
+                className="w-full appearance-none bg-transparent text-[16px] font-semibold text-[#384652] outline-none"
+              >
+                <option value={0}>Any guests</option>
+                {GUEST_OPTIONS.map((g) => (
+                  <option key={g} value={g}>
+                    {g}+ guests
+                  </option>
+                ))}
+              </select>
+            </Field>
             <Divider />
-            <Field icon={<Calendar size={18} className="text-primary" />} label="Check In" value="17 July 2021" />
+            <Field icon={<Calendar size={18} className="text-primary" />} label="Check In">
+              <input
+                type="date"
+                value={checkIn}
+                min={today || undefined}
+                onClick={openPicker}
+                onFocus={openPicker}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setCheckIn(val);
+                  // If check-out is now before check-in, clear it.
+                  if (checkOut && val && checkOut < val) setCheckOut("");
+                }}
+                className="w-full cursor-pointer bg-transparent text-[15px] font-semibold text-[#384652] outline-none"
+              />
+            </Field>
             <Divider />
-            <Field icon={<Calendar size={18} className="text-primary" />} label="Check Out" value="25 July 2021" />
-            <button className="mt-2 flex shrink-0 items-center justify-center rounded-lg bg-primary px-8 py-3 text-[15px] font-medium text-white transition-colors hover:bg-primary-dark sm:mt-0 sm:ml-2">
+            <Field icon={<Calendar size={18} className="text-primary" />} label="Check Out">
+              <input
+                type="date"
+                value={checkOut}
+                min={checkIn || today || undefined}
+                onClick={openPicker}
+                onFocus={openPicker}
+                onChange={(e) => setCheckOut(e.target.value)}
+                className="w-full cursor-pointer bg-transparent text-[15px] font-semibold text-[#384652] outline-none"
+              />
+            </Field>
+            <button
+              onClick={onSearch}
+              className="mt-2 flex shrink-0 items-center justify-center rounded-lg bg-primary px-8 py-3 text-[15px] font-medium text-white transition-colors hover:bg-primary-dark sm:mt-0 sm:ml-2"
+            >
               Search
             </button>
           </div>
@@ -117,23 +203,19 @@ function Divider() {
 function Field({
   icon,
   label,
-  value,
+  children,
 }: {
   icon: React.ReactNode;
   label: string;
-  value: string;
+  children: React.ReactNode;
 }) {
   return (
-    <button className="flex flex-1 flex-col justify-center rounded-lg px-4 py-2.5 text-left transition-colors hover:bg-page">
+    <label className="flex flex-1 cursor-text flex-col justify-center rounded-lg px-4 py-2.5 text-left transition-colors hover:bg-page">
       <span className="mb-1 text-[15px] text-[#a1a1a2]">{label}</span>
-      {/* value + chevron on the same row so the arrow aligns with the text */}
-      <span className="flex items-center justify-between gap-3">
-        <span className="flex min-w-0 items-center gap-2 text-[16px] font-semibold text-[#384652]">
-          {icon}
-          <span className="truncate">{value}</span>
-        </span>
-        <ChevronDown size={20} className="shrink-0 text-[#384652]" />
+      <span className="flex min-w-0 items-center gap-2">
+        <span className="shrink-0">{icon}</span>
+        {children}
       </span>
-    </button>
+    </label>
   );
 }

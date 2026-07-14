@@ -16,7 +16,23 @@ export default function VillaCard({
 
   const isCard = variant === "card";
 
-  const meta = (
+  const location = [data.city, data.country].filter(Boolean);
+
+  const meta = data.title ? (
+    // Title-first layout (used by search results): villa name is the heading.
+    <>
+      <p className="truncate text-[14px] font-semibold text-ink">{data.title}</p>
+      {location.length > 0 && (
+        <p className="mt-0.5 truncate text-[12px] text-muted">
+          {location.join(", ")}
+        </p>
+      )}
+      <div className="mt-1.5 flex items-center justify-between text-[12px] text-muted">
+        <span>{data.distance}</span>
+        <span className="font-semibold text-ink">${data.price}/night</span>
+      </div>
+    </>
+  ) : (
     <>
       <div className="flex items-center justify-between gap-2">
         <p className={`text-[14px] font-semibold ${isCard ? "text-ink" : ""}`}>

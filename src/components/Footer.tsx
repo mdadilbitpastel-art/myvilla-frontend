@@ -1,5 +1,11 @@
 import Link from "next/link";
 
+// Footer labels that link to real pages (others are placeholders → "#").
+const LINK_HREFS: Record<string, string> = {
+  "Privacy policy": "/privacy",
+  "Terms of service": "/terms",
+};
+
 const COLUMNS = [
   {
     title: "About",
@@ -56,7 +62,7 @@ export default function Footer() {
                 {col.links.map((link) => (
                   <li key={link}>
                     <Link
-                      href="#"
+                      href={LINK_HREFS[link] || "#"}
                       className="text-[14px] text-muted transition-colors hover:text-primary"
                     >
                       {link}

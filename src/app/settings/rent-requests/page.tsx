@@ -1,13 +1,25 @@
 "use client";
 
-import Image from "next/image";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ChevronDown } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import SettingsSidebar from "@/components/settings/SettingsSidebar";
-import { rentRequests, type RentRequest } from "@/lib/rentRequests";
+import { fetchVillaBookings, respondBooking, type Booking } from "@/lib/api";
 
 const COLUMNS = ["Tenant", "Property", "Stay Duration", "No. of Guests", "Status"];
+
+const MONTHS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+function fmtStay(checkIn: string, checkOut: string): string {
+  const a = new Date(checkIn);
+  const b = new Date(checkOut);
+  const one = (d: Date) => `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+  return `${one(a)}-${one(b)}`;
+}
 
 function SortDropdown() {
   return (
@@ -21,32 +33,64 @@ function SortDropdown() {
   );
 }
 
-function RequestRow({ req }: { req: RentRequest }) {
+function TenantAvatar({ name, avatar }: { name: string; avatar: string }) {
+  const initial = (name || "?").trim().charAt(0).toUpperCase();
+  if (avatar) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={avatar}
+        alt={name}
+        className="h-8 w-8 shrink-0 rounded-full object-cover"
+      />
+    );
+  }
   return (
-    <div className="grid grid-cols-[1.4fr_1.2fr_1.1fr_1fr_0.8fr] items-center rounded-lg border border-line px-4 py-3 text-[13px]">
+    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[13px] font-semibold text-primary">
+      {initial}
+    </div>
+  );
+}
+
+function RequestRow({
+  req,
+  onRespond,
+  responding,
+}: {
+  req: Booking;
+  onRespond: (id: string) => void;
+  responding: boolean;
+}) {
+  const cancelled = req.status === "cancelled";
+  return (
+    <div className="grid min-w-[620px] grid-cols-[1.4fr_1.2fr_1.1fr_1fr_0.8fr] items-center rounded-lg border border-line px-4 py-3 text-[13px]">
       {/* Tenant */}
       <div className="flex items-center gap-2.5">
-        <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded-full bg-page">
-          <Image src={req.avatar} alt={req.tenant} fill sizes="32px" className="object-cover" />
-        </div>
-        <span className="truncate text-ink">{req.tenant}</span>
+        <TenantAvatar name={req.guestName} avatar={req.guestAvatar} />
+        <span className="truncate text-ink">{req.guestName}</span>
       </div>
 
-      <span className="text-body">{req.property}</span>
-      <span className="text-body">{req.stay}</span>
+      <Link href={`/villa/${req.villaId}`} className="truncate pr-2 text-body hover:text-primary">
+        {req.villaTitle}
+      </Link>
+      <span className="text-body">{fmtStay(req.checkIn, req.checkOut)}</span>
       <span className="text-body">
         {req.guests} {req.guests === 1 ? "guest" : "guests"}
       </span>
 
       <span className="text-right">
-        {req.responded ? (
+        {cancelled ? (
+          <span className="text-[13px] font-semibold text-red-400">Cancelled</span>
+        ) : req.hostResponded ? (
           <span className="text-[13px] font-semibold text-primary">Responded</span>
         ) : (
           <button
             type="button"
-            className="text-[13px] font-medium text-primary underline underline-offset-2 transition-colors hover:text-primary-dark"
+            onClick={() => onRespond(req.id)}
+            disabled={responding}
+            className="text-[13px] font-medium text-primary underline underline-offset-2 transition-colors hover:text-primary-dark disabled:opacity-50"
           >
-            Respond
+            {responding ? "…" : "Respond"}
           </button>
         )}
       </span>
@@ -56,6 +100,28 @@ function RequestRow({ req }: { req: RentRequest }) {
 
 export default function RentRequestsPage() {
   const { user, ready } = useAuth();
+  const [requests, setRequests] = useState<Booking[] | null>(null);
+  const [error, setError] = useState("");
+  const [respondingId, setRespondingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!ready || !user) return;
+    fetchVillaBookings()
+      .then(setRequests)
+      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load rent requests."));
+  }, [ready, user]);
+
+  async function onRespond(id: string) {
+    setRespondingId(id);
+    try {
+      const updated = await respondBooking(id);
+      setRequests((prev) => (prev ?? []).map((r) => (r.id === id ? updated : r)));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not respond to request.");
+    } finally {
+      setRespondingId(null);
+    }
+  }
 
   // Guard: only signed-in users can view their rent requests.
   if (!ready) return <div className="min-h-[60vh]" />;
@@ -77,6 +143,9 @@ export default function RentRequestsPage() {
     );
   }
 
+  // Active requests = not cancelled.
+  const active = (requests ?? []).filter((r) => r.status !== "cancelled");
+
   return (
     <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-10 lg:px-7">
       <div className="grid grid-cols-1 gap-10 lg:grid-cols-[190px_1fr]">
@@ -87,17 +156,25 @@ export default function RentRequestsPage() {
 
         {/* Right — rent requests card */}
         <div className="w-full rounded-2xl border border-line bg-white p-6 sm:p-8">
+          {error && (
+            <div className="mb-6 rounded-lg bg-red-50 px-4 py-3 text-[13px] text-red-600">
+              {error}
+            </div>
+          )}
+
           {/* Header */}
           <div className="flex items-center justify-between">
             <h2 className="text-[16px] font-bold text-ink">
-              <span className="text-primary">{rentRequests.length}</span>{" "}
-              Active Rent Requests
+              <span className="text-primary">{active.length}</span> Active Rent
+              Requests
             </h2>
             <SortDropdown />
           </div>
 
+          {/* Table (scrolls horizontally on small screens) */}
+          <div className="overflow-x-auto">
           {/* Column headings */}
-          <div className="mt-6 grid grid-cols-[1.4fr_1.2fr_1.1fr_1fr_0.8fr] px-4 text-[13px] text-muted">
+          <div className="mt-6 grid min-w-[620px] grid-cols-[1.4fr_1.2fr_1.1fr_1fr_0.8fr] px-4 text-[13px] text-muted">
             {COLUMNS.map((c) => (
               <span key={c} className={c === "Status" ? "text-right" : ""}>
                 {c}
@@ -107,9 +184,26 @@ export default function RentRequestsPage() {
 
           {/* Rows */}
           <div className="mt-2.5 space-y-3">
-            {rentRequests.map((req, i) => (
-              <RequestRow key={i} req={req} />
-            ))}
+            {requests === null ? (
+              <div className="rounded-lg border border-dashed border-line px-4 py-6 text-center text-[13px] text-muted">
+                Loading rent requests…
+              </div>
+            ) : active.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-line px-4 py-6 text-center text-[13px] text-muted">
+                No rent requests yet. When someone books one of your villas, it&apos;ll
+                show up here.
+              </div>
+            ) : (
+              active.map((req) => (
+                <RequestRow
+                  key={req.id}
+                  req={req}
+                  onRespond={onRespond}
+                  responding={respondingId === req.id}
+                />
+              ))
+            )}
+          </div>
           </div>
         </div>
       </div>

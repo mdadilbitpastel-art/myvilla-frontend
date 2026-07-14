@@ -2,6 +2,7 @@
 
 export type VillaCardData = {
   id?: string; // real villa id → links to its detail page
+  title?: string; // villa's main title (shown as the card heading when present)
   image: string;
   city: string;
   country: string;

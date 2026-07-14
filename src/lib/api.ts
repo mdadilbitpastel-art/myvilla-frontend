@@ -170,6 +170,7 @@ export type VillaPhoto = { id: string; url: string };
 
 export type Villa = {
   id: string;
+  ownerId: string;
   title: string;
   propertyType: string;
   city: string;
@@ -192,7 +193,7 @@ export type Villa = {
 };
 
 const VILLA_SELECTION = `
-  id title propertyType city country address description buildUpArea
+  id ownerId title propertyType city country address description buildUpArea
   bedrooms bathrooms guests services pricePerNight
   acceptedPayments payoutMethod payoutAccount
   images photos { id url } coverImage createdAt`;
@@ -238,6 +239,39 @@ export async function fetchVillas(limit = 24): Promise<Villa[]> {
   return data.villas;
 }
 
+export type VillaFilters = {
+  search?: string;
+  category?: string;
+  guests?: number;
+  minPrice?: number;
+  maxPrice?: number;
+  limit?: number;
+};
+
+// Public — filtered search (search page). Any subset of filters may be given.
+export async function searchVillas(f: VillaFilters = {}): Promise<Villa[]> {
+  const data = await gql<{ villas: Villa[] }>(
+    `query SearchVillas(
+       $search: String, $category: String, $guests: Int,
+       $minPrice: Float, $maxPrice: Float, $limit: Int!
+     ) {
+       villas(
+         search: $search, category: $category, guests: $guests,
+         minPrice: $minPrice, maxPrice: $maxPrice, limit: $limit
+       ) { ${VILLA_SELECTION} }
+     }`,
+    {
+      search: f.search?.trim() || null,
+      category: f.category?.trim() || null,
+      guests: f.guests ?? null,
+      minPrice: f.minPrice ?? null,
+      maxPrice: f.maxPrice ?? null,
+      limit: f.limit ?? 60,
+    }
+  );
+  return data.villas;
+}
+
 // Public — a single villa by id (detail page). Returns null if not found.
 export async function fetchVilla(id: string): Promise<Villa | null> {
   const data = await gql<{ villa: Villa | null }>(
@@ -245,6 +279,106 @@ export async function fetchVilla(id: string): Promise<Villa | null> {
     { id }
   );
   return data.villa;
+}
+
+/* ---- Bookings ---- */
+
+export type BookingInput = {
+  villaId: string;
+  checkIn: string; // "YYYY-MM-DD"
+  checkOut: string; // "YYYY-MM-DD"
+  guests: number;
+  paymentMethod: string;
+  cardNumber: string;
+  expiration: string;
+  cvv: string;
+  billingStreet: string;
+  billingApartment?: string;
+  billingCity: string;
+  billingState?: string;
+  billingZip?: string;
+  billingCountry: string;
+  contactEmail: string;
+  contactPhone?: string;
+};
+
+export type Booking = {
+  id: string;
+  villaId: string;
+  villaTitle: string;
+  villaCover: string;
+  villaCity: string;
+  villaCountry: string;
+  guestName: string;
+  guestAvatar: string;
+  guestEmail: string;
+  checkIn: string;
+  checkOut: string;
+  nights: number;
+  guests: number;
+  pricePerNight: number;
+  subtotal: number;
+  serviceFee: number;
+  total: number;
+  paymentMethod: string;
+  cardLast4: string;
+  status: string;
+  hostResponded: boolean;
+  createdAt: string;
+};
+
+const BOOKING_SELECTION = `
+  id villaId villaTitle villaCover villaCity villaCountry
+  guestName guestAvatar guestEmail
+  checkIn checkOut nights guests
+  pricePerNight subtotal serviceFee total
+  paymentMethod cardLast4 status hostResponded createdAt`;
+
+export async function createBooking(input: BookingInput): Promise<Booking> {
+  const data = await gql<{ createBooking: Booking }>(
+    `mutation CreateBooking($data: BookingInput!) {
+       createBooking(data: $data) { ${BOOKING_SELECTION} }
+     }`,
+    { data: input }
+  );
+  return data.createBooking;
+}
+
+export async function fetchMyBookings(): Promise<Booking[]> {
+  const data = await gql<{ myBookings: Booking[] }>(
+    `query MyBookings { myBookings { ${BOOKING_SELECTION} } }`,
+    {}
+  );
+  return data.myBookings;
+}
+
+// Host-side: bookings made on villas the current user owns (rent requests).
+export async function fetchVillaBookings(): Promise<Booking[]> {
+  const data = await gql<{ myVillaBookings: Booking[] }>(
+    `query MyVillaBookings { myVillaBookings { ${BOOKING_SELECTION} } }`,
+    {}
+  );
+  return data.myVillaBookings;
+}
+
+export async function respondBooking(id: string): Promise<Booking> {
+  const data = await gql<{ respondBooking: Booking }>(
+    `mutation RespondBooking($id: ID!) {
+       respondBooking(id: $id) { ${BOOKING_SELECTION} }
+     }`,
+    { id }
+  );
+  return data.respondBooking;
+}
+
+export async function cancelBooking(id: string): Promise<Booking> {
+  const data = await gql<{ cancelBooking: Booking }>(
+    `mutation CancelBooking($id: ID!) {
+       cancelBooking(id: $id) { ${BOOKING_SELECTION} }
+     }`,
+    { id }
+  );
+  return data.cancelBooking;
 }
 
 export async function requestPasswordReset(email: string): Promise<void> {

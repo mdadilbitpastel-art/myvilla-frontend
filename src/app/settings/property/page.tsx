@@ -5,15 +5,14 @@ import Link from "next/link";
 import { Star } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import SettingsSidebar from "@/components/settings/SettingsSidebar";
-import { ownedProperties } from "@/lib/myProperty";
 import { fetchMyVillas, type Villa } from "@/lib/api";
 
 const PLACEHOLDER_IMG =
   "https://images.unsplash.com/photo-1571896349842-33c89424de2d?auto=format&fit=crop&w=600&q=80";
 
-// A row shape shared by real villas and the mock placeholder list.
+// A row shape derived from the user's real villas.
 type Row = {
-  id?: string; // present for real villas (enables Edit); absent for mock rows
+  id: string; // enables Edit / Remove
   image: string;
   city: string;
   country: string;
@@ -112,10 +111,8 @@ export default function MyPropertyPage() {
     );
   }
 
-  // Real villas if the user has any; otherwise the mock placeholder list keeps
-  // the page looking populated (matching the original design).
-  const rows: Row[] =
-    villas && villas.length > 0 ? villas.map(villaToRow) : ownedProperties;
+  // Only the user's real villas — no dummy fallback. `null` = still loading.
+  const rows: Row[] | null = villas ? villas.map(villaToRow) : null;
 
   return (
     <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-10 lg:px-7">
@@ -145,10 +142,31 @@ export default function MyPropertyPage() {
           </div>
 
           {/* Property list */}
+          {rows === null ? (
+            <p className="mt-8 py-10 text-center text-[14px] text-muted">
+              Loading your properties…
+            </p>
+          ) : rows.length === 0 ? (
+            <div className="mt-6 flex flex-col items-center rounded-xl border border-dashed border-line px-4 py-14 text-center">
+              <p className="text-[15px] font-semibold text-ink">
+                No properties yet
+              </p>
+              <p className="mt-1 max-w-[320px] text-[13px] text-muted">
+                You haven&apos;t listed any villa. Add your first property to
+                start hosting.
+              </p>
+              <Link
+                href="/settings/property/add"
+                className="mt-5 rounded-lg bg-primary px-5 py-2.5 text-[13px] font-semibold text-white transition-colors hover:bg-primary-dark"
+              >
+                Add Property
+              </Link>
+            </div>
+          ) : (
           <div className="mt-6 space-y-4">
-            {rows.map((p, i) => (
+            {rows.map((p) => (
               <div
-                key={i}
+                key={p.id}
                 className="flex gap-5 rounded-xl border border-line/70 p-3 shadow-[0_1px_3px_rgba(0,0,0,0.04)]"
               >
                 {/* Thumbnail — plain <img> so uploaded villa photos (served from
@@ -193,21 +211,12 @@ export default function MyPropertyPage() {
                         </span>
                       </div>
                     </div>
-                    {p.id ? (
-                      <Link
-                        href={`/settings/property/add?edit=${p.id}`}
-                        className="shrink-0 text-[13px] font-semibold text-ink underline underline-offset-2 hover:text-primary"
-                      >
-                        Edit
-                      </Link>
-                    ) : (
-                      <button
-                        type="button"
-                        className="shrink-0 text-[13px] font-semibold text-ink underline underline-offset-2"
-                      >
-                        Edit
-                      </button>
-                    )}
+                    <Link
+                      href={`/settings/property/add?edit=${p.id}`}
+                      className="shrink-0 text-[13px] font-semibold text-ink underline underline-offset-2 hover:text-primary"
+                    >
+                      Edit
+                    </Link>
                   </div>
 
                   {/* Bottom row: posted pill + remove */}
@@ -226,6 +235,7 @@ export default function MyPropertyPage() {
               </div>
             ))}
           </div>
+          )}
         </div>
       </div>
     </div>
