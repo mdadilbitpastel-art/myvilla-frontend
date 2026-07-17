@@ -803,17 +803,29 @@ function VillaDetailsStep({
           </div>
         </div>
 
-        {/* Map */}
+        {/* Map — follows the address / city / country the host types above */}
         <div>
           <FieldLabel>Villa Location on Map</FieldLabel>
-          <div className="overflow-hidden rounded-lg border border-line">
-            <iframe
-              title="Villa location"
-              className="h-[240px] w-full"
-              loading="lazy"
-              src="https://www.openstreetmap.org/export/embed.html?bbox=-74.014%2C40.700%2C-73.960%2C40.730&layer=mapnik&marker=40.715%2C-73.99"
-            />
-          </div>
+          {(() => {
+            const q = (values.address || "").trim();
+            return (
+              <>
+                <div className="overflow-hidden rounded-lg border border-line">
+                  <iframe
+                    title="Villa location"
+                    className="h-[240px] w-full"
+                    loading="lazy"
+                    src={`https://maps.google.com/maps?q=${encodeURIComponent(q || "villa")}&z=12&output=embed`}
+                  />
+                </div>
+                <p className="mt-1.5 text-[12px] text-muted">
+                  {q
+                    ? `Showing: ${q}`
+                    : "Type the villa address above to set the map location."}
+                </p>
+              </>
+            );
+          })()}
         </div>
       </div>
     </div>
