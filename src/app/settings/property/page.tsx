@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Star } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import SettingsSidebar from "@/components/settings/SettingsSidebar";
-import { fetchMyVillas, type Villa } from "@/lib/api";
+import { fetchMyVillas, deleteVilla, type Villa } from "@/lib/api";
 
 const PLACEHOLDER_IMG =
   "https://images.unsplash.com/photo-1571896349842-33c89424de2d?auto=format&fit=crop&w=600&q=80";
@@ -65,6 +65,26 @@ export default function MyPropertyPage() {
   const { user, ready } = useAuth();
   const [villas, setVillas] = useState<Villa[] | null>(null);
   const [banner, setBanner] = useState("");
+  const [removingId, setRemovingId] = useState<string | null>(null);
+
+  // Delete a villa the user owns, after confirming. On success drop it from the
+  // list; the villa's images are removed server-side too.
+  async function handleRemove(id: string, label: string) {
+    if (removingId) return;
+    if (!window.confirm(`Remove "${label}"? This permanently deletes the listing.`)) {
+      return;
+    }
+    setRemovingId(id);
+    try {
+      await deleteVilla(id);
+      setVillas((prev) => (prev ? prev.filter((v) => v.id !== id) : prev));
+      setBanner("🗑️ Property removed.");
+    } catch {
+      setBanner("Could not remove the property. Please try again.");
+    } finally {
+      setRemovingId(null);
+    }
+  }
 
   // One-time success banner after publishing (?added=1) or editing (?updated=1).
   useEffect(() => {
@@ -226,9 +246,11 @@ export default function MyPropertyPage() {
                     </span>
                     <button
                       type="button"
-                      className="shrink-0 text-[13px] font-semibold text-red-400 underline underline-offset-2 transition-colors hover:text-red-500"
+                      onClick={() => handleRemove(p.id, `${p.city}${p.country ? ", " + p.country : ""}`)}
+                      disabled={removingId === p.id}
+                      className="shrink-0 text-[13px] font-semibold text-red-400 underline underline-offset-2 transition-colors hover:text-red-500 disabled:opacity-50"
                     >
-                      Remove
+                      {removingId === p.id ? "Removing…" : "Remove"}
                     </button>
                   </div>
                 </div>

@@ -222,6 +222,14 @@ export async function updateVilla(
   return data.updateVilla;
 }
 
+export async function deleteVilla(id: string): Promise<boolean> {
+  const data = await gql<{ deleteVilla: boolean }>(
+    `mutation DeleteVilla($id: ID!) { deleteVilla(id: $id) }`,
+    { id }
+  );
+  return data.deleteVilla;
+}
+
 export async function fetchMyVillas(): Promise<Villa[]> {
   const data = await gql<{ myVillas: Villa[] }>(
     `query MyVillas { myVillas { ${VILLA_SELECTION} } }`,
