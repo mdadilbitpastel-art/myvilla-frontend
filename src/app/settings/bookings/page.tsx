@@ -39,13 +39,14 @@ function relativeTime(iso: string): string {
   return `${Math.floor(days / 30)} months ago`;
 }
 
-function SortDropdown() {
+function SortDropdown({ sort, onToggle }: { sort: "desc" | "asc"; onToggle: () => void }) {
   return (
     <button
       type="button"
+      onClick={onToggle}
       className="flex items-center gap-2 rounded-md border border-line px-3 py-1.5 text-[12px] text-body transition-colors hover:border-primary/40"
     >
-      Sort: Latest to Oldest
+      Sort: {sort === "desc" ? "Latest to Oldest" : "Oldest to Latest"}
       <ChevronDown size={14} className="text-muted" />
     </button>
   );
@@ -99,6 +100,7 @@ export default function MyBookingsPage() {
   const [loadError, setLoadError] = useState("");
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [showBanner, setShowBanner] = useState(false);
+  const [sort, setSort] = useState<"desc" | "asc">("desc");
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -129,8 +131,16 @@ export default function MyBookingsPage() {
       if (b.status === "active" && upcoming) active.push(b);
       else history.push(b);
     }
+    const byCreated = (a: Booking, b: Booking) => {
+      const diff = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      return sort === "desc" ? diff : -diff;
+    };
+    active.sort(byCreated);
+    history.sort(byCreated);
     return { active, history };
-  }, [bookings]);
+  }, [bookings, sort]);
+
+  const toggleSort = () => setSort((s) => (s === "desc" ? "asc" : "desc"));
 
   async function onCancel(id: string) {
     setCancellingId(id);
@@ -193,7 +203,7 @@ export default function MyBookingsPage() {
               </span>{" "}
               Active Bookings
             </h2>
-            <SortDropdown />
+            <SortDropdown sort={sort} onToggle={toggleSort} />
           </div>
 
           {/* Active table (scrolls horizontally on small screens) */}
@@ -230,7 +240,7 @@ export default function MyBookingsPage() {
           {/* Booking history header */}
           <div className="mt-9 flex items-center justify-between">
             <h2 className="text-[16px] font-bold text-ink">Booking History</h2>
-            <SortDropdown />
+            <SortDropdown sort={sort} onToggle={toggleSort} />
           </div>
 
           {/* History rows */}

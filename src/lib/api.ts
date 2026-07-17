@@ -27,7 +27,11 @@ export type AuthResult = {
   user: AuthUser;
 };
 
-async function gql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
+async function gql<T>(
+  query: string,
+  variables: Record<string, unknown>,
+  retried = false
+): Promise<T> {
   const token = getAccessToken();
   let res: Response;
   try {
@@ -47,14 +51,64 @@ async function gql<T>(query: string, variables: Record<string, unknown>): Promis
   if (!json) throw new Error("Unexpected server response.");
   if (json.errors?.length) {
     const err = json.errors[0];
-    // Session invalid/expired → clear it and bounce to sign in.
     if (err.extensions?.code === "UNAUTHENTICATED" && typeof window !== "undefined") {
+      // Access token expired → try a silent refresh once, then retry the call.
+      if (!retried && (await tryRefresh())) {
+        return gql<T>(query, variables, true);
+      }
+      // Refresh failed/unavailable → clear the session and bounce to sign in.
       logout();
       window.location.href = "/?auth=signin";
     }
     throw new Error(err.message);
   }
   return json.data as T;
+}
+
+// Silent token refresh: swaps the expired access token using the stored refresh
+// token. Concurrent 401s share one in-flight refresh. Returns true on success.
+let refreshInFlight: Promise<boolean> | null = null;
+async function tryRefresh(): Promise<boolean> {
+  const rt = readSession(REFRESH_KEY);
+  if (!rt) return false;
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      try {
+        const res = await fetch(API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query:
+              "mutation($t:String!){refreshToken(refreshToken:$t){accessToken refreshToken}}",
+            variables: { t: rt },
+          }),
+        });
+        const json = await res.json().catch(() => null);
+        const data = json?.data?.refreshToken;
+        if (!data?.accessToken) return false;
+        updateTokens(data.accessToken, data.refreshToken);
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+  }
+  const ok = await refreshInFlight;
+  refreshInFlight = null;
+  return ok;
+}
+
+// Overwrite the stored tokens in whichever store currently holds the session.
+function updateTokens(accessToken: string, refreshToken: string) {
+  if (typeof window === "undefined") return;
+  const store =
+    window.localStorage.getItem(ACCESS_KEY) != null
+      ? window.localStorage
+      : window.sessionStorage.getItem(ACCESS_KEY) != null
+        ? window.sessionStorage
+        : window.localStorage;
+  store.setItem(ACCESS_KEY, accessToken);
+  store.setItem(REFRESH_KEY, refreshToken);
 }
 
 const USER_SELECTION =

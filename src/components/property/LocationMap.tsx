@@ -1,8 +1,9 @@
-export default function LocationMap() {
-  // OpenStreetMap embed centered on New York City Hall (matches the mock).
-  const bbox = "-74.0100,40.7100,-74.0000,40.7160";
-  const marker = "40.7128,-74.0060";
-  const src = `https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${marker}`;
+export default function LocationMap({ location }: { location?: string }) {
+  // Center the map on the villa's real location (city/country/address). Falls
+  // back to a neutral query when a listing has no location set. Uses Google
+  // Maps' keyless embed, which accepts a free-text place query.
+  const query = (location || "").trim() || "villa";
+  const src = `https://maps.google.com/maps?q=${encodeURIComponent(query)}&z=11&output=embed`;
 
   return (
     <section className="border-b border-line py-6">

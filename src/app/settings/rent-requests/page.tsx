@@ -21,13 +21,14 @@ function fmtStay(checkIn: string, checkOut: string): string {
   return `${one(a)}-${one(b)}`;
 }
 
-function SortDropdown() {
+function SortDropdown({ sort, onToggle }: { sort: "desc" | "asc"; onToggle: () => void }) {
   return (
     <button
       type="button"
+      onClick={onToggle}
       className="flex items-center gap-2 rounded-md border border-line px-3 py-1.5 text-[12px] text-body transition-colors hover:border-primary/40"
     >
-      Sort: Latest to Oldest
+      Sort: {sort === "desc" ? "Latest to Oldest" : "Oldest to Latest"}
       <ChevronDown size={14} className="text-muted" />
     </button>
   );
@@ -103,6 +104,7 @@ export default function RentRequestsPage() {
   const [requests, setRequests] = useState<Booking[] | null>(null);
   const [error, setError] = useState("");
   const [respondingId, setRespondingId] = useState<string | null>(null);
+  const [sort, setSort] = useState<"desc" | "asc">("desc");
 
   useEffect(() => {
     if (!ready || !user) return;
@@ -143,8 +145,14 @@ export default function RentRequestsPage() {
     );
   }
 
-  // Active requests = not cancelled.
-  const active = (requests ?? []).filter((r) => r.status !== "cancelled");
+  // Active requests = not cancelled, sorted by creation time.
+  const toggleSort = () => setSort((s) => (s === "desc" ? "asc" : "desc"));
+  const active = (requests ?? [])
+    .filter((r) => r.status !== "cancelled")
+    .sort((a, b) => {
+      const diff = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      return sort === "desc" ? diff : -diff;
+    });
 
   return (
     <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-10 lg:px-7">
@@ -168,7 +176,7 @@ export default function RentRequestsPage() {
               <span className="text-primary">{active.length}</span> Active Rent
               Requests
             </h2>
-            <SortDropdown />
+            <SortDropdown sort={sort} onToggle={toggleSort} />
           </div>
 
           {/* Table (scrolls horizontally on small screens) */}

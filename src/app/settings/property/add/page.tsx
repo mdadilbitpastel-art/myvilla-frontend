@@ -98,11 +98,33 @@ const imageSrc = (im: WizardImage) => (im.kind === "existing" ? im.url : im.data
    missing-field message. Shared by the Save/Publish gate AND the stepper's
    live complete/incomplete indicator, so the two never disagree. --- */
 
+// Accept DD/MM/YYYY or YYYY-MM-DD; must be a real, non-future date.
+function validDob(s: string): boolean {
+  const t = s.trim();
+  let y: number, mo: number, d: number;
+  let m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(t);
+  if (m) { d = +m[1]; mo = +m[2]; y = +m[3]; }
+  else {
+    m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(t);
+    if (!m) return false;
+    y = +m[1]; mo = +m[2]; d = +m[3];
+  }
+  const dt = new Date(y, mo - 1, d);
+  return (
+    dt.getFullYear() === y &&
+    dt.getMonth() === mo - 1 &&
+    dt.getDate() === d &&
+    y >= 1900 &&
+    dt <= new Date()
+  );
+}
+
 function personalError(p: Personal): string {
   if (!p.fullName.trim()) return "Full name is required.";
   if (!p.gender.trim()) return "Please select your gender.";
   if (validateEmail(p.email)) return "A valid email address is required.";
   if (!p.dateOfBirth.trim()) return "Date of birth is required.";
+  if (!validDob(p.dateOfBirth)) return "Enter a valid date of birth (DD/MM/YYYY).";
   return "";
 }
 

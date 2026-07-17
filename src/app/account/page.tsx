@@ -60,7 +60,7 @@ export default function AccountPage() {
           Home
         </Link>
         <span className="mx-1.5 text-muted">/</span>
-        <Link href="#" className="underline underline-offset-2 hover:text-primary">
+        <Link href="/settings" className="underline underline-offset-2 hover:text-primary">
           Settings
         </Link>
         <span className="mx-1.5 text-muted">/</span>
@@ -71,7 +71,7 @@ export default function AccountPage() {
 
       {/* Top: profile (left) + My Villas (right) */}
       <div className="mt-8 grid grid-cols-1 gap-x-12 gap-y-12 lg:grid-cols-[360px_1fr]">
-        <ProfileCard />
+        <ProfileCard user={user} />
         <MyVillas />
       </div>
 
@@ -88,17 +88,26 @@ export default function AccountPage() {
 /* Profile card                                                        */
 /* ------------------------------------------------------------------ */
 
-function ProfileCard() {
+function ProfileCard({ user }: { user: import("@/lib/api").AuthUser }) {
   const p = accountProfile;
+  // Real identity from the signed-in user; stats (reviews/response) stay demo.
+  const name = user.fullName?.trim() || user.email;
+  const email = user.email;
+  const phone = user.phoneNumber?.trim() || "—";
   return (
     <div>
       {/* Avatar + name */}
       <div className="flex items-center gap-4">
-        <div className="relative h-[74px] w-[74px] shrink-0 overflow-hidden rounded-full">
-          <Image src={p.avatar} alt={p.name} fill sizes="74px" className="object-cover" />
+        <div className="relative h-[74px] w-[74px] shrink-0 overflow-hidden rounded-full bg-page">
+          {user.avatar ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={user.avatar} alt={name} className="h-full w-full object-cover" />
+          ) : (
+            <Image src={p.avatar} alt={name} fill sizes="74px" className="object-cover" />
+          )}
         </div>
         <div>
-          <p className="text-[18px] font-bold text-ink">{p.name}</p>
+          <p className="text-[18px] font-bold text-ink">{name}</p>
           <p className="mt-0.5 text-[14px] text-muted">{p.joined}</p>
         </div>
       </div>
@@ -123,13 +132,16 @@ function ProfileCard() {
       <div className="mt-5 space-y-1 text-[14px] text-body">
         <p>Response rate: {p.responseRate}</p>
         <p>Response time: {p.responseTime}</p>
-        <p>Email: {p.email}</p>
-        <p>Phone: {p.phone}</p>
+        <p>Email: {email}</p>
+        <p>Phone: {phone}</p>
       </div>
 
-      <button className="mt-6 rounded-lg border border-primary/50 px-5 py-2 text-[14px] font-medium text-primary transition-colors hover:bg-primary/5">
+      <Link
+        href="/settings/profile"
+        className="mt-6 inline-block rounded-lg border border-primary/50 px-5 py-2 text-[14px] font-medium text-primary transition-colors hover:bg-primary/5"
+      >
         Edit Profile
-      </button>
+      </Link>
 
       {/* Payment protection note */}
       <div className="mt-8 flex items-start gap-3">

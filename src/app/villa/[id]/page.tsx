@@ -143,7 +143,7 @@ export default function VillaDetailPage() {
             rating={dummy.rating}
             reviewsCount={dummy.reviewsCount}
           />
-          <LocationMap />
+          <LocationMap location={[v.address, v.city, v.country].filter(Boolean).join(", ")} />
           <HostSection host={dummy.host} />
           <HouseRules rules={dummy.houseRules} additional={dummy.additionalRules} />
         </div>

@@ -33,31 +33,55 @@ const isoDate = (d: Date) => {
 
 const onlyDigits = (s: string) => s.replace(/\D/g, "");
 
+// Luhn checksum — validates a card number's structure (not that it's a real card).
+function luhnValid(digits: string): boolean {
+  let sum = 0;
+  let dbl = false;
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let d = digits.charCodeAt(i) - 48;
+    if (dbl) { d *= 2; if (d > 9) d -= 9; }
+    sum += d;
+    dbl = !dbl;
+  }
+  return sum % 10 === 0;
+}
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export default function BookVillaPage() {
   const params = useParams();
   const id = String(params.id);
   const router = useRouter();
   const { user, ready, openAuth } = useAuth();
 
-  // Trip params come from the Reserve button (?guests=&nights=).
-  const trip = useMemo(() => {
+  // Trip params come from the Reserve button (?guests=&checkIn=&checkOut=).
+  // Falls back to ?nights= (or 3) from today for older links.
+  const { trip, dates } = useMemo(() => {
     const sp =
       typeof window !== "undefined"
         ? new URLSearchParams(window.location.search)
         : new URLSearchParams();
     const guests = Math.max(1, parseInt(sp.get("guests") || "1", 10) || 1);
-    const nights = Math.max(1, parseInt(sp.get("nights") || "3", 10) || 3);
-    return { guests, nights };
-  }, []);
 
-  // Real check-in / check-out: today → today + nights.
-  const dates = useMemo(() => {
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(start);
-    end.setDate(end.getDate() + trip.nights);
-    return { start, end };
-  }, [trip.nights]);
+    const parseISO = (s: string | null) => {
+      if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+      const d = new Date(s + "T00:00:00");
+      return Number.isNaN(d.getTime()) ? null : d;
+    };
+    let start = parseISO(sp.get("checkIn"));
+    let end = parseISO(sp.get("checkOut"));
+    if (!start || !end || end <= start) {
+      start = new Date();
+      start.setHours(0, 0, 0, 0);
+      const n = Math.max(1, parseInt(sp.get("nights") || "3", 10) || 3);
+      end = new Date(start);
+      end.setDate(end.getDate() + n);
+    }
+    const nights = Math.max(
+      1,
+      Math.round((end.getTime() - start.getTime()) / 86_400_000)
+    );
+    return { trip: { guests, nights }, dates: { start, end } };
+  }, []);
 
   const [v, setV] = useState<Villa | null | undefined>(undefined);
 
@@ -134,14 +158,15 @@ export default function BookVillaPage() {
 
   function validate(): string {
     if (!cardType.trim()) return "Please choose a card type.";
-    if (onlyDigits(cardNumber).length < 12) return "Enter a valid card number.";
-    if (!expiration.trim()) return "Enter the card expiration date.";
+    const card = onlyDigits(cardNumber);
+    if (card.length < 12 || !luhnValid(card)) return "Enter a valid card number.";
+    if (!/^\d{2}\s*\/\s*\d{2}$/.test(expiration.trim())) return "Enter a valid expiration (MM/YY).";
     const c = onlyDigits(cvv);
     if (c.length < 3 || c.length > 4) return "Enter a valid CVV.";
     if (!street.trim()) return "Enter your billing street name.";
     if (!city.trim()) return "Enter your billing city.";
     if (!country.trim()) return "Select your billing country or region.";
-    if (!email.includes("@") || !email.includes(".")) return "Enter a valid e-mail address.";
+    if (!EMAIL_RE.test(email.trim())) return "Enter a valid e-mail address.";
     return "";
   }
 

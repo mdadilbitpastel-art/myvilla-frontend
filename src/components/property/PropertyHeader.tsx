@@ -1,4 +1,7 @@
-import { Star, Share, Heart } from "lucide-react";
+"use client";
+
+import { useState } from "react";
+import { Star, Share, Heart, Check } from "lucide-react";
 
 export default function PropertyHeader({
   title,
@@ -9,6 +12,23 @@ export default function PropertyHeader({
   rating: number;
   reviewsCount: number;
 }) {
+  const [copied, setCopied] = useState(false);
+
+  async function onShare() {
+    const url = typeof window !== "undefined" ? window.location.href : "";
+    try {
+      if (typeof navigator !== "undefined" && navigator.share) {
+        await navigator.share({ title, url });
+        return;
+      }
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      /* user cancelled share / clipboard blocked — no-op */
+    }
+  }
+
   return (
     <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
       <div>
@@ -26,9 +46,12 @@ export default function PropertyHeader({
       </div>
 
       <div className="flex items-center gap-6">
-        <button className="flex items-center gap-2 text-[15px] font-medium text-ink transition-colors hover:text-primary">
-          <Share size={18} strokeWidth={2} />
-          Share
+        <button
+          onClick={onShare}
+          className="flex items-center gap-2 text-[15px] font-medium text-ink transition-colors hover:text-primary"
+        >
+          {copied ? <Check size={18} strokeWidth={2} className="text-primary" /> : <Share size={18} strokeWidth={2} />}
+          {copied ? "Link copied" : "Share"}
         </button>
         <button className="flex items-center gap-2 text-[15px] font-medium text-ink transition-colors hover:text-primary">
           <Heart size={18} strokeWidth={2} />

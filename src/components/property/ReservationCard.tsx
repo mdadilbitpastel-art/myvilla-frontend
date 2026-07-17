@@ -26,10 +26,45 @@ export default function ReservationCard({
 
   const GUEST_OPTIONS = ["1 guest", "2 guests", "3 guests", "4 guests"];
 
+  // Max nights per stay — must match the backend (MAX_BOOKING_NIGHTS).
+  const MAX_NIGHTS = 5;
+  const iso = (d: Date) => {
+    const p = (x: number) => String(x).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  };
+  const addDays = (base: string, n: number) => {
+    const d = new Date(base + "T00:00:00");
+    d.setDate(d.getDate() + n);
+    return iso(d);
+  };
+  const today = iso(new Date());
+
+  // User-selectable dates (default: today → +3 nights).
+  const [checkIn, setCheckIn] = useState(today);
+  const [checkOut, setCheckOut] = useState(addDays(today, 3));
+
   const guestCount = parseInt(guests, 10) || 1;
   const isOwner = !!user && !!ownerId && String(user.id) === String(ownerId);
-  // Default 3-night stay; the Confirm Payment page lets the user review it.
-  const NIGHTS = 3;
+  const nights = Math.max(
+    0,
+    Math.round(
+      (new Date(checkOut + "T00:00:00").getTime() -
+        new Date(checkIn + "T00:00:00").getTime()) /
+        86_400_000
+    )
+  );
+  // Keep check-out valid & within the max-stay window whenever check-in moves.
+  function onCheckInChange(next: string) {
+    setCheckIn(next);
+    if (checkOut <= next) setCheckOut(addDays(next, 1));
+    else if (checkOut > addDays(next, MAX_NIGHTS)) setCheckOut(addDays(next, MAX_NIGHTS));
+  }
+  const dateError =
+    nights < 1
+      ? "Check-out must be after check-in."
+      : nights > MAX_NIGHTS
+      ? `You can book at most ${MAX_NIGHTS} nights per stay.`
+      : "";
 
   function onReserve() {
     if (!villaId) return; // demo page — nothing to book
@@ -37,8 +72,10 @@ export default function ReservationCard({
       openAuth("signin");
       return;
     }
-    if (isOwner) return;
-    router.push(`/villa/${villaId}/book?guests=${guestCount}&nights=${NIGHTS}`);
+    if (isOwner || dateError) return;
+    router.push(
+      `/villa/${villaId}/book?guests=${guestCount}&checkIn=${checkIn}&checkOut=${checkOut}`
+    );
   }
 
   return (
@@ -58,11 +95,30 @@ export default function ReservationCard({
         </span>
       </div>
 
-      {/* Check-in / Check-out */}
+      {/* Check-in / Check-out — user selectable */}
       <div className="mt-5 grid grid-cols-2 overflow-hidden rounded-xl border border-line">
-        <DateField label="Check - In" value={pricing.checkIn} className="border-r border-line" />
-        <DateField label="Check - Out" value={pricing.checkOut} />
+        <DateField
+          label="Check - In"
+          value={checkIn}
+          min={today}
+          onChange={onCheckInChange}
+          className="border-r border-line"
+        />
+        <DateField
+          label="Check - Out"
+          value={checkOut}
+          min={addDays(checkIn, 1)}
+          max={addDays(checkIn, MAX_NIGHTS)}
+          onChange={setCheckOut}
+        />
       </div>
+      {dateError ? (
+        <p className="mt-2 text-[12px] text-red-500">{dateError}</p>
+      ) : (
+        <p className="mt-2 text-[12px] text-muted">
+          {nights} night{nights === 1 ? "" : "s"}
+        </p>
+      )}
 
       {/* Guests dropdown */}
       <div className="relative mt-3">
@@ -104,9 +160,9 @@ export default function ReservationCard({
       {/* Reserve button */}
       <button
         onClick={onReserve}
-        disabled={isOwner}
+        disabled={isOwner || !!dateError}
         className={`mt-4 w-full rounded-xl py-3.5 text-[15px] font-semibold text-white transition-colors ${
-          isOwner
+          isOwner || dateError
             ? "cursor-not-allowed bg-muted/60"
             : "bg-primary hover:bg-primary-dark"
         }`}
@@ -140,16 +196,29 @@ export default function ReservationCard({
 function DateField({
   label,
   value,
+  onChange,
+  min,
+  max,
   className = "",
 }: {
   label: string;
   value: string;
+  onChange: (v: string) => void;
+  min?: string;
+  max?: string;
   className?: string;
 }) {
   return (
     <div className={`px-4 py-3 ${className}`}>
       <p className="text-[13px] font-semibold text-ink">{label}</p>
-      <p className="mt-0.5 text-[13px] text-body">{value}</p>
+      <input
+        type="date"
+        value={value}
+        min={min}
+        max={max}
+        onChange={(e) => onChange(e.target.value)}
+        className="mt-0.5 w-full bg-transparent text-[13px] text-body outline-none"
+      />
     </div>
   );
 }
