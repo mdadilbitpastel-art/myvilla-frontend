@@ -4,6 +4,7 @@ import "./globals.css";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import { AuthProvider } from "@/lib/auth";
+import { FavoritesProvider } from "@/lib/favorites";
 
 const poppins = Poppins({
   variable: "--font-poppins",
@@ -31,9 +32,11 @@ export default function RootLayout({
     >
       <body className="flex min-h-full flex-col bg-page text-ink">
         <AuthProvider>
-          <Navbar />
-          <main className="flex-1">{children}</main>
-          <Footer />
+          <FavoritesProvider>
+            <Navbar />
+            <main className="flex-1">{children}</main>
+            <Footer />
+          </FavoritesProvider>
         </AuthProvider>
       </body>
     </html>

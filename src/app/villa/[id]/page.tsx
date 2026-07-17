@@ -118,6 +118,7 @@ export default function VillaDetailPage() {
         title={v.title}
         rating={dummy.rating}
         reviewsCount={dummy.reviewsCount}
+        villaId={v.id}
       />
       <Gallery hero={hero} thumbs={thumbs} />
 

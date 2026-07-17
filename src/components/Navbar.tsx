@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { usePathname } from "next/navigation";
-import { Menu, X, ChevronDown, Settings, LogOut } from "lucide-react";
+import { Menu, X, ChevronDown, Settings, LogOut, Heart } from "lucide-react";
 import AuthModal from "@/components/auth/AuthModal";
 import { useAuth } from "@/lib/auth";
 
@@ -109,6 +109,14 @@ export default function Navbar() {
                     className="fixed inset-0 z-40 cursor-default"
                   />
                   <div className="absolute right-0 top-[calc(100%+10px)] z-50 w-48 overflow-hidden rounded-xl border border-line bg-white py-1.5 shadow-xl">
+                    <Link
+                      href="/saved"
+                      onClick={() => setMenuOpen(false)}
+                      className="flex items-center gap-3 px-4 py-2.5 text-[14px] text-body transition-colors hover:bg-page hover:text-ink"
+                    >
+                      <Heart size={17} className="text-muted" />
+                      Saved
+                    </Link>
                     <Link
                       href="/settings"
                       onClick={() => setMenuOpen(false)}

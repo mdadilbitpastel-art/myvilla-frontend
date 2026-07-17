@@ -292,6 +292,23 @@ export async function fetchMyVillas(): Promise<Villa[]> {
   return data.myVillas;
 }
 
+// Wishlist — add/remove a villa; returns the new saved state (true = saved).
+export async function toggleFavorite(villaId: string): Promise<boolean> {
+  const data = await gql<{ toggleFavorite: boolean }>(
+    `mutation ToggleFavorite($villaId: ID!) { toggleFavorite(villaId: $villaId) }`,
+    { villaId }
+  );
+  return data.toggleFavorite;
+}
+
+export async function fetchMyFavorites(): Promise<Villa[]> {
+  const data = await gql<{ myFavorites: Villa[] }>(
+    `query MyFavorites { myFavorites { ${VILLA_SELECTION} } }`,
+    {}
+  );
+  return data.myFavorites;
+}
+
 // Public — all listed villas (landing page). No auth required.
 export async function fetchVillas(limit = 24): Promise<Villa[]> {
   const data = await gql<{ villas: Villa[] }>(

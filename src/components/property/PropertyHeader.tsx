@@ -2,17 +2,22 @@
 
 import { useState } from "react";
 import { Star, Share, Heart, Check } from "lucide-react";
+import { useFavorites } from "@/lib/favorites";
 
 export default function PropertyHeader({
   title,
   rating,
   reviewsCount,
+  villaId,
 }: {
   title: string;
   rating: number;
   reviewsCount: number;
+  villaId?: string;
 }) {
   const [copied, setCopied] = useState(false);
+  const { isSaved, toggle } = useFavorites();
+  const saved = villaId ? isSaved(villaId) : false;
 
   async function onShare() {
     const url = typeof window !== "undefined" ? window.location.href : "";
@@ -53,9 +58,16 @@ export default function PropertyHeader({
           {copied ? <Check size={18} strokeWidth={2} className="text-primary" /> : <Share size={18} strokeWidth={2} />}
           {copied ? "Link copied" : "Share"}
         </button>
-        <button className="flex items-center gap-2 text-[15px] font-medium text-ink transition-colors hover:text-primary">
-          <Heart size={18} strokeWidth={2} />
-          Save
+        <button
+          onClick={() => villaId && toggle(villaId)}
+          className="flex items-center gap-2 text-[15px] font-medium text-ink transition-colors hover:text-primary"
+        >
+          <Heart
+            size={18}
+            strokeWidth={2}
+            className={saved ? "fill-red-500 text-red-500" : ""}
+          />
+          {saved ? "Saved" : "Save"}
         </button>
       </div>
     </div>
