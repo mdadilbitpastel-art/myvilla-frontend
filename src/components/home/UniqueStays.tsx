@@ -35,7 +35,7 @@ export default function UniqueStays() {
 
       <div className="mt-8 flex justify-center">
         <Link
-          href="#"
+          href="/search"
           className="rounded-lg bg-primary px-6 py-3 text-[14px] font-medium text-white shadow-sm transition-all hover:bg-primary-dark hover:shadow-md"
         >
           Explore more stays

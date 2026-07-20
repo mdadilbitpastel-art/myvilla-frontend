@@ -48,7 +48,7 @@ export default function Facilities({ facilities }: { facilities: Facility[] }) {
           const Icon = ICONS[f.icon];
           return (
             <div key={`${f.label}-${i}`} className="flex items-center gap-4">
-              <Icon size={26} className="shrink-0 text-primary" strokeWidth={1.6} />
+              <Icon size={26} aria-hidden className="shrink-0 text-primary" strokeWidth={1.6} />
               <span className="text-[15px] text-ink">{f.label}</span>
             </div>
           );
@@ -56,6 +56,8 @@ export default function Facilities({ facilities }: { facilities: Facility[] }) {
       </div>
 
       <button
+        type="button"
+        aria-expanded={showAll}
         onClick={() => setShowAll((v) => !v)}
         className="mt-6 flex items-center gap-2 text-[15px] font-semibold text-ink transition-colors hover:text-primary"
       >

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Star, ChevronDown } from "lucide-react";
 import type { Villa } from "@/lib/villa";
@@ -23,6 +23,26 @@ export default function ReservationCard({
   const { user, openAuth } = useAuth();
   const [guests, setGuests] = useState(pricing.guests);
   const [open, setOpen] = useState(false);
+  const guestsRef = useRef<HTMLDivElement>(null);
+  const uid = useId();
+
+  // Close the guests dropdown on outside click / Escape — without this it
+  // stays open and floats over whatever the user scrolls to next.
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(e: PointerEvent) {
+      if (!guestsRef.current?.contains(e.target as Node)) setOpen(false);
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
 
   const GUEST_OPTIONS = ["1 guest", "2 guests", "3 guests", "4 guests"];
 
@@ -37,34 +57,51 @@ export default function ReservationCard({
     d.setDate(d.getDate() + n);
     return iso(d);
   };
-  const today = iso(new Date());
 
-  // User-selectable dates (default: today → +3 nights).
-  const [checkIn, setCheckIn] = useState(today);
-  const [checkOut, setCheckOut] = useState(addDays(today, 3));
+  // "Today" must not be read during render: the server resolves it in UTC and
+  // the browser in local time, so the two disagree across the date boundary and
+  // React throws a hydration mismatch (dates and total price visibly flip).
+  // Resolve it after mount instead, exactly like the hero search widget does.
+  const [today, setToday] = useState("");
+  const [checkIn, setCheckIn] = useState("");
+  const [checkOut, setCheckOut] = useState("");
+
+  useEffect(() => {
+    const t = iso(new Date());
+    setToday(t);
+    setCheckIn(t);
+    setCheckOut(addDays(t, 3));
+    // Runs once on mount; iso/addDays are pure local helpers.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const guestCount = parseInt(guests, 10) || 1;
   const isOwner = !!user && !!ownerId && String(user.id) === String(ownerId);
-  const nights = Math.max(
-    0,
-    Math.round(
-      (new Date(checkOut + "T00:00:00").getTime() -
-        new Date(checkIn + "T00:00:00").getTime()) /
-        86_400_000
-    )
-  );
+  // False until the mount effect above has resolved the local date.
+  const datesReady = !!checkIn && !!checkOut;
+  const nights = !datesReady
+    ? 0
+    : Math.max(
+        0,
+        Math.round(
+          (new Date(checkOut + "T00:00:00").getTime() -
+            new Date(checkIn + "T00:00:00").getTime()) /
+            86_400_000
+        )
+      );
   // Keep check-out valid & within the max-stay window whenever check-in moves.
   function onCheckInChange(next: string) {
     setCheckIn(next);
     if (checkOut <= next) setCheckOut(addDays(next, 1));
     else if (checkOut > addDays(next, MAX_NIGHTS)) setCheckOut(addDays(next, MAX_NIGHTS));
   }
-  const dateError =
-    nights < 1
+  const dateError = !datesReady
+    ? ""
+    : nights < 1
       ? "Check-out must be after check-in."
       : nights > MAX_NIGHTS
-      ? `You can book at most ${MAX_NIGHTS} nights per stay.`
-      : "";
+        ? `You can book at most ${MAX_NIGHTS} nights per stay.`
+        : "";
 
   function onReserve() {
     if (!villaId) return; // demo page — nothing to book
@@ -89,7 +126,7 @@ export default function ReservationCard({
         <span className="flex items-center gap-1.5 text-[14px]">
           <Star size={15} className="fill-primary text-primary" />
           <span className="font-medium text-ink">{rating}</span>
-          <a href="#" className="text-muted underline underline-offset-2">
+          <a href="#reviews" className="text-muted underline underline-offset-2">
             {pricing.ratingReviews} Reviews
           </a>
         </span>
@@ -107,24 +144,32 @@ export default function ReservationCard({
         <DateField
           label="Check - Out"
           value={checkOut}
-          min={addDays(checkIn, 1)}
-          max={addDays(checkIn, MAX_NIGHTS)}
+          min={datesReady ? addDays(checkIn, 1) : undefined}
+          max={datesReady ? addDays(checkIn, MAX_NIGHTS) : undefined}
           onChange={setCheckOut}
         />
       </div>
       {dateError ? (
-        <p className="mt-2 text-[12px] text-red-500">{dateError}</p>
+        <p role="alert" className="mt-2 text-[12px] text-red-500">
+          {dateError}
+        </p>
       ) : (
+        // `&nbsp;` holds the line's height before the dates resolve, so the
+        // card below it doesn't shift down by one line on mount.
         <p className="mt-2 text-[12px] text-muted">
-          {nights} night{nights === 1 ? "" : "s"}
+          {datesReady ? `${nights} night${nights === 1 ? "" : "s"}` : " "}
         </p>
       )}
 
       {/* Guests dropdown */}
-      <div className="relative mt-3">
+      <div ref={guestsRef} className="relative mt-3">
         <button
+          type="button"
           onClick={() => setOpen((v) => !v)}
-          className="flex w-full items-center justify-between rounded-xl border border-line px-4 py-3 text-left"
+          aria-expanded={open}
+          aria-haspopup="listbox"
+          aria-controls={`${uid}-guests`}
+          className="flex w-full items-center justify-between rounded-xl border border-line px-4 py-3 text-left transition-colors hover:border-primary"
         >
           <span>
             <span className="block text-[13px] font-semibold text-ink">Guests</span>
@@ -137,10 +182,17 @@ export default function ReservationCard({
         </button>
 
         {open && (
-          <ul className="absolute z-10 mt-1 w-full overflow-hidden rounded-xl border border-line bg-white shadow-lg">
+          <ul
+            id={`${uid}-guests`}
+            role="listbox"
+            className="animate-fade-in absolute z-10 mt-1 w-full overflow-hidden rounded-xl border border-line bg-white shadow-lg"
+          >
             {GUEST_OPTIONS.map((opt) => (
               <li key={opt}>
                 <button
+                  type="button"
+                  role="option"
+                  aria-selected={guests === opt}
                   onClick={() => {
                     setGuests(opt);
                     setOpen(false);
@@ -159,10 +211,11 @@ export default function ReservationCard({
 
       {/* Reserve button */}
       <button
+        type="button"
         onClick={onReserve}
-        disabled={isOwner || !!dateError}
+        disabled={isOwner || !!dateError || !datesReady}
         className={`mt-4 w-full rounded-xl py-3.5 text-[15px] font-semibold text-white transition-colors ${
-          isOwner || dateError
+          isOwner || dateError || !datesReady
             ? "cursor-not-allowed bg-muted/60"
             : "bg-primary hover:bg-primary-dark"
         }`}
@@ -208,16 +261,20 @@ function DateField({
   max?: string;
   className?: string;
 }) {
+  const id = useId();
   return (
-    <div className={`px-4 py-3 ${className}`}>
-      <p className="text-[13px] font-semibold text-ink">{label}</p>
+    <div className={`px-4 py-3 transition-colors hover:bg-page ${className}`}>
+      <label htmlFor={id} className="block cursor-pointer text-[13px] font-semibold text-ink">
+        {label}
+      </label>
       <input
+        id={id}
         type="date"
         value={value}
         min={min}
         max={max}
         onChange={(e) => onChange(e.target.value)}
-        className="mt-0.5 w-full bg-transparent text-[13px] text-body outline-none"
+        className="mt-0.5 w-full cursor-pointer bg-transparent text-[13px] text-body outline-none"
       />
     </div>
   );

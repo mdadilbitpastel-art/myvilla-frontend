@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Check,
   Plus,
@@ -22,6 +22,7 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import Img from "@/components/ui/Img";
 import {
   fetchMe,
   updateProfile,
@@ -60,7 +61,7 @@ const FACILITIES = [
   { label: "Long Stays", Icon: CalendarDays },
   { label: "Smoke Alarm", Icon: AlarmSmoke },
   { label: "Swimming Pool", Icon: Waves },
-  { label: "Jaccuzzi", Icon: Bath },
+  { label: "Jacuzzi", Icon: Bath },
   { label: "BBQ Corner", Icon: Flame },
   { label: "TV", Icon: Tv },
 ] as const;
@@ -87,16 +88,24 @@ const OPTIONAL_STEPS = new Set([3]); // Extra Services
 const digitsOf = (s: string) => s.replace(/\D/g, "");
 
 // An image in the wizard is either an already-saved photo (edit mode) or a
-// freshly picked file encoded as a base64 data-URL.
-type WizardImage =
+// freshly picked file encoded as a base64 data-URL. `key` is assigned once, on
+// add, so React keeps every tile bound to its own photo when one is deleted.
+type WizardImage = { key: string } & (
   | { kind: "existing"; id: string; url: string }
-  | { kind: "new"; dataUrl: string };
+  | { kind: "new"; dataUrl: string }
+);
+
+let imageSeq = 0;
+const nextImageKey = () => `img-${++imageSeq}`;
 
 const imageSrc = (im: WizardImage) => (im.kind === "existing" ? im.url : im.dataUrl);
 
-/* --- Per-section validation. Each returns "" when complete, else the first
-   missing-field message. Shared by the Save/Publish gate AND the stepper's
-   live complete/incomplete indicator, so the two never disagree. --- */
+/* --- Per-section validation. Each returns null when complete, else the first
+   missing field and its message. Shared by the Save/Publish gate AND the
+   stepper's live complete/incomplete indicator, so the two never disagree. --- */
+
+// Which field blocked the step, so the input itself can be marked invalid.
+type FieldIssue = { field: string; message: string };
 
 // Accept DD/MM/YYYY or YYYY-MM-DD; must be a real, non-future date.
 function validDob(s: string): boolean {
@@ -119,31 +128,39 @@ function validDob(s: string): boolean {
   );
 }
 
-function personalError(p: Personal): string {
-  if (!p.fullName.trim()) return "Full name is required.";
-  if (!p.gender.trim()) return "Please select your gender.";
-  if (validateEmail(p.email)) return "A valid email address is required.";
-  if (!p.dateOfBirth.trim()) return "Date of birth is required.";
-  if (!validDob(p.dateOfBirth)) return "Enter a valid date of birth (DD/MM/YYYY).";
-  return "";
+function personalError(p: Personal): FieldIssue | null {
+  if (!p.fullName.trim()) return { field: "fullName", message: "Full name is required." };
+  if (!p.gender.trim()) return { field: "gender", message: "Please select your gender." };
+  if (validateEmail(p.email))
+    return { field: "email", message: "A valid email address is required." };
+  if (!p.dateOfBirth.trim())
+    return { field: "dateOfBirth", message: "Date of birth is required." };
+  if (!validDob(p.dateOfBirth))
+    return { field: "dateOfBirth", message: "Enter a valid date of birth (DD/MM/YYYY)." };
+  return null;
 }
 
-function villaError(v: VillaForm): string {
-  if (!v.title.trim()) return "Villa name is required.";
-  if (!v.description.trim()) return "A villa description is required.";
-  if (!v.buildUpArea.trim()) return "Villa dimensions are required.";
-  if (!v.address.trim()) return "Villa address is required.";
-  if (v.bedrooms < 1) return "Number of rooms must be at least 1.";
-  if (v.bathrooms < 1) return "Number of bathrooms must be at least 1.";
-  return "";
+function villaError(v: VillaForm): FieldIssue | null {
+  if (!v.title.trim()) return { field: "title", message: "Villa name is required." };
+  if (!v.description.trim())
+    return { field: "description", message: "A villa description is required." };
+  if (!v.buildUpArea.trim())
+    return { field: "buildUpArea", message: "Villa dimensions are required." };
+  if (!v.address.trim()) return { field: "address", message: "Villa address is required." };
+  if (v.bedrooms < 1) return { field: "bedrooms", message: "Number of rooms must be at least 1." };
+  if (v.bathrooms < 1)
+    return { field: "bathrooms", message: "Number of bathrooms must be at least 1." };
+  return null;
 }
 
-function imagesError(images: WizardImage[]): string {
-  return images.length ? "" : "Please add at least one image.";
+function imagesError(images: WizardImage[]): FieldIssue | null {
+  return images.length ? null : { field: "images", message: "Please add at least one image." };
 }
 
-function pricingError(price: string): string {
-  return Number(price) > 0 ? "" : "Please enter a valid price per night.";
+function pricingError(price: string): FieldIssue | null {
+  return Number(price) > 0
+    ? null
+    : { field: "price", message: "Please enter a valid price per night." };
 }
 
 function paymentError(
@@ -151,14 +168,15 @@ function paymentError(
   accountType: string,
   cardNumber: string,
   editMode: boolean
-): string {
-  if (accepted.length === 0) return "Select at least one payment method.";
-  if (!accountType) return "Please choose Credit or Debit Card.";
+): FieldIssue | null {
+  if (accepted.length === 0)
+    return { field: "acceptedPayments", message: "Select at least one payment method." };
+  if (!accountType) return { field: "accountType", message: "Please choose Credit or Debit Card." };
   const d = digitsOf(cardNumber);
   // In edit mode a blank card means "keep the existing one".
-  if (editMode && d.length === 0) return "";
-  if (d.length < 12) return "Enter a valid card number.";
-  return "";
+  if (editMode && d.length === 0) return null;
+  if (d.length < 12) return { field: "cardNumber", message: "Enter a valid card number." };
+  return null;
 }
 
 export default function AddVillaPage() {
@@ -166,7 +184,13 @@ export default function AddVillaPage() {
 
   if (!ready) return <div className="min-h-[60vh]" />;
   if (!user) return <SignInGate />;
-  return <Wizard />;
+  // `useSearchParams` inside the wizard makes it client-rendered, so it needs
+  // a boundary of its own.
+  return (
+    <Suspense fallback={<WizardSkeleton />}>
+      <Wizard />
+    </Suspense>
+  );
 }
 
 /* ================================================================== */
@@ -177,17 +201,23 @@ function Wizard() {
   const router = useRouter();
   const { user, setUser } = useAuth();
 
-  // Edit mode when the URL carries ?edit=<villaId>.
-  const editId = useMemo(() => {
-    if (typeof window === "undefined") return null;
-    return new URLSearchParams(window.location.search).get("edit");
-  }, []);
+  // Edit mode when the URL carries ?edit=<villaId>. Read through the router
+  // hook: `window.location` doesn't exist on the server, so the page would
+  // render "Add your Villa" and then flip to "Edit your Villa" on hydration.
+  const searchParams = useSearchParams();
+  const editId = searchParams.get("edit");
   const editMode = !!editId;
 
   const [step, setStep] = useState(0);
   const [error, setError] = useState("");
+  const [invalidField, setInvalidField] = useState("");
   const [busy, setBusy] = useState(false);
   const [loadingVilla, setLoadingVilla] = useState(editMode);
+  // Set when an existing villa can't be loaded — that must not fall through to
+  // a blank create form.
+  const [loadFailed, setLoadFailed] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
+  const errorRef = useRef<HTMLParagraphElement>(null);
 
   // Step 1 — personal details (persisted to the user profile).
   const [personal, setPersonal] = useState({
@@ -221,7 +251,18 @@ function Wizard() {
 
   // Pull fresh profile once, then seed the personal-details form.
   useEffect(() => {
-    if (user) fetchMe().then(setUser).catch(() => {});
+    if (!user) return;
+    let cancelled = false;
+    fetchMe()
+      .then((me) => {
+        if (!cancelled) setUser(me);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : "Could not load your profile.");
+      });
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -234,7 +275,7 @@ function Wizard() {
         if (cancelled) return;
         const v = list.find((x) => x.id === editId);
         if (!v) {
-          setError("That villa could not be found.");
+          setLoadFailed("That villa could not be found.");
           setLoadingVilla(false);
           return;
         }
@@ -257,20 +298,25 @@ function Wizard() {
         setAccountType(v.payoutMethod || "");
         setCardNumber(""); // blank = keep existing card on save
         setImages(
-          (v.photos || []).map((p) => ({ kind: "existing" as const, id: p.id, url: p.url }))
+          (v.photos || []).map((p) => ({
+            key: nextImageKey(),
+            kind: "existing" as const,
+            id: p.id,
+            url: p.url,
+          }))
         );
         setLoadingVilla(false);
       })
-      .catch(() => {
+      .catch((e) => {
         if (!cancelled) {
-          setError("Could not load the villa.");
+          setLoadFailed(e instanceof Error ? e.message : "Could not load the villa.");
           setLoadingVilla(false);
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [editId]);
+  }, [editId, reloadKey]);
   useEffect(() => {
     if (user) {
       setPersonal({
@@ -284,35 +330,46 @@ function Wizard() {
     }
   }, [user]);
 
+  // Publishing jumps back to the first incomplete section, so the banner can
+  // appear on a step the user isn't looking at — bring it into view.
+  useEffect(() => {
+    if (error) errorRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [error]);
+
   // Live per-section validation — recomputed every render from current state,
   // so the stepper's complete/incomplete badges stay correct from ANY step.
-  const stepErrors = [
+  const stepIssues = [
     personalError(personal),
     villaError(villa),
     imagesError(images),
-    "", // Extra Services — optional
+    null, // Extra Services — optional
     pricingError(price),
     paymentError(acceptedPayments, accountType, cardNumber, editMode),
   ];
-  const stepComplete = stepErrors.map((e) => e === "");
+  const stepComplete = stepIssues.map((e) => e === null);
 
   function goto(target: number) {
     // Any step is freely clickable — jump around the wizard like tabs.
     setError("");
+    setInvalidField("");
     setStep(target);
   }
 
   function advance() {
     setStep((s) => Math.min(s + 1, STEPS.length - 1));
     setError("");
+    setInvalidField("");
   }
 
   async function handleNext() {
     setError("");
+    setInvalidField("");
 
     // Block leaving the current section until its mandatory fields are filled.
-    if (stepErrors[step]) {
-      setError(stepErrors[step]);
+    const issue = stepIssues[step];
+    if (issue) {
+      setError(issue.message);
+      setInvalidField(issue.field);
       return;
     }
 
@@ -339,10 +396,10 @@ function Wizard() {
     // Final step — only publish when EVERY section is complete.
     const firstIncomplete = stepComplete.findIndex((c) => !c);
     if (firstIncomplete !== -1) {
+      const blocking = stepIssues[firstIncomplete]!;
       setStep(firstIncomplete);
-      setError(
-        `"${STEPS[firstIncomplete]}" is incomplete — ${stepErrors[firstIncomplete]}`
-      );
+      setError(`"${STEPS[firstIncomplete]}" is incomplete — ${blocking.message}`);
+      setInvalidField(blocking.field);
       return;
     }
     await publish();
@@ -358,10 +415,10 @@ function Wizard() {
           : villa.propertyType;
       // Split images into brand-new uploads (base64) and existing ones to keep.
       const newImages = images
-        .filter((im): im is Extract<WizardImage, { kind: "new" }> => im.kind === "new")
+        .filter((im): im is WizardImage & { kind: "new"; dataUrl: string } => im.kind === "new")
         .map((im) => im.dataUrl);
       const keepImageIds = images
-        .filter((im): im is Extract<WizardImage, { kind: "existing" }> => im.kind === "existing")
+        .filter((im): im is WizardImage & { kind: "existing"; id: string } => im.kind === "existing")
         .map((im) => im.id);
 
       const input: VillaInput = {
@@ -396,10 +453,34 @@ function Wizard() {
 
   const isLast = step === STEPS.length - 1;
 
-  if (loadingVilla) {
+  if (loadingVilla) return <WizardSkeleton />;
+
+  // Terminal: an edit link whose villa never arrived must not quietly turn into
+  // a blank "Add your Villa" form.
+  if (loadFailed) {
     return (
-      <div className="mx-auto flex min-h-[60vh] w-full max-w-[1120px] items-center justify-center px-5 text-[14px] text-muted">
-        Loading your villa…
+      <div className="mx-auto flex min-h-[60vh] w-full max-w-[1120px] flex-col items-center justify-center px-5 text-center">
+        <h1 className="text-[22px] font-bold text-ink">Couldn&apos;t load this villa</h1>
+        <p className="mt-2 text-[14px] text-body">{loadFailed}</p>
+        <div className="mt-5 flex items-center gap-4">
+          <button
+            type="button"
+            onClick={() => {
+              setLoadFailed("");
+              setLoadingVilla(true);
+              setReloadKey((k) => k + 1);
+            }}
+            className="rounded-lg bg-primary px-5 py-2.5 text-[14px] font-medium text-white transition-colors hover:bg-primary-dark"
+          >
+            Try again
+          </button>
+          <Link
+            href="/settings/property"
+            className="text-[14px] text-ink underline underline-offset-2 hover:text-primary"
+          >
+            Back to my properties
+          </Link>
+        </div>
       </div>
     );
   }
@@ -407,14 +488,14 @@ function Wizard() {
   return (
     <div className="mx-auto w-full max-w-[1120px] px-5 pb-20 pt-8 lg:px-7">
       {/* Breadcrumb */}
-      <nav className="text-[13px] text-body">
+      <nav aria-label="Breadcrumb" className="text-[13px] text-body">
         <Link href="/" className="underline underline-offset-2 hover:text-primary">Home</Link>
         <span className="mx-1.5 text-muted">/</span>
-        <Link href="#" className="underline underline-offset-2 hover:text-primary">All Topics</Link>
+        <Link href="/settings" className="underline underline-offset-2 hover:text-primary">Settings</Link>
         <span className="mx-1.5 text-muted">/</span>
-        <Link href="#" className="underline underline-offset-2 hover:text-primary">Legal Terms</Link>
+        <Link href="/settings/property" className="underline underline-offset-2 hover:text-primary">My Properties</Link>
         <span className="mx-1.5 text-muted">/</span>
-        <span className="text-muted">Privacy Policy</span>
+        <span className="text-muted">{editMode ? "Edit your Villa" : "Add your Villa"}</span>
       </nav>
 
       {/* Title + Back */}
@@ -442,6 +523,7 @@ function Wizard() {
               onChange={(k, v) => setPersonal((p) => ({ ...p, [k]: v }))}
               user={user}
               setUser={setUser}
+              invalidField={invalidField}
             />
           )}
           {step === 1 && (
@@ -452,6 +534,7 @@ function Wizard() {
               setVillaTypeOther={setVillaTypeOther}
               services={services}
               setServices={setServices}
+              invalidField={invalidField}
             />
           )}
           {step === 2 && (
@@ -460,7 +543,9 @@ function Wizard() {
           {step === 3 && (
             <ServicesStep selected={services} setSelected={setServices} />
           )}
-          {step === 4 && <PricingStep price={price} setPrice={setPrice} />}
+          {step === 4 && (
+            <PricingStep price={price} setPrice={setPrice} invalidField={invalidField} />
+          )}
           {step === 5 && (
             <PaymentStep
               accepted={acceptedPayments}
@@ -469,11 +554,16 @@ function Wizard() {
               setAccountType={setAccountType}
               cardNumber={cardNumber}
               setCardNumber={setCardNumber}
+              invalidField={invalidField}
             />
           )}
 
           {error && (
-            <p className="mt-5 rounded-lg bg-red-50 px-3 py-2 text-[13px] text-red-600">
+            <p
+              ref={errorRef}
+              role="alert"
+              className="mt-5 rounded-lg bg-red-50 px-3 py-2 text-[13px] text-red-600"
+            >
               {error}
             </p>
           )}
@@ -536,6 +626,10 @@ function Stepper({
               <button
                 type="button"
                 onClick={() => onSelect(i)}
+                // A completed circle renders an icon only, so name the step
+                // rather than announcing an empty button.
+                aria-label={`Step ${i + 1}: ${label}${isDone && !optional ? " (completed)" : ""}`}
+                aria-current={active ? "step" : undefined}
                 className={`relative z-10 flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-[13px] font-semibold transition-colors ${
                   isDone
                     ? "bg-primary text-white"
@@ -607,11 +701,13 @@ function PersonalStep({
   onChange,
   user,
   setUser,
+  invalidField,
 }: {
   values: Personal;
   onChange: (k: keyof Personal, v: string) => void;
   user: ReturnType<typeof useAuth>["user"];
   setUser: ReturnType<typeof useAuth>["setUser"];
+  invalidField: string;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [avatarBusy, setAvatarBusy] = useState(false);
@@ -641,21 +737,17 @@ function PersonalStep({
 
       <div className="mt-6 grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1fr)_200px] lg:gap-12">
         <div className="space-y-4">
-          <LabeledInput label="Full name" required placeholder="Add Full name" value={values.fullName} onChange={(v) => onChange("fullName", v)} />
-          <div>
-            <FieldLabel required>Gender</FieldLabel>
-            <SelectBox value={values.gender} onChange={(v) => onChange("gender", v)} placeholder="Select your gender." options={["Male", "Female", "Other", "Prefer not to say"]} />
-          </div>
-          <LabeledInput label="Email Adress" required type="email" placeholder="Example1@myvilla.com" value={values.email} onChange={(v) => onChange("email", v)} />
-          <LabeledInput label="Date of Birth" required placeholder="DD/MM/YYYY" value={values.dateOfBirth} onChange={(v) => onChange("dateOfBirth", v)} />
+          <LabeledInput label="Full name" required placeholder="Add Full name" value={values.fullName} onChange={(v) => onChange("fullName", v)} invalid={invalidField === "fullName"} />
+          <SelectBox label="Gender" required value={values.gender} onChange={(v) => onChange("gender", v)} placeholder="Select your gender." options={["Male", "Female", "Other", "Prefer not to say"]} invalid={invalidField === "gender"} />
+          <LabeledInput label="Email Address" required type="email" placeholder="Example1@myvilla.com" value={values.email} onChange={(v) => onChange("email", v)} invalid={invalidField === "email"} />
+          <LabeledInput label="Date of Birth" required placeholder="DD/MM/YYYY" value={values.dateOfBirth} onChange={(v) => onChange("dateOfBirth", v)} invalid={invalidField === "dateOfBirth"} />
           <LabeledInput label="Address" placeholder="Not Provided" value={values.address} onChange={(v) => onChange("address", v)} />
           <LabeledInput label="Emergency Contact" placeholder="Not Provided" value={values.emergencyContact} onChange={(v) => onChange("emergencyContact", v)} />
         </div>
 
         <div className="order-first flex flex-col items-center lg:order-none lg:pt-2">
-          <div className="relative h-[120px] w-[120px] overflow-hidden rounded-full bg-page">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={avatarSrc} alt="Profile" className="h-full w-full object-cover" />
+          <div className="img-frame relative h-[120px] w-[120px] overflow-hidden rounded-full bg-page">
+            <Img src={avatarSrc} alt="Profile" fallback={FALLBACK_AVATAR} className="h-full w-full object-cover" />
             {avatarBusy && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/40 text-[11px] font-medium text-white">
                 Uploading…
@@ -700,6 +792,7 @@ function VillaDetailsStep({
   setVillaTypeOther,
   services,
   setServices,
+  invalidField,
 }: {
   values: VillaForm;
   onChange: (k: keyof VillaForm, v: string | number) => void;
@@ -707,17 +800,42 @@ function VillaDetailsStep({
   setVillaTypeOther: (v: string) => void;
   services: string[];
   setServices: React.Dispatch<React.SetStateAction<string[]>>;
+  invalidField: string;
 }) {
+  const uid = useId();
+  // `null` = the "Add More" button is showing; a string = the inline input is.
+  const [customFacility, setCustomFacility] = useState<string | null>(null);
+  // Escape unmounts the input, which also fires blur — this stops the cancelled
+  // value from being committed on the way out.
+  const facilityCancelled = useRef(false);
+
+  // The map is a network iframe: rebuilding its src on every keystroke reloads
+  // and flickers it, so it follows the address only once typing pauses.
+  const [mapQuery, setMapQuery] = useState(values.address.trim());
+  useEffect(() => {
+    const t = setTimeout(() => setMapQuery(values.address.trim()), 500);
+    return () => clearTimeout(t);
+  }, [values.address]);
+
+  const words = values.description.trim() ? values.description.trim().split(/\s+/).length : 0;
+
+  function onDescriptionChange(next: string) {
+    // Only rewrite the value once the cap is actually exceeded — normalising on
+    // every keystroke collapses double spaces and jumps the caret to the end.
+    const parts = next.trim().split(/\s+/);
+    onChange("description", parts.length > 150 ? parts.slice(0, 150).join(" ") : next);
+  }
+
   function toggleFacility(label: string) {
     setServices((prev) =>
       prev.includes(label) ? prev.filter((x) => x !== label) : [...prev, label]
     );
   }
 
-  function addCustomFacility() {
-    const value = typeof window !== "undefined" ? window.prompt("Add a facility") : null;
-    const label = value?.trim();
+  function commitCustomFacility() {
+    const label = customFacility?.trim();
     if (label && !services.includes(label)) setServices((prev) => [...prev, label]);
+    setCustomFacility(null);
   }
 
   return (
@@ -748,6 +866,7 @@ function VillaDetailsStep({
           value={villaTypeOther}
           onChange={(e) => setVillaTypeOther(e.target.value)}
           placeholder="Specify your villa type"
+          aria-label="Specify your villa type"
           className="mt-3 w-full max-w-[360px] rounded-md border border-line px-3.5 py-2.5 text-[14px] text-ink placeholder:text-muted focus:border-primary focus:outline-none"
         />
       )}
@@ -755,21 +874,24 @@ function VillaDetailsStep({
       {/* Details */}
       <h3 className="mt-7 text-[16px] font-bold text-ink">Details</h3>
       <div className="mt-4 space-y-4">
-        <LabeledInput label="Name of your Villa" required placeholder="Complete Name" value={values.title} onChange={(v) => onChange("title", v)} />
+        <LabeledInput label="Name of your Villa" required placeholder="Complete Name" value={values.title} onChange={(v) => onChange("title", v)} invalid={invalidField === "title"} />
         <div>
-          <FieldLabel required>Describe your Villa (Max 150 words)</FieldLabel>
+          <FieldLabel htmlFor={`${uid}-description`} required>Describe your Villa (Max 150 words)</FieldLabel>
           <textarea
+            id={`${uid}-description`}
             value={values.description}
-            onChange={(e) => onChange("description", e.target.value.split(/\s+/).slice(0, 150).join(" "))}
+            onChange={(e) => onDescriptionChange(e.target.value)}
             rows={4}
             placeholder="Description"
+            aria-invalid={invalidField === "description" || undefined}
             className="w-full rounded-md border border-line px-3.5 py-2.5 text-[14px] text-ink placeholder:text-muted focus:border-primary focus:outline-none"
           />
+          <p className="mt-1.5 text-[12px] text-muted">{words} / 150 words</p>
         </div>
-        <LabeledInput label="Villa Dimensions" required placeholder="Total Build up Area (in Square Yards)" value={values.buildUpArea} onChange={(v) => onChange("buildUpArea", v)} />
-        <LabeledInput label="Villa Address" required placeholder="Registered Address of Villa" value={values.address} onChange={(v) => onChange("address", v)} />
-        <NumberInput label="Number of Rooms" required value={values.bedrooms} onChange={(n) => onChange("bedrooms", n)} />
-        <NumberInput label="Number of Bathrooms" required value={values.bathrooms} onChange={(n) => onChange("bathrooms", n)} />
+        <LabeledInput label="Villa Dimensions" required placeholder="Total Build up Area (in Square Yards)" value={values.buildUpArea} onChange={(v) => onChange("buildUpArea", v)} invalid={invalidField === "buildUpArea"} />
+        <LabeledInput label="Villa Address" required placeholder="Registered Address of Villa" value={values.address} onChange={(v) => onChange("address", v)} invalid={invalidField === "address"} />
+        <NumberInput label="Number of Rooms" required value={values.bedrooms} onChange={(n) => onChange("bedrooms", n)} invalid={invalidField === "bedrooms"} />
+        <NumberInput label="Number of Bathrooms" required value={values.bathrooms} onChange={(n) => onChange("bathrooms", n)} invalid={invalidField === "bathrooms"} />
 
         {/* Facilities */}
         <div>
@@ -793,39 +915,59 @@ function VillaDetailsStep({
                 </button>
               );
             })}
-            <button
-              type="button"
-              onClick={addCustomFacility}
-              className="flex items-center gap-1 rounded-full border border-dashed border-line px-3.5 py-1.5 text-[13px] text-muted transition-colors hover:border-primary hover:text-primary"
-            >
-              <Plus size={14} /> Add More
-            </button>
+            {customFacility === null ? (
+              <button
+                type="button"
+                onClick={() => setCustomFacility("")}
+                className="flex items-center gap-1 rounded-full border border-dashed border-line px-3.5 py-1.5 text-[13px] text-muted transition-colors hover:border-primary hover:text-primary"
+              >
+                <Plus size={14} /> Add More
+              </button>
+            ) : (
+              <input
+                autoFocus
+                value={customFacility}
+                onChange={(e) => setCustomFacility(e.target.value)}
+                onBlur={() => {
+                  if (facilityCancelled.current) {
+                    facilityCancelled.current = false;
+                    return;
+                  }
+                  commitCustomFacility();
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    commitCustomFacility();
+                  } else if (e.key === "Escape") {
+                    facilityCancelled.current = true;
+                    setCustomFacility(null);
+                  }
+                }}
+                placeholder="Facility name"
+                aria-label="Add a facility"
+                className="rounded-full border border-primary px-3.5 py-1.5 text-[13px] text-ink placeholder:text-muted focus:outline-none"
+              />
+            )}
           </div>
         </div>
 
         {/* Map — follows the address / city / country the host types above */}
         <div>
           <FieldLabel>Villa Location on Map</FieldLabel>
-          {(() => {
-            const q = (values.address || "").trim();
-            return (
-              <>
-                <div className="overflow-hidden rounded-lg border border-line">
-                  <iframe
-                    title="Villa location"
-                    className="h-[240px] w-full"
-                    loading="lazy"
-                    src={`https://maps.google.com/maps?q=${encodeURIComponent(q || "villa")}&z=12&output=embed`}
-                  />
-                </div>
-                <p className="mt-1.5 text-[12px] text-muted">
-                  {q
-                    ? `Showing: ${q}`
-                    : "Type the villa address above to set the map location."}
-                </p>
-              </>
-            );
-          })()}
+          <div className="overflow-hidden rounded-lg border border-line">
+            <iframe
+              title="Villa location"
+              className="h-[240px] w-full"
+              loading="lazy"
+              src={`https://maps.google.com/maps?q=${encodeURIComponent(mapQuery || "villa")}&z=12&output=embed`}
+            />
+          </div>
+          <p className="mt-1.5 text-[12px] text-muted">
+            {mapQuery
+              ? `Showing: ${mapQuery}`
+              : "Type the villa address above to set the map location."}
+          </p>
         </div>
       </div>
     </div>
@@ -856,7 +998,11 @@ function ImagesStep({
     setBusy(true);
     try {
       const encoded = await Promise.all(files.map((f) => fileToResizedDataUrl(f, 1280, 0.82)));
-      const added: WizardImage[] = encoded.map((dataUrl) => ({ kind: "new", dataUrl }));
+      const added: WizardImage[] = encoded.map((dataUrl) => ({
+        key: nextImageKey(),
+        kind: "new",
+        dataUrl,
+      }));
       setImages((prev) => [...prev, ...added].slice(0, 15));
     } catch {
       setError("One of the images could not be read.");
@@ -874,9 +1020,8 @@ function ImagesStep({
 
       <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3">
         {images.map((im, i) => (
-          <div key={i} className="group relative aspect-[4/3] overflow-hidden rounded-lg border border-line bg-page">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={imageSrc(im)} alt={`Villa ${i + 1}`} className="h-full w-full object-cover" />
+          <div key={im.key} className="img-frame group relative aspect-[4/3] overflow-hidden rounded-lg border border-line bg-page">
+            <Img src={imageSrc(im)} alt={`Villa ${i + 1}`} className="h-full w-full object-cover" />
             {i === 0 && (
               <span className="absolute left-2 top-2 rounded bg-primary px-2 py-0.5 text-[10px] font-semibold text-white">
                 Cover
@@ -884,9 +1029,9 @@ function ImagesStep({
             )}
             <button
               type="button"
-              onClick={() => setImages((prev) => prev.filter((_, idx) => idx !== i))}
-              className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100"
-              aria-label="Remove image"
+              onClick={() => setImages((prev) => prev.filter((x) => x.key !== im.key))}
+              className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+              aria-label={`Remove image ${i + 1}`}
             >
               <X size={14} />
             </button>
@@ -964,9 +1109,11 @@ function ServicesStep({
 function PricingStep({
   price,
   setPrice,
+  invalidField,
 }: {
   price: string;
   setPrice: (s: string) => void;
+  invalidField: string;
 }) {
   const n = Number(price) || 0;
   const bump = (delta: number) => setPrice(String(Math.max(0, n + delta)));
@@ -995,6 +1142,8 @@ function PricingStep({
                 value={price}
                 onChange={(e) => setPrice(e.target.value)}
                 placeholder="135"
+                aria-label="Price per night in US dollars"
+                aria-invalid={invalidField === "price" || undefined}
                 className="w-16 bg-transparent text-[15px] font-semibold text-ink placeholder:font-normal placeholder:text-muted focus:outline-none"
               />
             </div>
@@ -1038,6 +1187,7 @@ function PaymentStep({
   setAccountType,
   cardNumber,
   setCardNumber,
+  invalidField,
 }: {
   accepted: string[];
   setAccepted: React.Dispatch<React.SetStateAction<string[]>>;
@@ -1045,6 +1195,7 @@ function PaymentStep({
   setAccountType: (v: string) => void;
   cardNumber: string;
   setCardNumber: (v: string) => void;
+  invalidField: string;
 }) {
   function toggle(m: string) {
     setAccepted((prev) => (prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m]));
@@ -1086,6 +1237,8 @@ function PaymentStep({
           <select
             value={accountType}
             onChange={(e) => setAccountType(e.target.value)}
+            aria-label="Account type"
+            aria-invalid={invalidField === "accountType" || undefined}
             className={`w-full appearance-none rounded-md border border-line bg-white px-3.5 py-3 pr-10 text-[14px] focus:border-primary focus:outline-none ${
               accountType ? "text-ink" : "text-muted"
             }`}
@@ -1102,6 +1255,10 @@ function PaymentStep({
           onChange={(e) => setCardNumber(e.target.value)}
           inputMode="numeric"
           placeholder="Card Number"
+          aria-label="Card Number"
+          autoComplete="cc-number"
+          maxLength={19}
+          aria-invalid={invalidField === "cardNumber" || undefined}
           className="w-full rounded-md border border-line px-3.5 py-3 text-[14px] text-ink placeholder:text-muted focus:border-primary focus:outline-none"
         />
       </div>
@@ -1147,15 +1304,17 @@ function PaymentLogo({ name }: { name: string }) {
 function FieldLabel({
   children,
   required,
+  htmlFor,
 }: {
   children: React.ReactNode;
   required?: boolean;
+  htmlFor?: string;
 }) {
   return (
-    <p className="mb-1.5 text-[13px] font-medium text-primary">
+    <label htmlFor={htmlFor} className="mb-1.5 block text-[13px] font-medium text-primary">
       {children}
       {required && <span className="text-red-500"> *</span>}
-    </p>
+    </label>
   );
 }
 
@@ -1166,6 +1325,7 @@ function LabeledInput({
   placeholder,
   type = "text",
   required,
+  invalid,
 }: {
   label: string;
   value: string;
@@ -1173,15 +1333,19 @@ function LabeledInput({
   placeholder?: string;
   type?: string;
   required?: boolean;
+  invalid?: boolean;
 }) {
+  const id = useId();
   return (
     <div>
-      <FieldLabel required={required}>{label}</FieldLabel>
+      <FieldLabel htmlFor={id} required={required}>{label}</FieldLabel>
       <input
+        id={id}
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
+        aria-invalid={invalid || undefined}
         className="w-full rounded-md border border-line px-3.5 py-2.5 text-[14px] text-ink placeholder:text-muted focus:border-primary focus:outline-none"
       />
     </div>
@@ -1193,20 +1357,25 @@ function NumberInput({
   value,
   onChange,
   required,
+  invalid,
 }: {
   label: string;
   value: number;
   onChange: (n: number) => void;
   required?: boolean;
+  invalid?: boolean;
 }) {
+  const id = useId();
   return (
     <div>
-      <FieldLabel required={required}>{label}</FieldLabel>
+      <FieldLabel htmlFor={id} required={required}>{label}</FieldLabel>
       <input
+        id={id}
         type="number"
         min={0}
         value={value}
         onChange={(e) => onChange(Math.max(0, Number(e.target.value)))}
+        aria-invalid={invalid || undefined}
         className="w-full rounded-md border border-line px-3.5 py-2.5 text-[14px] text-ink focus:border-primary focus:outline-none"
       />
     </div>
@@ -1218,29 +1387,76 @@ function SelectBox({
   onChange,
   placeholder,
   options,
+  label,
+  required,
+  invalid,
 }: {
   value: string;
   onChange: (v: string) => void;
   placeholder: string;
   options: string[];
+  label: string;
+  required?: boolean;
+  invalid?: boolean;
 }) {
+  const id = useId();
   return (
-    <div className="relative">
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className={`w-full appearance-none rounded-md border border-line bg-white px-3.5 py-2.5 pr-10 text-[14px] focus:border-primary focus:outline-none ${
-          value ? "text-ink" : "text-muted"
-        }`}
-      >
-        <option value="">{placeholder}</option>
-        {options.map((o) => (
-          <option key={o} value={o} className="text-ink">
-            {o}
-          </option>
-        ))}
-      </select>
-      <ChevronDown size={18} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-muted" />
+    <div>
+      <FieldLabel htmlFor={id} required={required}>{label}</FieldLabel>
+      <div className="relative">
+        <select
+          id={id}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          aria-invalid={invalid || undefined}
+          className={`w-full appearance-none rounded-md border border-line bg-white px-3.5 py-2.5 pr-10 text-[14px] focus:border-primary focus:outline-none ${
+            value ? "text-ink" : "text-muted"
+          }`}
+        >
+          <option value="">{placeholder}</option>
+          {options.map((o) => (
+            <option key={o} value={o} className="text-ink">
+              {o}
+            </option>
+          ))}
+        </select>
+        <ChevronDown size={18} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-muted" />
+      </div>
+    </div>
+  );
+}
+
+/* Approximates the stepper + card so the two-column layout doesn't snap in. */
+function WizardSkeleton() {
+  return (
+    <div className="mx-auto w-full max-w-[1120px] px-5 pb-20 pt-8 lg:px-7">
+      <div className="skeleton h-4 w-72" />
+      <div className="skeleton mt-5 h-9 w-64" />
+      <div className="mt-8 grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
+        <div className="lg:pt-1">
+          {STEPS.map((label) => (
+            <div key={label} className="flex items-start gap-4 pb-8 last:pb-0">
+              <div className="skeleton h-8 w-8 shrink-0 rounded-full" />
+              <div className="flex-1 pt-0.5">
+                <div className="skeleton h-4 w-28" />
+                <div className="skeleton mt-1.5 h-3 w-16" />
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="w-full rounded-2xl border border-line bg-white p-6 sm:p-8">
+          <div className="skeleton h-5 w-2/3" />
+          <div className="mt-6 space-y-4">
+            <div className="skeleton h-[62px] w-full" />
+            <div className="skeleton h-[62px] w-full" />
+            <div className="skeleton h-[62px] w-full" />
+            <div className="skeleton h-[62px] w-full" />
+          </div>
+          <div className="mt-7 flex justify-end">
+            <div className="skeleton h-10 w-36" />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1251,6 +1467,7 @@ function SelectBox({
 
 function SignInGate() {
   const { setUser } = useAuth();
+  const uid = useId();
   const [email, setEmail] = useState(getRememberedEmail());
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -1287,8 +1504,9 @@ function SignInGate() {
 
           <form onSubmit={submit} noValidate className="mt-8 space-y-4">
             <div>
-              <label className="mb-1.5 block text-[14px] font-semibold text-ink">Email</label>
+              <label htmlFor={`${uid}-email`} className="mb-1.5 block text-[14px] font-semibold text-ink">Email</label>
               <input
+                id={`${uid}-email`}
                 type="email"
                 autoComplete="email"
                 value={email}
@@ -1298,8 +1516,9 @@ function SignInGate() {
               />
             </div>
             <div>
-              <label className="mb-1.5 block text-[14px] font-semibold text-ink">Password</label>
+              <label htmlFor={`${uid}-password`} className="mb-1.5 block text-[14px] font-semibold text-ink">Password</label>
               <input
+                id={`${uid}-password`}
                 type="password"
                 autoComplete="current-password"
                 value={password}
@@ -1309,7 +1528,7 @@ function SignInGate() {
             </div>
 
             {error && (
-              <p className="rounded-lg bg-red-50 px-3 py-2 text-[13px] text-red-600">{error}</p>
+              <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-[13px] text-red-600">{error}</p>
             )}
 
             <button

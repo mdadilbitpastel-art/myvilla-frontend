@@ -37,9 +37,15 @@ export default function Testimonials() {
 
               <p className="mt-3 text-[13px] leading-6 text-body">
                 {t.text}{" "}
-                <a href="#" className="font-medium text-primary">
+                {/* TODO: no per-testimonial page yet — kept non-navigating so it
+                    doesn't jump the page to the top. */}
+                <button
+                  type="button"
+                  aria-disabled="true"
+                  className="font-medium text-primary"
+                >
                   read more...
-                </a>
+                </button>
               </p>
             </div>
           </Reveal>

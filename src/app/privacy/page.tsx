@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Breadcrumb from "@/components/property/Breadcrumb";
+import Img from "@/components/ui/Img";
 import {
   privacyIntro,
   privacyRegions,
@@ -26,11 +27,11 @@ export default function PrivacyPage() {
         </h1>
 
         {/* Hero image */}
-        <div className="mt-4 overflow-hidden rounded-xl">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
+        <div className="img-frame mt-4 overflow-hidden rounded-xl">
+          <Img
             src={HERO_IMG}
             alt="Our team discussing privacy"
+            priority
             className="h-[170px] w-full object-cover sm:h-[200px]"
           />
         </div>
@@ -47,12 +48,12 @@ export default function PrivacyPage() {
                 {r.links.map((l) => (
                   <li key={l} className="flex gap-2 text-[12px]">
                     <span className="text-muted">•</span>
-                    <a
-                      href="#"
-                      className="text-body underline underline-offset-2 hover:text-primary"
+                    <span
+                      aria-disabled="true"
+                      className="cursor-default text-body underline underline-offset-2 hover:text-primary"
                     >
                       {l}
-                    </a>
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -73,12 +74,12 @@ export default function PrivacyPage() {
           {privacySupplemental.map((l) => (
             <li key={l} className="flex gap-2 text-[12px]">
               <span className="text-muted">•</span>
-              <a
-                href="#"
-                className="text-body underline underline-offset-2 hover:text-primary"
+              <span
+                aria-disabled="true"
+                className="cursor-default text-body underline underline-offset-2 hover:text-primary"
               >
                 {l}
-              </a>
+              </span>
             </li>
           ))}
         </ul>

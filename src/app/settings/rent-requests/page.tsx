@@ -1,11 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { ChevronDown } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import SettingsSidebar from "@/components/settings/SettingsSidebar";
+import Img from "@/components/ui/Img";
 import { fetchVillaBookings, respondBooking, type Booking } from "@/lib/api";
+
+// A broken avatar URL falls back to this transparent pixel, which reveals the
+// initial-letter tile rendered behind it.
+const TRANSPARENT_PX =
+  "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
 
 const COLUMNS = ["Tenant", "Property", "Stay Duration", "No. of Guests", "Status"];
 
@@ -36,19 +42,17 @@ function SortDropdown({ sort, onToggle }: { sort: "desc" | "asc"; onToggle: () =
 
 function TenantAvatar({ name, avatar }: { name: string; avatar: string }) {
   const initial = (name || "?").trim().charAt(0).toUpperCase();
-  if (avatar) {
-    return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={avatar}
-        alt={name}
-        className="h-8 w-8 shrink-0 rounded-full object-cover"
-      />
-    );
-  }
   return (
-    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[13px] font-semibold text-primary">
+    <div className="relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary/10 text-[13px] font-semibold text-primary">
       {initial}
+      {avatar && (
+        <Img
+          src={avatar}
+          alt={name}
+          fallback={TRANSPARENT_PX}
+          className="absolute inset-0 h-full w-full object-cover"
+        />
+      )}
     </div>
   );
 }
@@ -62,16 +66,21 @@ function RequestRow({
   onRespond: (id: string) => void;
   responding: boolean;
 }) {
-  const cancelled = req.status === "cancelled";
   return (
     <div className="grid min-w-[620px] grid-cols-[1.4fr_1.2fr_1.1fr_1fr_0.8fr] items-center rounded-lg border border-line px-4 py-3 text-[13px]">
       {/* Tenant */}
       <div className="flex items-center gap-2.5">
         <TenantAvatar name={req.guestName} avatar={req.guestAvatar} />
-        <span className="truncate text-ink">{req.guestName}</span>
+        <span className="truncate text-ink" title={req.guestName}>
+          {req.guestName}
+        </span>
       </div>
 
-      <Link href={`/villa/${req.villaId}`} className="truncate pr-2 text-body hover:text-primary">
+      <Link
+        href={`/villa/${req.villaId}`}
+        title={req.villaTitle}
+        className="truncate pr-2 text-body hover:text-primary"
+      >
         {req.villaTitle}
       </Link>
       <span className="text-body">{fmtStay(req.checkIn, req.checkOut)}</span>
@@ -79,19 +88,24 @@ function RequestRow({
         {req.guests} {req.guests === 1 ? "guest" : "guests"}
       </span>
 
+      {/* No cancelled state here — cancelled requests are filtered out upstream. */}
       <span className="text-right">
-        {cancelled ? (
-          <span className="text-[13px] font-semibold text-red-400">Cancelled</span>
-        ) : req.hostResponded ? (
+        {req.hostResponded ? (
           <span className="text-[13px] font-semibold text-primary">Responded</span>
         ) : (
           <button
             type="button"
             onClick={() => onRespond(req.id)}
             disabled={responding}
+            aria-busy={responding}
+            aria-label={
+              responding
+                ? `Responding to ${req.guestName}'s request`
+                : `Respond to ${req.guestName}'s request`
+            }
             className="text-[13px] font-medium text-primary underline underline-offset-2 transition-colors hover:text-primary-dark disabled:opacity-50"
           >
-            {responding ? "…" : "Respond"}
+            {responding ? <span className="spinner" aria-hidden /> : "Respond"}
           </button>
         )}
       </span>
@@ -106,12 +120,22 @@ export default function RentRequestsPage() {
   const [respondingId, setRespondingId] = useState<string | null>(null);
   const [sort, setSort] = useState<"desc" | "asc">("desc");
 
-  useEffect(() => {
-    if (!ready || !user) return;
+  const load = useCallback(() => {
     fetchVillaBookings()
       .then(setRequests)
       .catch((e) => setError(e instanceof Error ? e.message : "Failed to load rent requests."));
-  }, [ready, user]);
+  }, []);
+
+  useEffect(() => {
+    if (!ready || !user) return;
+    load();
+  }, [ready, user, load]);
+
+  function retryLoad() {
+    setError("");
+    setRequests(null);
+    load();
+  }
 
   async function onRespond(id: string) {
     setRespondingId(id);
@@ -159,13 +183,13 @@ export default function RentRequestsPage() {
       <div className="grid grid-cols-1 gap-10 lg:grid-cols-[190px_1fr]">
         {/* Left sidebar */}
         <aside>
-          <SettingsSidebar active="Rent Requests" />
+          <SettingsSidebar />
         </aside>
 
         {/* Right — rent requests card */}
         <div className="w-full rounded-2xl border border-line bg-white p-6 sm:p-8">
           {error && (
-            <div className="mb-6 rounded-lg bg-red-50 px-4 py-3 text-[13px] text-red-600">
+            <div role="alert" className="mb-6 rounded-lg bg-red-50 px-4 py-3 text-[13px] text-red-600">
               {error}
             </div>
           )}
@@ -173,7 +197,10 @@ export default function RentRequestsPage() {
           {/* Header */}
           <div className="flex items-center justify-between">
             <h2 className="text-[16px] font-bold text-ink">
-              <span className="text-primary">{active.length}</span> Active Rent
+              <span className="text-primary">
+                {String(active.length).padStart(2, "0")}
+              </span>{" "}
+              Active Rent
               Requests
             </h2>
             <SortDropdown sort={sort} onToggle={toggleSort} />
@@ -192,10 +219,25 @@ export default function RentRequestsPage() {
 
           {/* Rows */}
           <div className="mt-2.5 space-y-3">
-            {requests === null ? (
-              <div className="rounded-lg border border-dashed border-line px-4 py-6 text-center text-[13px] text-muted">
-                Loading rent requests…
+            {requests === null && error ? (
+              // A failed load is terminal — don't keep a loader spinning under
+              // the error banner.
+              <div className="rounded-lg border border-dashed border-line px-4 py-8 text-center">
+                <p className="text-[13px] text-muted">We couldn&apos;t load your rent requests.</p>
+                <button
+                  type="button"
+                  onClick={retryLoad}
+                  className="mt-4 rounded-lg bg-primary px-5 py-2.5 text-[13px] font-semibold text-white transition-colors hover:bg-primary-dark"
+                >
+                  Try again
+                </button>
               </div>
+            ) : requests === null ? (
+              <>
+                {Array.from({ length: 3 }, (_, i) => (
+                  <div key={i} className="skeleton h-[48px] min-w-[620px]" />
+                ))}
+              </>
             ) : active.length === 0 ? (
               <div className="rounded-lg border border-dashed border-line px-4 py-6 text-center text-[13px] text-muted">
                 No rent requests yet. When someone books one of your villas, it&apos;ll

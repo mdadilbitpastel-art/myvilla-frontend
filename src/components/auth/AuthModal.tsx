@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Image from "next/image";
 import Link from "next/link";
@@ -38,6 +38,8 @@ export default function AuthModal({
   onSwitch: (mode: AuthMode) => void;
 }) {
   const [mounted, setMounted] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
 
   // Lock body scroll while the modal is open.
   useEffect(() => {
@@ -49,14 +51,66 @@ export default function AuthModal({
     };
   }, []);
 
+  // Escape closes, and Tab stays inside the panel. Without the trap, tabbing
+  // walks straight out into the page behind the dimmed backdrop.
+  useEffect(() => {
+    if (!mounted) return;
+    const opener = document.activeElement as HTMLElement | null;
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab") return;
+
+      const panel = panelRef.current;
+      if (!panel) return;
+      const focusable = panel.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.addEventListener("keydown", onKeyDown);
+    // Land focus on the first field rather than leaving it on the page behind.
+    const firstField = panelRef.current?.querySelector<HTMLElement>(
+      "input:not([type=checkbox]), select"
+    );
+    firstField?.focus();
+
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      // Hand focus back to whatever opened the modal.
+      opener?.focus?.();
+    };
+  }, [mounted, onClose]);
+
   if (!mounted) return null;
 
   return createPortal(
     // Backdrop — sits BELOW the 68px header and dims the page.
-    // Clicking it does NOT close (only the cross does).
-    <div className="fixed inset-x-0 bottom-0 top-[68px] z-[60] overflow-y-auto bg-black/50">
+    // Clicking it does NOT close (only the cross / Escape does).
+    <div className="animate-fade-in fixed inset-x-0 bottom-0 top-[68px] z-[60] overflow-y-auto bg-black/50">
       <div className="flex min-h-full items-center justify-center p-4">
-        <div className="relative grid w-full max-w-[960px] overflow-hidden rounded-2xl bg-white shadow-2xl lg:grid-cols-[1.6fr_1fr]">
+        <div
+          ref={panelRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          className="relative grid w-full max-w-[960px] overflow-hidden rounded-2xl bg-white shadow-2xl lg:grid-cols-[1.6fr_1fr]"
+        >
         {/* Left — image with cancel + heading (desktop only) */}
         <div className="relative hidden lg:block">
           <Image
@@ -69,6 +123,7 @@ export default function AuthModal({
           <div className="absolute inset-0 bg-black/40" />
 
           <button
+            type="button"
             onClick={onClose}
             className="absolute left-5 top-5 flex items-center gap-2 text-[15px] text-white transition-opacity hover:opacity-80"
           >
@@ -88,6 +143,7 @@ export default function AuthModal({
 
         {/* Mobile close (image is hidden on small screens) */}
         <button
+          type="button"
           onClick={onClose}
           aria-label="Close"
           className="absolute left-4 top-4 z-10 flex items-center gap-2 text-[15px] text-ink lg:hidden"
@@ -100,9 +156,17 @@ export default function AuthModal({
         <div className="p-7 pt-14 sm:p-9 lg:pt-9">
           <div className="mx-auto w-full max-w-[340px]">
             {mode === "signin" ? (
-              <SigninForm onSwitch={() => onSwitch("register")} onSuccess={onClose} />
+              <SigninForm
+                titleId={titleId}
+                onSwitch={() => onSwitch("register")}
+                onSuccess={onClose}
+              />
             ) : (
-              <RegisterForm onSwitch={() => onSwitch("signin")} onSuccess={onClose} />
+              <RegisterForm
+                titleId={titleId}
+                onSwitch={() => onSwitch("signin")}
+                onSuccess={onClose}
+              />
             )}
           </div>
         </div>
@@ -118,9 +182,11 @@ export default function AuthModal({
 /* ------------------------------------------------------------------ */
 
 function SigninForm({
+  titleId,
   onSwitch,
   onSuccess,
 }: {
+  titleId: string;
   onSwitch: () => void;
   onSuccess: () => void;
 }) {
@@ -164,7 +230,9 @@ function SigninForm({
 
   return (
     <form onSubmit={submit} noValidate>
-      <h2 className="text-[20px] font-bold text-ink">Welcome back!</h2>
+      <h2 id={titleId} className="text-[20px] font-bold text-ink">
+        Welcome back!
+      </h2>
       <p className="mt-1 text-[13px] text-body">
         Continue with your MyVilla credentials
       </p>
@@ -210,13 +278,16 @@ function SigninForm({
 }
 
 function RegisterForm({
+  titleId,
   onSwitch,
   onSuccess,
 }: {
+  titleId: string;
   onSwitch: () => void;
   onSuccess: () => void;
 }) {
   const { setUser } = useAuth();
+  const uid = useId();
   const [email, setEmail] = useState("");
   const [dialCode, setDialCode] = useState("+00");
   const [phone, setPhone] = useState("");
@@ -265,7 +336,9 @@ function RegisterForm({
 
   return (
     <form onSubmit={submit} noValidate>
-      <h2 className="text-[20px] font-bold text-ink">Welcome to MyVilla</h2>
+      <h2 id={titleId} className="text-[20px] font-bold text-ink">
+        Welcome to MyVilla
+      </h2>
       <p className="mt-1 text-[13px] text-body">Create your account to continue</p>
 
       <div className="mt-4 space-y-3">
@@ -273,36 +346,57 @@ function RegisterForm({
 
         {/* Phone number with dial-code prefix */}
         <div>
-          <label className="mb-1.5 block text-[14px] font-semibold text-ink">Phone Number</label>
+          <label
+            htmlFor={`${uid}-phone`}
+            className="mb-1.5 block text-[14px] font-semibold text-ink"
+          >
+            Phone Number
+          </label>
           <div className="flex gap-2">
             <input
               value={dialCode}
               onChange={(e) => setDialCode(e.target.value)}
-              className="w-16 rounded-lg border border-line bg-white px-3 py-2.5 text-center text-[14px] text-ink focus:border-primary focus:outline-none"
+              aria-label="Country dial code"
+              inputMode="tel"
+              className="w-16 rounded-lg border border-line bg-white px-3 py-2.5 text-center text-[14px] text-ink transition-colors focus:border-primary focus:outline-none"
             />
             <input
+              id={`${uid}-phone`}
               value={phone}
               onChange={(e) => { setPhone(e.target.value); clear("phone"); }}
               placeholder="000 - 0000 - 000"
               inputMode="tel"
+              autoComplete="tel-national"
               aria-invalid={!!errors.phone}
-              className={`flex-1 rounded-lg border bg-white px-3.5 py-2.5 text-[14px] text-ink placeholder:text-muted focus:outline-none ${
+              aria-describedby={errors.phone ? `${uid}-phone-error` : undefined}
+              className={`min-w-0 flex-1 rounded-lg border bg-white px-3.5 py-2.5 text-[14px] text-ink transition-colors placeholder:text-muted focus:outline-none ${
                 errors.phone ? "border-red-400 focus:border-red-400" : "border-line focus:border-primary"
               }`}
             />
           </div>
-          {errors.phone && <p className="mt-1 text-[12px] text-red-600">{errors.phone}</p>}
+          {errors.phone && (
+            <p id={`${uid}-phone-error`} className="mt-1 text-[12px] text-red-600">
+              {errors.phone}
+            </p>
+          )}
         </div>
 
         {/* Country select */}
         <div>
-          <label className="mb-1.5 block text-[14px] font-semibold text-ink">Country or Region</label>
+          <label
+            htmlFor={`${uid}-country`}
+            className="mb-1.5 block text-[14px] font-semibold text-ink"
+          >
+            Country or Region
+          </label>
           <div className="relative">
             <select
+              id={`${uid}-country`}
               value={country}
               onChange={(e) => { setCountry(e.target.value); clear("country"); }}
               aria-invalid={!!errors.country}
-              className={`w-full appearance-none rounded-lg border bg-white px-3.5 py-2.5 pr-10 text-[14px] focus:outline-none ${
+              autoComplete="country-name"
+              className={`w-full cursor-pointer appearance-none rounded-lg border bg-white px-3.5 py-2.5 pr-10 text-[14px] transition-colors focus:outline-none ${
                 errors.country ? "border-red-400 focus:border-red-400" : "border-line focus:border-primary"
               } ${country ? "text-ink" : "text-muted"}`}
             >
@@ -388,23 +482,37 @@ function Field({
   error?: string;
   autoComplete?: string;
 }) {
+  const id = useId();
+  const errorId = `${id}-error`;
+
   return (
     <div>
-      <label className="mb-1.5 block text-[14px] font-semibold text-ink">{label}</label>
+      <label
+        htmlFor={id}
+        className="mb-1.5 block text-[14px] font-semibold text-ink"
+      >
+        {label}
+      </label>
       <input
+        id={id}
         type={type}
         placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         autoComplete={autoComplete}
         aria-invalid={!!error}
-        className={`w-full rounded-lg border bg-white px-3.5 py-2.5 text-[14px] text-ink placeholder:text-muted focus:outline-none focus:ring-2 ${
+        aria-describedby={error ? errorId : undefined}
+        className={`w-full rounded-lg border bg-white px-3.5 py-2.5 text-[14px] text-ink transition-colors placeholder:text-muted focus:outline-none focus:ring-2 ${
           error
             ? "border-red-400 focus:border-red-400 focus:ring-red-500/15"
             : "border-line focus:border-primary focus:ring-primary/15"
         }`}
       />
-      {error && <p className="mt-1 text-[12px] text-red-600">{error}</p>}
+      {error && (
+        <p id={errorId} className="mt-1 text-[12px] text-red-600">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
@@ -412,7 +520,13 @@ function Field({
 function FormError({ message }: { message: string }) {
   if (!message) return null;
   return (
-    <p className="rounded-lg bg-red-50 px-3 py-2 text-[13px] text-red-600">{message}</p>
+    // role="alert" so a failed sign-in is announced, not just painted.
+    <p
+      role="alert"
+      className="rounded-lg bg-red-50 px-3 py-2 text-[13px] text-red-600"
+    >
+      {message}
+    </p>
   );
 }
 
@@ -427,8 +541,10 @@ function SubmitButton({
     <button
       type="submit"
       disabled={loading}
-      className="w-full rounded-lg bg-primary py-3 text-[14px] font-semibold text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-70"
+      aria-busy={loading}
+      className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary py-3 text-[14px] font-semibold text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-70"
     >
+      {loading && <span className="spinner" aria-hidden />}
       {loading ? "Please wait…" : children}
     </button>
   );

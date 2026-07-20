@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Star } from "lucide-react";
+import { Star, X } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import SettingsSidebar from "@/components/settings/SettingsSidebar";
+import Img from "@/components/ui/Img";
 import { fetchMyVillas, deleteVilla, type Villa } from "@/lib/api";
 
 const PLACEHOLDER_IMG =
@@ -55,7 +56,9 @@ function villaToRow(v: Villa): Row {
     city: v.city || v.title,
     country: v.country || "",
     price: v.pricePerNight,
-    rating: null, // brand-new listing → no reviews yet
+    // The backend doesn't expose a rating yet, so every listing shows "New".
+    // Kept as `number | null` so the rated branch works once it does.
+    rating: null,
     reviews: 0,
     posted: timeAgo(v.createdAt),
   };
@@ -64,7 +67,9 @@ function villaToRow(v: Villa): Row {
 export default function MyPropertyPage() {
   const { user, ready } = useAuth();
   const [villas, setVillas] = useState<Villa[] | null>(null);
-  const [banner, setBanner] = useState("");
+  // A failed load is not the same thing as "you have no listings".
+  const [loadError, setLoadError] = useState("");
+  const [banner, setBanner] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
 
   // Delete a villa the user owns, after confirming. On success drop it from the
@@ -78,9 +83,9 @@ export default function MyPropertyPage() {
     try {
       await deleteVilla(id);
       setVillas((prev) => (prev ? prev.filter((v) => v.id !== id) : prev));
-      setBanner("🗑️ Property removed.");
+      setBanner({ kind: "success", text: "🗑️ Property removed." });
     } catch {
-      setBanner("Could not remove the property. Please try again.");
+      setBanner({ kind: "error", text: "Could not remove the property. Please try again." });
     } finally {
       setRemovingId(null);
     }
@@ -91,9 +96,9 @@ export default function MyPropertyPage() {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       if (params.get("added") === "1") {
-        setBanner("🎉 Your villa has been published successfully.");
+        setBanner({ kind: "success", text: "🎉 Your villa has been published successfully." });
       } else if (params.get("updated") === "1") {
-        setBanner("✅ Your villa has been updated successfully.");
+        setBanner({ kind: "success", text: "✅ Your villa has been updated successfully." });
       }
       if (params.has("added") || params.has("updated")) {
         // Clean the URL so a refresh doesn't re-show the banner.
@@ -102,14 +107,32 @@ export default function MyPropertyPage() {
     }
   }, []);
 
-  // Load the user's real villas from the backend.
+  // Success banners are informational — clear them so they don't linger.
+  // Errors stay until the user dismisses them.
   useEffect(() => {
-    if (ready && user) {
-      fetchMyVillas()
-        .then(setVillas)
-        .catch(() => setVillas([]));
-    }
-  }, [ready, user]);
+    if (banner?.kind !== "success") return;
+    const t = setTimeout(() => setBanner(null), 4000);
+    return () => clearTimeout(t);
+  }, [banner]);
+
+  // Load the user's real villas from the backend.
+  const load = useCallback(() => {
+    fetchMyVillas()
+      .then(setVillas)
+      .catch((e) =>
+        setLoadError(e instanceof Error ? e.message : "Could not load your properties.")
+      );
+  }, []);
+
+  useEffect(() => {
+    if (ready && user) load();
+  }, [ready, user, load]);
+
+  function retryLoad() {
+    setLoadError("");
+    setVillas(null);
+    load();
+  }
 
   // Guard: only signed-in users can view their properties.
   if (!ready) return <div className="min-h-[60vh]" />;
@@ -139,15 +162,30 @@ export default function MyPropertyPage() {
       <div className="grid grid-cols-1 gap-10 lg:grid-cols-[190px_1fr]">
         {/* Left sidebar */}
         <aside>
-          <SettingsSidebar active="My Property" />
+          <SettingsSidebar />
         </aside>
 
         {/* Right — property owned card */}
         <div className="w-full rounded-2xl border border-line bg-white p-6 sm:p-8">
           {banner && (
-            <p className="mb-5 rounded-lg bg-primary/5 px-3.5 py-2.5 text-[13px] font-medium text-primary">
-              {banner}
-            </p>
+            <div
+              role={banner.kind === "error" ? "alert" : "status"}
+              className={`mb-5 flex items-start justify-between gap-3 rounded-lg px-3.5 py-2.5 text-[13px] font-medium ${
+                banner.kind === "error"
+                  ? "bg-red-50 text-red-600"
+                  : "bg-primary/5 text-primary"
+              }`}
+            >
+              <span>{banner.text}</span>
+              <button
+                type="button"
+                onClick={() => setBanner(null)}
+                aria-label="Dismiss message"
+                className="shrink-0 opacity-70 transition-opacity hover:opacity-100"
+              >
+                <X size={14} aria-hidden />
+              </button>
+            </div>
           )}
 
           {/* Header */}
@@ -162,10 +200,26 @@ export default function MyPropertyPage() {
           </div>
 
           {/* Property list */}
-          {rows === null ? (
-            <p className="mt-8 py-10 text-center text-[14px] text-muted">
-              Loading your properties…
-            </p>
+          {loadError ? (
+            <div className="mt-6 flex flex-col items-center rounded-xl border border-dashed border-line px-4 py-14 text-center">
+              <p className="text-[15px] font-semibold text-ink">
+                Couldn&apos;t load your properties
+              </p>
+              <p className="mt-1 max-w-[320px] text-[13px] text-muted">{loadError}</p>
+              <button
+                type="button"
+                onClick={retryLoad}
+                className="mt-5 rounded-lg bg-primary px-5 py-2.5 text-[13px] font-semibold text-white transition-colors hover:bg-primary-dark"
+              >
+                Try again
+              </button>
+            </div>
+          ) : rows === null ? (
+            <div className="mt-6 space-y-4">
+              {Array.from({ length: 3 }, (_, i) => (
+                <div key={i} className="skeleton h-[130px] rounded-xl" />
+              ))}
+            </div>
           ) : rows.length === 0 ? (
             <div className="mt-6 flex flex-col items-center rounded-xl border border-dashed border-line px-4 py-14 text-center">
               <p className="text-[15px] font-semibold text-ink">
@@ -184,19 +238,21 @@ export default function MyPropertyPage() {
             </div>
           ) : (
           <div className="mt-6 space-y-4">
-            {rows.map((p) => (
+            {rows.map((p) => {
+              const label = `${p.city}${p.country ? ", " + p.country : ""}`;
+              return (
               <div
                 key={p.id}
                 className="flex gap-5 rounded-xl border border-line/70 p-3 shadow-[0_1px_3px_rgba(0,0,0,0.04)]"
               >
-                {/* Thumbnail — plain <img> so uploaded villa photos (served from
-                    the backend/Cloudinary) render directly, without the next/image
-                    optimizer or remotePatterns/dev-restart getting in the way. */}
-                <div className="relative h-[104px] w-[112px] shrink-0 overflow-hidden rounded-lg bg-page">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
+                {/* Thumbnail — <Img> rather than next/image so uploaded villa
+                    photos (served from the backend/Cloudinary) render directly,
+                    without remotePatterns/dev-restart getting in the way. */}
+                <div className="img-frame relative h-[104px] w-[112px] shrink-0 overflow-hidden rounded-lg bg-page">
+                  <Img
                     src={p.image}
                     alt={`${p.city}, ${p.country}`}
+                    fallback={PLACEHOLDER_IMG}
                     className="h-full w-full object-cover"
                   />
                 </div>
@@ -246,16 +302,25 @@ export default function MyPropertyPage() {
                     </span>
                     <button
                       type="button"
-                      onClick={() => handleRemove(p.id, `${p.city}${p.country ? ", " + p.country : ""}`)}
+                      onClick={() => handleRemove(p.id, label)}
                       disabled={removingId === p.id}
+                      aria-busy={removingId === p.id}
+                      aria-label={`Remove ${label}`}
                       className="shrink-0 text-[13px] font-semibold text-red-400 underline underline-offset-2 transition-colors hover:text-red-500 disabled:opacity-50"
                     >
-                      {removingId === p.id ? "Removing…" : "Remove"}
+                      {removingId === p.id ? (
+                        <>
+                          <span className="spinner" aria-hidden /> Removing…
+                        </>
+                      ) : (
+                        "Remove"
+                      )}
                     </button>
                   </div>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
           )}
         </div>

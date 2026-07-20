@@ -23,6 +23,8 @@ html {
   /* Always reserve the scrollbar gutter so the page width never jumps
      when the scrollbar appears/disappears (e.g. opening a modal). */
   scrollbar-gutter: stable;
+  /* Kill the grey flash mobile browsers paint over every tapped control. */
+  -webkit-tap-highlight-color: transparent;
 }
 
 body {
@@ -30,6 +32,78 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Long villa names / URLs must never widen the page. */
+  overflow-wrap: break-word;
+}
+
+/* Form controls inherit the browser's system font by default — the single
+   biggest "unfinished" tell, especially on <select> and <input type="date">. */
+input,
+select,
+textarea,
+button {
+  font: inherit;
+  color: inherit;
+}
+
+/* Headings read better without a one-word orphan on the last line. */
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+}
+
+/* ------------------------------------------------------------------ */
+/* Focus                                                               */
+/* ------------------------------------------------------------------ */
+
+/* One consistent keyboard-focus ring app-wide. Mouse/touch users never see
+   it; keyboard users always do — including on elements that set
+   `focus:outline-none` for their own custom focus styling. */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Autofill                                                            */
+/* ------------------------------------------------------------------ */
+
+/* Chrome/Safari paint autofilled inputs pale yellow, which overrides every
+   border and background the design specifies. Repaint them as normal fields. */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+select:-webkit-autofill,
+textarea:-webkit-autofill {
+  -webkit-text-fill-color: var(--color-ink);
+  -webkit-box-shadow: 0 0 0 1000px #fff inset;
+  box-shadow: 0 0 0 1000px #fff inset;
+  /* The colour transition is what actually defeats the yellow repaint. */
+  transition: background-color 100000s ease-in-out 0s;
+  caret-color: var(--color-ink);
+}
+
+/* Native date inputs render their picker glyph in the OS accent; tint it to
+   match the design and make the whole field feel clickable. */
+input[type="date"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+input[type="date"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+}
+
+/* Disabled controls should look disabled everywhere, not just where a
+   component remembered to say so. */
+button:disabled,
+input:disabled,
+select:disabled,
+textarea:disabled {
+  cursor: not-allowed;
 }
 
 /* Slim, translucent primary-tinted scrollbar. */
@@ -95,6 +169,74 @@ body {
   }
 }
 
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Loading skeletons                                                   */
+/* ------------------------------------------------------------------ */
+
+/* A neutral block that occupies the final layout while data loads, so the
+   page doesn't collapse and snap back. Sweeps a soft highlight across. */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background-color: #ececed;
+  border-radius: 8px;
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.65),
+    transparent
+  );
+  animation: shimmer 1.4s infinite;
+}
+
+/* Inline spinner for buttons in a pending state. */
+.spinner {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 9999px;
+  animation: spin 0.65s linear infinite;
+  vertical-align: -0.15em;
+}
+
+/* ------------------------------------------------------------------ */
+/* Images                                                              */
+/* ------------------------------------------------------------------ */
+
+/* Remote photos arrive at unpredictable times. `.img-fade` holds a neutral
+   tile in the (already reserved) box and fades the photo in on decode, so
+   images resolve instead of popping. Layout is unaffected either way. */
+.img-frame {
+  background-color: #ececed;
+}
+.img-fade {
+  opacity: 0;
+  transition: opacity 0.45s ease;
+}
+.img-fade.is-loaded {
+  opacity: 1;
+}
+
 /* Scroll-reveal: hidden until the .is-visible class is toggled by the
    IntersectionObserver in <Reveal>. */
 .reveal {
@@ -103,11 +245,19 @@ body {
   transition:
     opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1),
     transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+  /* Only hint the compositor while the element is still animating in. Leaving
+     will-change on permanently pins every card to its own GPU layer, which
+     costs memory and softens text rendering. */
   will-change: opacity, transform;
 }
 .reveal.is-visible {
   opacity: 1;
   transform: translateY(0);
+}
+/* <Reveal> sets .is-settled once the transition has finished. */
+.reveal.is-settled {
+  will-change: auto;
+  transition: none;
 }
 
 .animate-fade-up {
@@ -121,13 +271,31 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
   .reveal,
   .animate-fade-up,
   .animate-fade-in,
-  .ken-burns {
+  .ken-burns,
+  .img-fade {
     animation: none !important;
     transition: none !important;
     opacity: 1 !important;
     transform: none !important;
+  }
+
+  /* Keep the skeleton visible as a static block — just stop it sweeping. */
+  .skeleton::after,
+  .spinner {
+    animation: none !important;
+  }
+
+  /* Hover lifts and image zooms are motion too. */
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
   }
 }

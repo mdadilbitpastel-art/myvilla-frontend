@@ -69,10 +69,14 @@ export default function ForgotPasswordPage() {
           </p>
 
           <div className="mt-6">
-            <label className="mb-1.5 block text-[14px] font-semibold text-ink">
+            <label
+              htmlFor="forgot-email"
+              className="mb-1.5 block text-[14px] font-semibold text-ink"
+            >
               Enter Email
             </label>
             <input
+              id="forgot-email"
               type="email"
               autoComplete="email"
               placeholder="someone@example.com"
@@ -95,13 +99,13 @@ export default function ForgotPasswordPage() {
           </div>
 
           {error && (
-            <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-[13px] text-red-600">
+            <p role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-[13px] text-red-600">
               {error}
             </p>
           )}
 
           {sent && !error && (
-            <p className="mt-3 rounded-lg bg-primary/5 px-3 py-2 text-[13px] text-primary">
+            <p role="status" className="mt-3 rounded-lg bg-primary/5 px-3 py-2 text-[13px] text-primary">
               If that email is registered, we&apos;ve sent a reset link to your
               inbox. It stays active for 15 minutes.
             </p>
@@ -110,8 +114,10 @@ export default function ForgotPasswordPage() {
           <button
             type="submit"
             disabled={loading || cooldown > 0}
-            className="mt-4 w-full rounded-lg bg-primary py-3 text-[14px] font-semibold text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-70"
+            aria-busy={loading}
+            className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-primary py-3 text-[14px] font-semibold text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-70"
           >
+            {loading && <span className="spinner" aria-hidden />}
             {loading
               ? "Please wait…"
               : cooldown > 0
@@ -122,7 +128,7 @@ export default function ForgotPasswordPage() {
           </button>
 
           <p className="mt-3 text-center text-[13px] text-ink">
-            Didn&apos;t recieve a code?{" "}
+            Didn&apos;t receive a code?{" "}
             <button
               type="button"
               onClick={send}

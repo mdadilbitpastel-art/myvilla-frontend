@@ -61,12 +61,23 @@ export default function Footer() {
               <ul className="space-y-3">
                 {col.links.map((link) => (
                   <li key={link}>
-                    <Link
-                      href={LINK_HREFS[link] || "#"}
-                      className="text-[14px] text-muted transition-colors hover:text-primary"
-                    >
-                      {link}
-                    </Link>
+                    {LINK_HREFS[link] ? (
+                      <Link
+                        href={LINK_HREFS[link]}
+                        className="text-[14px] text-muted transition-colors hover:text-primary"
+                      >
+                        {link}
+                      </Link>
+                    ) : (
+                      // No page behind these yet. As <Link href="#"> every
+                      // click jumped the reader back to the top of the page.
+                      <span
+                        aria-disabled="true"
+                        className="cursor-default text-[14px] text-muted transition-colors hover:text-primary"
+                      >
+                        {link}
+                      </span>
+                    )}
                   </li>
                 ))}
 
@@ -93,17 +104,21 @@ export default function Footer() {
         {/* Bottom bar */}
         <div className="mt-12 flex flex-col-reverse items-start gap-4 border-t border-line pt-6 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-5 text-muted">
-            <Link href="#" aria-label="Twitter" className="transition-colors hover:text-primary">
+            {/* Social accounts aren't wired up yet — non-navigating so a click
+                doesn't scroll the page to the top. */}
+            <button type="button" aria-label="Twitter" className="transition-colors hover:text-primary">
               <TwitterGlyph />
-            </Link>
-            <Link href="#" aria-label="Instagram" className="transition-colors hover:text-primary">
+            </button>
+            <button type="button" aria-label="Instagram" className="transition-colors hover:text-primary">
               <InstagramGlyph />
-            </Link>
-            <Link href="#" aria-label="Facebook" className="transition-colors hover:text-primary">
+            </button>
+            <button type="button" aria-label="Facebook" className="transition-colors hover:text-primary">
               <FacebookGlyph />
-            </Link>
+            </button>
           </div>
-          <p className="text-[13px] text-muted">© 2022 MyVilla incorporated</p>
+          <p className="text-[13px] text-muted">
+            © {new Date().getFullYear()} MyVilla incorporated
+          </p>
         </div>
       </div>
     </footer>
@@ -120,8 +135,10 @@ function StoreBadge({
   glyph: React.ReactNode;
 }) {
   return (
-    <Link
-      href="#"
+    // No store listings yet — see the social buttons above.
+    <button
+      type="button"
+      aria-label={`${top} ${bottom}`}
       className="flex w-[150px] items-center gap-3 rounded-lg bg-black px-3 py-2 text-white transition-transform hover:scale-[1.02]"
     >
       <span className="shrink-0">{glyph}</span>
@@ -129,7 +146,7 @@ function StoreBadge({
         <span className="text-[9px] uppercase tracking-wide text-white/80">{top}</span>
         <span className="text-[15px] font-semibold">{bottom}</span>
       </span>
-    </Link>
+    </button>
   );
 }
 

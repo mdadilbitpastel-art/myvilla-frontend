@@ -19,7 +19,9 @@ export default function VillaRow({
       <SectionHeading title={title} highlight={highlight} />
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         {data.map((v, i) => (
-          <Reveal key={i} delay={i * 90}>
+          // Key by villa id so swapping the mock list for real backend data
+          // remounts the cards instead of reusing them in place.
+          <Reveal key={v.id ?? `placeholder-${i}`} delay={i * 90}>
             <VillaCard data={v} variant={variant} />
           </Reveal>
         ))}

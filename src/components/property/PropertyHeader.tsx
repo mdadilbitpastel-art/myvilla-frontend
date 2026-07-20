@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Star, Share, Heart, Check } from "lucide-react";
 import { useFavorites } from "@/lib/favorites";
 
@@ -18,6 +18,10 @@ export default function PropertyHeader({
   const [copied, setCopied] = useState(false);
   const { isSaved, toggle } = useFavorites();
   const saved = villaId ? isSaved(villaId) : false;
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  // Navigating away mid-toast would otherwise set state after unmount.
+  useEffect(() => () => clearTimeout(copyTimer.current), []);
 
   async function onShare() {
     const url = typeof window !== "undefined" ? window.location.href : "";
@@ -28,7 +32,8 @@ export default function PropertyHeader({
       }
       await navigator.clipboard.writeText(url);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
+      clearTimeout(copyTimer.current);
+      copyTimer.current = setTimeout(() => setCopied(false), 1800);
     } catch {
       /* user cancelled share / clipboard blocked — no-op */
     }
@@ -52,19 +57,29 @@ export default function PropertyHeader({
 
       <div className="flex items-center gap-6">
         <button
+          type="button"
           onClick={onShare}
           className="flex items-center gap-2 text-[15px] font-medium text-ink transition-colors hover:text-primary"
         >
-          {copied ? <Check size={18} strokeWidth={2} className="text-primary" /> : <Share size={18} strokeWidth={2} />}
-          {copied ? "Link copied" : "Share"}
+          {copied ? (
+            <Check size={18} strokeWidth={2} aria-hidden className="text-primary" />
+          ) : (
+            <Share size={18} strokeWidth={2} aria-hidden />
+          )}
+          <span role={copied ? "status" : undefined}>
+            {copied ? "Link copied" : "Share"}
+          </span>
         </button>
         <button
+          type="button"
+          aria-pressed={saved}
           onClick={() => villaId && toggle(villaId)}
           className="flex items-center gap-2 text-[15px] font-medium text-ink transition-colors hover:text-primary"
         >
           <Heart
             size={18}
             strokeWidth={2}
+            aria-hidden
             className={saved ? "fill-red-500 text-red-500" : ""}
           />
           {saved ? "Saved" : "Save"}

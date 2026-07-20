@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { MapPin, CircleUserRound, Search as SearchIcon } from "lucide-react";
 import VillaCard from "@/components/home/VillaCard";
 import { searchVillas, type Villa, type VillaFilters } from "@/lib/api";
@@ -46,25 +47,38 @@ type State = {
   category: string;
 };
 
-function readUrl(): State {
-  if (typeof window === "undefined") return { q: "", guests: 0, category: "All" };
-  const sp = new URLSearchParams(window.location.search);
-  return {
-    q: sp.get("q") || sp.get("location") || "",
-    guests: parseInt(sp.get("guests") || "0", 10) || 0,
-    category: sp.get("category") || "All",
-  };
+// `useSearchParams` makes this subtree client-rendered, so it needs a boundary.
+export default function SearchPage() {
+  return (
+    <Suspense>
+      <SearchPageContent />
+    </Suspense>
+  );
 }
 
-export default function SearchPage() {
-  const [state, setState] = useState<State>({ q: "", guests: 0, category: "All" });
+function SearchPageContent() {
+  const searchParams = useSearchParams();
+  // Seed from the URL so `/search?q=Bali` is correct on the very first paint
+  // instead of rendering an empty box and reconciling in an effect.
+  const initial = useRef<State>({
+    q: searchParams.get("q") || searchParams.get("location") || "",
+    guests: parseInt(searchParams.get("guests") || "0", 10) || 0,
+    category: searchParams.get("category") || "All",
+  });
+
+  const [state, setState] = useState<State>(initial.current);
   // The text field is separate so typing doesn't fire a query on every keystroke.
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initial.current.q);
   const [results, setResults] = useState<Villa[] | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // Only the newest request may commit; chips/guests can be changed faster
+  // than the network responds.
+  const seq = useRef(0);
 
   const run = useCallback((s: State) => {
-    setResults(null);
+    const id = ++seq.current;
+    setLoading(true);
     setError("");
     const filters: VillaFilters = {
       search: s.q || undefined,
@@ -81,18 +95,22 @@ export default function SearchPage() {
     window.history.replaceState(null, "", qs ? `/search?${qs}` : "/search");
 
     searchVillas(filters)
-      .then(setResults)
-      .catch((e) =>
-        setError(e instanceof Error ? e.message : "Search failed. Try again.")
-      );
+      .then((r) => {
+        if (id !== seq.current) return;
+        setResults(r);
+        setLoading(false);
+      })
+      .catch((e) => {
+        if (id !== seq.current) return;
+        // Keep the previous results on screen — the error is shown above them.
+        setError(e instanceof Error ? e.message : "Search failed. Try again.");
+        setLoading(false);
+      });
   }, []);
 
-  // On mount, hydrate from the URL (e.g. arriving from the Hero search).
+  // Run the URL-seeded search once on mount (e.g. arriving from the Hero search).
   useEffect(() => {
-    const initial = readUrl();
-    setState(initial);
-    setQuery(initial.q);
-    run(initial);
+    run(initial.current);
   }, [run]);
 
   function submitSearch(e?: React.FormEvent) {
@@ -133,6 +151,7 @@ export default function SearchPage() {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            aria-label="Search by city, country or villa name"
             placeholder="Search by city, country or villa name"
             className="w-full bg-transparent text-[14px] text-ink outline-none placeholder:text-muted/70"
           />
@@ -143,6 +162,7 @@ export default function SearchPage() {
           <select
             value={state.guests}
             onChange={(e) => pickGuests(parseInt(e.target.value, 10))}
+            aria-label="Number of guests"
             className="w-full appearance-none bg-transparent text-[14px] text-ink outline-none"
           >
             {GUEST_OPTIONS.map((g) => (
@@ -155,9 +175,11 @@ export default function SearchPage() {
 
         <button
           type="submit"
+          disabled={loading}
+          aria-busy={loading}
           className="flex shrink-0 items-center justify-center gap-2 rounded-xl bg-primary px-8 py-3 text-[15px] font-medium text-white transition-colors hover:bg-primary-dark"
         >
-          <SearchIcon size={17} />
+          {loading ? <span className="spinner" aria-hidden /> : <SearchIcon size={17} />}
           Search
         </button>
       </form>
@@ -169,6 +191,8 @@ export default function SearchPage() {
           return (
             <button
               key={cat}
+              type="button"
+              aria-pressed={active}
               onClick={() => pickCategory(cat)}
               className={`rounded-full border px-4 py-1.5 text-[13px] transition-colors ${
                 active
@@ -182,14 +206,29 @@ export default function SearchPage() {
         })}
       </div>
 
-      {/* Results */}
-      <div className="mt-8">
-        {error ? (
-          <div className="rounded-lg bg-red-50 px-4 py-3 text-[13px] text-red-600">
-            {error}
+      {/* Results — held at a minimum height so the footer doesn't jump. */}
+      <div className="mt-8 min-h-[420px] space-y-4">
+        {error && (
+          <div
+            role="alert"
+            className="flex flex-wrap items-center gap-3 rounded-lg bg-red-50 px-4 py-3 text-[13px] text-red-600"
+          >
+            <span>{error}</span>
+            <button
+              type="button"
+              onClick={() => run(state)}
+              className="rounded-full border border-line px-4 py-1.5 text-[13px] text-body transition-colors hover:border-primary/40"
+            >
+              Try again
+            </button>
           </div>
-        ) : results === null ? (
-          <p className="py-16 text-center text-[14px] text-muted">Searching…</p>
+        )}
+
+        {results === null ? (
+          /* Only the first load has nothing to keep on screen. */
+          error ? null : (
+            <p className="py-16 text-center text-[14px] text-muted">Searching…</p>
+          )
         ) : count === 0 ? (
           <div className="flex flex-col items-center py-16 text-center">
             <p className="text-[16px] font-semibold text-ink">No villas found</p>
@@ -198,7 +237,11 @@ export default function SearchPage() {
             </p>
           </div>
         ) : (
-          <>
+          /* Previous results stay mounted while a new search runs, just dimmed. */
+          <div
+            aria-busy={loading}
+            className={`transition-opacity ${loading ? "opacity-60" : ""}`}
+          >
             <p className="mb-4 text-[14px] text-muted">
               {count} villa{count === 1 ? "" : "s"} found
             </p>
@@ -207,7 +250,7 @@ export default function SearchPage() {
                 <VillaCard key={v.id} data={toCard(v)} variant="card" />
               ))}
             </div>
-          </>
+          </div>
         )}
       </div>
     </div>

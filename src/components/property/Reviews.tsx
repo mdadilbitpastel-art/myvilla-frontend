@@ -14,7 +14,7 @@ export default function Reviews({
   reviewsCount: number;
 }) {
   return (
-    <section className="border-b border-line py-6">
+    <section id="reviews" className="border-b border-line py-6">
       <h3 className="mb-6 text-[18px] font-semibold text-primary">Reviews</h3>
 
       <div className="grid grid-cols-1 gap-x-12 gap-y-8 lg:grid-cols-[1fr_320px]">
@@ -33,9 +33,13 @@ export default function Reviews({
               </div>
               <p className="mt-3 text-[14px] leading-6 text-body">
                 {r.text}{" "}
-                <a href="#" className="font-medium text-primary underline underline-offset-2">
+                <button
+                  type="button"
+                  aria-disabled="true"
+                  className="font-medium text-primary underline underline-offset-2"
+                >
                   See more.
-                </a>
+                </button>
               </p>
             </div>
           ))}

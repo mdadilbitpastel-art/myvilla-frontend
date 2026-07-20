@@ -16,10 +16,10 @@ export default function Breadcrumb({ items }: { items: string[] }) {
         const isLast = i === items.length - 1;
         return (
           <span key={item} className="flex items-center gap-2">
-            {isLast ? (
-              <span className="text-muted">{item}</span>
+            {isLast || !HREFS[item] ? (
+              <span className={isLast ? "text-muted" : "text-ink"}>{item}</span>
             ) : (
-              <Link href={HREFS[item] || "#"} className="text-ink underline underline-offset-2 hover:text-primary">
+              <Link href={HREFS[item]} className="text-ink underline underline-offset-2 hover:text-primary">
                 {item}
               </Link>
             )}

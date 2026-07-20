@@ -16,10 +16,16 @@ function todayStr(): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-// Open the native date calendar when the field is clicked/focused (not just the icon).
-function openPicker(e: React.SyntheticEvent<HTMLInputElement>) {
+// Open the native date calendar when the field is clicked (not just the icon).
+// Only ever called from a click: showPicker() throws NotAllowedError without a
+// user gesture, which is why focus doesn't trigger it.
+function openPicker(e: React.MouseEvent<HTMLInputElement>) {
   const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
-  el.showPicker?.();
+  try {
+    el.showPicker?.();
+  } catch {
+    // Browser refused (no gesture / unsupported) — the native icon still works.
+  }
 }
 
 export default function Hero() {
@@ -36,8 +42,10 @@ export default function Hero() {
   const [today, setToday] = useState("");
   useEffect(() => setToday(todayStr()), []);
 
-  // Auto-advance the background carousel.
+  // Auto-advance the background carousel. Honour reduced-motion: the CSS
+  // stops the ken-burns zoom but the slide swap is motion too.
   useEffect(() => {
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
     const id = setInterval(() => {
       setSlide((s) => (s + 1) % heroSlides.length);
     }, 6000);
@@ -57,7 +65,10 @@ export default function Hero() {
   }
 
   return (
-    <section className="relative h-[560px] w-full overflow-hidden sm:h-[600px]">
+    // On phones the search bar stacks into five rows, which overflows a fixed
+    // 560px section and gets clipped by `overflow-hidden`. `min-h` lets the
+    // small-screen hero grow; from `sm:` up the designed height is exact.
+    <section className="relative min-h-[560px] w-full overflow-hidden pb-14 sm:h-[600px] sm:min-h-0 sm:pb-0">
       {/* Rotating background images */}
       {heroSlides.map((src, i) => (
         <div
@@ -101,6 +112,8 @@ export default function Hero() {
               {TABS.map((t) => (
                 <button
                   key={t}
+                  type="button"
+                  aria-pressed={tab === t}
                   onClick={() => setTab(t)}
                   className={`rounded-md px-6 py-2.5 text-[15px] transition-colors ${
                     tab === t
@@ -147,7 +160,6 @@ export default function Hero() {
                 value={checkIn}
                 min={today || undefined}
                 onClick={openPicker}
-                onFocus={openPicker}
                 onChange={(e) => {
                   const val = e.target.value;
                   setCheckIn(val);
@@ -164,12 +176,12 @@ export default function Hero() {
                 value={checkOut}
                 min={checkIn || today || undefined}
                 onClick={openPicker}
-                onFocus={openPicker}
                 onChange={(e) => setCheckOut(e.target.value)}
                 className="w-full cursor-pointer bg-transparent text-[15px] font-semibold text-[#384652] outline-none"
               />
             </Field>
             <button
+              type="button"
               onClick={onSearch}
               className="mt-2 flex shrink-0 items-center justify-center rounded-lg bg-primary px-8 py-3 text-[15px] font-medium text-white transition-colors hover:bg-primary-dark sm:mt-0 sm:ml-2"
             >
@@ -184,7 +196,9 @@ export default function Hero() {
         {heroSlides.map((_, i) => (
           <button
             key={i}
+            type="button"
             aria-label={`Go to slide ${i + 1}`}
+            aria-current={i === slide}
             onClick={() => setSlide(i)}
             className={`h-2 rounded-full transition-all duration-300 ${
               i === slide ? "w-6 bg-primary" : "w-2 bg-white/70 hover:bg-white"

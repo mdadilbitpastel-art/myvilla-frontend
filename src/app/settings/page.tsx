@@ -17,7 +17,7 @@ const OPTIONS: { icon: LucideIcon; title: string; desc: string }[] = [
   {
     icon: UserCircle,
     title: "Personal Settings",
-    desc: "Settings related to Personal details and contact informations",
+    desc: "Settings related to Personal details and contact information",
   },
   {
     icon: Shield,
@@ -32,7 +32,7 @@ const OPTIONS: { icon: LucideIcon; title: string; desc: string }[] = [
   {
     icon: KeyRound,
     title: "Login & Security",
-    desc: "Private account settings, password and login informations settings.",
+    desc: "Private account settings, password and login settings.",
   },
   {
     icon: BarChart3,
@@ -74,24 +74,26 @@ export default function SettingsPage() {
       <div className="grid grid-cols-1 gap-10 lg:grid-cols-[190px_1fr]">
         {/* Left sidebar */}
         <aside>
-          <SettingsSidebar active="Settings" />
+          <SettingsSidebar />
         </aside>
 
         {/* Right — options card */}
         <div className="w-full max-w-[640px] rounded-2xl border border-line bg-white p-5 sm:p-6">
           <div className="space-y-4">
             {OPTIONS.map(({ icon: Icon, title, desc }) => (
-              <Link
+              // TODO: no destination yet — rendered as a non-navigating card so
+              // clicking it doesn't jump the page to the top.
+              <div
                 key={title}
-                href="#"
+                aria-disabled="true"
                 className="flex items-start gap-4 rounded-xl border border-line px-5 py-4 transition-colors hover:border-primary/40 hover:bg-primary/[0.02]"
               >
-                <Icon size={22} className="mt-0.5 shrink-0 text-primary" />
+                <Icon size={22} aria-hidden className="mt-0.5 shrink-0 text-primary" />
                 <div>
                   <p className="text-[15px] font-semibold text-primary">{title}</p>
                   <p className="mt-0.5 text-[13px] leading-5 text-muted">{desc}</p>
                 </div>
-              </Link>
+              </div>
             ))}
           </div>
         </div>

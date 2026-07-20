@@ -5,7 +5,7 @@ export default function SectionHeading({
   title,
   highlight,
   actionLabel = "View all",
-  href = "#",
+  href = "/search",
 }: {
   title: string;
   highlight?: string;

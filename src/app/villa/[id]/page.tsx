@@ -40,17 +40,74 @@ export default function VillaDetailPage() {
   const id = String(params.id);
   // undefined = loading, null = not found, Villa = loaded
   const [v, setV] = useState<Villa | null | undefined>(undefined);
+  // Tracked separately: a network blip is not the same as a deleted listing,
+  // and telling a user their villa "may have been removed" is alarming.
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
+    let active = true;
+    setV(undefined);
+    setFailed(false);
     fetchVilla(id)
-      .then(setV)
-      .catch(() => setV(null));
-  }, [id]);
+      .then((villa) => {
+        if (active) setV(villa);
+      })
+      .catch(() => {
+        // A newer request for a different id has already superseded this one.
+        if (!active) return;
+        setFailed(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [id, attempt]);
+
+  if (failed) {
+    return (
+      <div className="mx-auto flex min-h-[60vh] max-w-[1200px] flex-col items-center justify-center px-5 text-center">
+        <h1 className="text-[22px] font-bold text-ink">Couldn&apos;t load this villa</h1>
+        <p className="mt-2 text-[14px] text-body">
+          Check your connection and try again.
+        </p>
+        <button
+          type="button"
+          onClick={() => setAttempt((n) => n + 1)}
+          className="mt-5 rounded-lg bg-primary px-5 py-2.5 text-[14px] font-medium text-white transition-colors hover:bg-primary-dark"
+        >
+          Try again
+        </button>
+      </div>
+    );
+  }
 
   if (v === undefined) {
+    // Mirror the loaded layout so the page fills in rather than snapping in.
     return (
-      <div className="mx-auto flex min-h-[60vh] max-w-[1200px] items-center justify-center px-5 text-[14px] text-muted">
-        Loading villa…
+      <div
+        className="mx-auto max-w-[1200px] px-5 pb-20 pt-6"
+        aria-busy="true"
+        aria-label="Loading villa"
+      >
+        <div className="skeleton h-4 w-64" />
+        <div className="skeleton mt-5 h-7 w-2/3 max-w-[420px]" />
+        <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div className="skeleton aspect-[4/3] rounded-2xl md:aspect-auto md:h-[420px]" />
+          <div className="grid grid-cols-2 gap-3 md:h-[420px]">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="skeleton aspect-square rounded-2xl md:aspect-auto" />
+            ))}
+          </div>
+        </div>
+        <div className="mt-8 grid grid-cols-1 gap-x-12 lg:grid-cols-[1fr_360px]">
+          <div className="space-y-3">
+            <div className="skeleton h-5 w-1/2" />
+            <div className="skeleton h-4 w-full" />
+            <div className="skeleton h-4 w-full" />
+            <div className="skeleton h-4 w-3/4" />
+          </div>
+          <div className="skeleton mt-6 h-[420px] rounded-2xl lg:mt-0" />
+        </div>
       </div>
     );
   }

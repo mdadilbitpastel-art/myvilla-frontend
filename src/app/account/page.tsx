@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { Star, BadgeCheck, Lock, ArrowRight } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import VillaCard from "@/components/home/VillaCard";
+import Img from "@/components/ui/Img";
 import { fetchMyVillas, type Villa } from "@/lib/api";
 import type { VillaCardData } from "@/lib/home";
 import {
@@ -98,10 +99,9 @@ function ProfileCard({ user }: { user: import("@/lib/api").AuthUser }) {
     <div>
       {/* Avatar + name */}
       <div className="flex items-center gap-4">
-        <div className="relative h-[74px] w-[74px] shrink-0 overflow-hidden rounded-full bg-page">
+        <div className="img-frame relative h-[74px] w-[74px] shrink-0 overflow-hidden rounded-full bg-page">
           {user.avatar ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={user.avatar} alt={name} className="h-full w-full object-cover" />
+            <Img src={user.avatar} alt={name} className="h-full w-full object-cover" />
           ) : (
             <Image src={p.avatar} alt={name} fill sizes="74px" className="object-cover" />
           )}
@@ -150,7 +150,7 @@ function ProfileCard({ user }: { user: import("@/lib/api").AuthUser }) {
         </span>
         <p className="max-w-[320px] text-[13px] leading-6 text-body">
           To protect your payment, never transfer money or communicate outside of
-          the Airbnb website or app.
+          the MyVilla website or app.
         </p>
       </div>
     </div>
@@ -164,14 +164,20 @@ function ProfileCard({ user }: { user: import("@/lib/api").AuthUser }) {
 function MyVillas() {
   const { user, ready } = useAuth();
   const [villas, setVillas] = useState<Villa[] | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  const load = useCallback(() => {
+    setFailed(false);
+    setVillas(null);
+    fetchMyVillas()
+      .then(setVillas)
+      // "No villas yet" would be a lie when the request never came back.
+      .catch(() => setFailed(true));
+  }, []);
 
   useEffect(() => {
-    if (ready && user) {
-      fetchMyVillas()
-        .then(setVillas)
-        .catch(() => setVillas([]));
-    }
-  }, [ready, user]);
+    if (ready && user) load();
+  }, [ready, user, load]);
 
   return (
     <div>
@@ -185,9 +191,38 @@ function MyVillas() {
         </Link>
       </div>
 
-      {villas === null ? (
-        <p className="mt-5 py-8 text-[14px] text-muted">Loading your villas…</p>
-      ) : villas.length === 0 ? (
+      {villas === null && !failed ? (
+        /* Placeholders match the scroll-row card box so nothing shifts later. */
+        <div className="mt-5 -mr-5 flex gap-5 overflow-hidden pb-2 pr-5 lg:-mr-7 lg:pr-7">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="w-[280px] shrink-0 overflow-hidden rounded-2xl bg-white shadow-sm">
+              <div className="skeleton aspect-[4/3] rounded-none" />
+              <div className="p-4">
+                <div className="skeleton h-[14px] w-3/4" />
+                <div className="skeleton mt-2 h-[12px] w-1/2" />
+                <div className="skeleton mt-2.5 h-[12px] w-2/3" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : failed ? (
+        <div
+          role="alert"
+          className="mt-5 flex flex-col items-start rounded-xl border border-dashed border-line px-5 py-8"
+        >
+          <p className="text-[15px] font-semibold text-ink">Couldn&apos;t load your villas</p>
+          <p className="mt-1 text-[13px] text-muted">
+            Something went wrong while fetching your listings.
+          </p>
+          <button
+            type="button"
+            onClick={load}
+            className="mt-4 rounded-lg bg-primary px-4 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-primary-dark"
+          >
+            Try again
+          </button>
+        </div>
+      ) : (villas ?? []).length === 0 ? (
         <div className="mt-5 flex flex-col items-start rounded-xl border border-dashed border-line px-5 py-8">
           <p className="text-[15px] font-semibold text-ink">No villas yet</p>
           <p className="mt-1 text-[13px] text-muted">
@@ -202,9 +237,9 @@ function MyVillas() {
         </div>
       ) : (
         /* Horizontal scroll row — cards bleed off the right edge like the mock. */
-        <div className="mt-5 -mr-5 flex gap-5 overflow-x-auto pb-2 pr-5 lg:-mr-7 lg:pr-7">
-          {villas.map((v) => (
-            <div key={v.id} className="w-[280px] shrink-0">
+        <div className="mt-5 -mr-5 flex snap-x gap-5 overflow-x-auto scroll-smooth pb-2 pr-5 lg:-mr-7 lg:pr-7">
+          {(villas ?? []).map((v) => (
+            <div key={v.id} className="w-[280px] shrink-0 snap-start">
               <VillaCard data={villaToCard(v)} variant="card" />
             </div>
           ))}
@@ -223,8 +258,8 @@ function ReviewsList() {
     <div>
       <h2 className="mb-7 text-[18px] font-semibold text-primary">Reviews</h2>
       <div className="space-y-8">
-        {accountReviews.map((r, i) => (
-          <div key={i}>
+        {accountReviews.map((r) => (
+          <div key={`${r.name}-${r.date}`}>
             <div className="flex items-center gap-3">
               <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-full">
                 <Image src={r.avatar} alt={r.name} fill sizes="48px" className="object-cover" />
@@ -241,9 +276,15 @@ function ReviewsList() {
             </div>
             <p className="mt-3 text-[14px] leading-6 text-body">
               {r.text}{" "}
-              <a href="#" className="font-medium text-primary underline underline-offset-2">
+              {/* TODO: expand the full review text — no target exists yet, so
+                  this stays a no-op rather than an <a href="#"> that scrolls
+                  the page back to the top. */}
+              <button
+                type="button"
+                className="font-medium text-primary underline underline-offset-2"
+              >
                 See more.
-              </a>
+              </button>
             </p>
           </div>
         ))}

@@ -31,7 +31,7 @@ export default function HostSection({ host }: { host: Villa["host"] }) {
         <p>Response time: {host.responseTime}</p>
       </div>
 
-      <button className="mt-5 rounded-lg border border-primary/40 px-5 py-2.5 text-[14px] font-medium text-primary transition-colors hover:bg-primary/5">
+      <button type="button" className="mt-5 rounded-lg border border-primary/40 px-5 py-2.5 text-[14px] font-medium text-primary transition-colors hover:bg-primary/5">
         Contact Host
       </button>
 

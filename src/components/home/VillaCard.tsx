@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Heart } from "lucide-react";
 import type { VillaCardData } from "@/lib/home";
 import { useFavorites } from "@/lib/favorites";
+import Img from "@/components/ui/Img";
 
 export default function VillaCard({
   data,
@@ -18,6 +19,8 @@ export default function VillaCard({
   const isCard = variant === "card";
 
   const location = [data.city, data.country].filter(Boolean);
+  // Never produce a dangling ", " when one half of the location is missing.
+  const label = data.title || location.join(", ") || "Villa";
 
   const meta = data.title ? (
     // Title-first layout (used by search results): villa name is the heading.
@@ -62,9 +65,12 @@ export default function VillaCard({
       {/* Like button */}
       <button
         type="button"
-        aria-label={liked ? "Remove from saved" : "Save"}
+        aria-label={liked ? `Remove ${label} from saved` : `Save ${label}`}
+        aria-pressed={liked}
         onClick={(e) => {
+          // Don't let the tap fall through to the card's <Link>.
           e.preventDefault();
+          e.stopPropagation();
           if (data.id) toggle(data.id);
         }}
         className="absolute right-3 top-3 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-white shadow transition-transform hover:scale-110 active:scale-95"
@@ -76,11 +82,10 @@ export default function VillaCard({
       </button>
 
       {variant === "overlay" ? (
-        <div className="relative aspect-[4/5]">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
+        <div className="img-frame relative aspect-[4/5]">
+          <Img
             src={data.image}
-            alt={`${data.city}, ${data.country}`}
+            alt={label}
             className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
@@ -88,11 +93,10 @@ export default function VillaCard({
         </div>
       ) : (
         <>
-          <div className="relative aspect-[4/3]">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
+          <div className="img-frame relative aspect-[4/3]">
+            <Img
               src={data.image}
-              alt={`${data.city}, ${data.country}`}
+              alt={label}
               className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
             />
           </div>

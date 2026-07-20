@@ -91,9 +91,9 @@ export default function TermsPage() {
               {relatedTopics.map((t, i) => (
                 <li key={t} className="flex gap-1.5 text-[12.5px]">
                   <span className="text-muted">{i + 1}.</span>
-                  <a href="#" className="text-body underline underline-offset-2 hover:text-primary">
+                  <span aria-disabled="true" className="cursor-default text-body underline underline-offset-2 hover:text-primary">
                     {t}
-                  </a>
+                  </span>
                 </li>
               ))}
             </ol>
@@ -108,9 +108,9 @@ export default function TermsPage() {
                       {t}
                     </Link>
                   ) : (
-                    <a href="#" className="text-body underline underline-offset-2 hover:text-primary">
+                    <span aria-disabled="true" className="cursor-default text-body underline underline-offset-2 hover:text-primary">
                       {t}
-                    </a>
+                    </span>
                   )}
                 </li>
               ))}

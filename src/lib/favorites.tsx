@@ -7,6 +7,8 @@ import { useAuth } from "@/lib/auth";
 type FavoritesCtx = {
   /** villa ids the current user has saved */
   ids: Set<string>;
+  /** false until the first load of the saved set has settled */
+  ready: boolean;
   isSaved: (villaId: string) => boolean;
   /** toggle a villa; opens sign-in if logged out. Returns new saved state. */
   toggle: (villaId: string) => Promise<boolean>;
@@ -18,17 +20,22 @@ const Ctx = createContext<FavoritesCtx | null>(null);
 export function FavoritesProvider({ children }: { children: React.ReactNode }) {
   const { user, ready, openAuth } = useAuth();
   const [ids, setIds] = useState<Set<string>>(new Set());
+  // Consumers that cross-reference `ids` with their own data need to know when
+  // the set is real and not just the empty initial value.
+  const [loaded, setLoaded] = useState(false);
 
   const refresh = useCallback(() => {
     if (!user) {
       setIds(new Set());
+      setLoaded(true);
       return;
     }
     fetchMyFavorites()
       .then((v) => setIds(new Set(v.map((x) => String(x.id)))))
       .catch(() => {
         /* keep whatever we have */
-      });
+      })
+      .finally(() => setLoaded(true));
   }, [user]);
 
   // Load the saved set once the session is known / changes.
@@ -77,7 +84,9 @@ export function FavoritesProvider({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <Ctx.Provider value={{ ids, isSaved, toggle, refresh }}>{children}</Ctx.Provider>
+    <Ctx.Provider value={{ ids, ready: loaded, isSaved, toggle, refresh }}>
+      {children}
+    </Ctx.Provider>
   );
 }
 
@@ -87,6 +96,8 @@ export function useFavorites(): FavoritesCtx {
     // Safe fallback if used outside the provider (SSR/edge cases).
     return {
       ids: new Set(),
+      // Nothing will ever load here, so callers shouldn't wait on it.
+      ready: true,
       isSaved: () => false,
       toggle: async () => false,
       refresh: () => {},

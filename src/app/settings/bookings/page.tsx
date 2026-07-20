@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ChevronDown } from "lucide-react";
 import { useAuth } from "@/lib/auth";
@@ -60,13 +60,17 @@ function BookingRow({
 }: {
   booking: Booking;
   kind: "active" | "history";
-  onCancel: (id: string) => void;
+  onCancel: (id: string, title: string) => void;
   cancelling: boolean;
 }) {
   const cancelled = booking.status === "cancelled";
   return (
     <div className="grid min-w-[620px] grid-cols-[1.4fr_1fr_1.2fr_1fr_1fr] items-center rounded-lg border border-line px-4 py-3.5 text-[13px]">
-      <Link href={`/villa/${booking.villaId}`} className="truncate pr-2 text-ink hover:text-primary">
+      <Link
+        href={`/villa/${booking.villaId}`}
+        title={booking.villaTitle}
+        className="truncate pr-2 text-ink hover:text-primary"
+      >
         {booking.villaTitle}
       </Link>
       <span className="text-body">{relativeTime(booking.createdAt)}</span>
@@ -78,11 +82,18 @@ function BookingRow({
         {kind === "active" ? (
           <button
             type="button"
-            onClick={() => onCancel(booking.id)}
+            onClick={() => onCancel(booking.id, booking.villaTitle)}
             disabled={cancelling}
+            aria-busy={cancelling}
             className="text-[13px] font-medium text-red-400 underline underline-offset-2 transition-colors hover:text-red-500 disabled:opacity-50"
           >
-            {cancelling ? "Cancelling…" : "Cancel Booking"}
+            {cancelling ? (
+              <>
+                <span className="spinner" aria-hidden /> Cancelling…
+              </>
+            ) : (
+              "Cancel Booking"
+            )}
           </button>
         ) : cancelled ? (
           <span className="text-[13px] font-semibold text-red-400">Cancelled</span>
@@ -100,7 +111,11 @@ export default function MyBookingsPage() {
   const [loadError, setLoadError] = useState("");
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [showBanner, setShowBanner] = useState(false);
-  const [sort, setSort] = useState<"desc" | "asc">("desc");
+  // Each table sorts independently — one shared state would make sorting the
+  // history silently re-order the active table above it.
+  const [activeSort, setActiveSort] = useState<"desc" | "asc">("desc");
+  const [historySort, setHistorySort] = useState<"desc" | "asc">("desc");
+  const errorRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -131,18 +146,27 @@ export default function MyBookingsPage() {
       if (b.status === "active" && upcoming) active.push(b);
       else history.push(b);
     }
-    const byCreated = (a: Booking, b: Booking) => {
+    const byCreated = (order: "desc" | "asc") => (a: Booking, b: Booking) => {
       const diff = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-      return sort === "desc" ? diff : -diff;
+      return order === "desc" ? diff : -diff;
     };
-    active.sort(byCreated);
-    history.sort(byCreated);
+    active.sort(byCreated(activeSort));
+    history.sort(byCreated(historySort));
     return { active, history };
-  }, [bookings, sort]);
+  }, [bookings, activeSort, historySort]);
 
-  const toggleSort = () => setSort((s) => (s === "desc" ? "asc" : "desc"));
+  const toggleActiveSort = () => setActiveSort((s) => (s === "desc" ? "asc" : "desc"));
+  const toggleHistorySort = () => setHistorySort((s) => (s === "desc" ? "asc" : "desc"));
 
-  async function onCancel(id: string) {
+  async function onCancel(id: string, title: string) {
+    if (cancellingId) return;
+    if (
+      !window.confirm(
+        `Cancel your booking for "${title}"? This can't be undone and cancellation charges may apply.`
+      )
+    ) {
+      return;
+    }
     setCancellingId(id);
     try {
       const updated = await cancelBooking(id);
@@ -151,6 +175,11 @@ export default function MyBookingsPage() {
       );
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Could not cancel booking.");
+      // The banner sits at the top of the card, far above the row the user just
+      // acted on — bring it into view once React has committed it.
+      requestAnimationFrame(() =>
+        errorRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })
+      );
     } finally {
       setCancellingId(null);
     }
@@ -179,7 +208,7 @@ export default function MyBookingsPage() {
       <div className="grid grid-cols-1 gap-10 lg:grid-cols-[190px_1fr]">
         {/* Left sidebar */}
         <aside>
-          <SettingsSidebar active="My Bookings" />
+          <SettingsSidebar />
         </aside>
 
         {/* Right — bookings card */}
@@ -190,7 +219,11 @@ export default function MyBookingsPage() {
             </div>
           )}
           {loadError && (
-            <div className="mb-6 rounded-lg bg-red-50 px-4 py-3 text-[13px] text-red-600">
+            <div
+              ref={errorRef}
+              role="alert"
+              className="mb-6 rounded-lg bg-red-50 px-4 py-3 text-[13px] text-red-600"
+            >
               {loadError}
             </div>
           )}
@@ -203,24 +236,17 @@ export default function MyBookingsPage() {
               </span>{" "}
               Active Bookings
             </h2>
-            <SortDropdown sort={sort} onToggle={toggleSort} />
+            <SortDropdown sort={activeSort} onToggle={toggleActiveSort} />
           </div>
 
           {/* Active table (scrolls horizontally on small screens) */}
           <div className="overflow-x-auto">
-            {/* Column headings */}
-            <div className="mt-6 grid min-w-[620px] grid-cols-[1.4fr_1fr_1.2fr_1fr_1fr] px-4 text-[13px] text-muted">
-              {COLUMNS.map((c) => (
-                <span key={c} className={c === "Status" ? "text-right" : ""}>
-                  {c}
-                </span>
-              ))}
-            </div>
+            <ColumnHeadings />
 
             {/* Active rows */}
             <div className="mt-2.5 space-y-3">
               {bookings === null ? (
-                <EmptyLine text="Loading your bookings…" />
+                <SkeletonRows count={3} />
               ) : active.length === 0 ? (
                 <EmptyLine text="No active bookings yet. Book a villa to see it here." />
               ) : (
@@ -240,13 +266,17 @@ export default function MyBookingsPage() {
           {/* Booking history header */}
           <div className="mt-9 flex items-center justify-between">
             <h2 className="text-[16px] font-bold text-ink">Booking History</h2>
-            <SortDropdown sort={sort} onToggle={toggleSort} />
+            <SortDropdown sort={historySort} onToggle={toggleHistorySort} />
           </div>
 
           {/* History rows */}
           <div className="overflow-x-auto">
-            <div className="mt-4 space-y-3">
-              {bookings === null ? null : history.length === 0 ? (
+            <ColumnHeadings />
+
+            <div className="mt-2.5 space-y-3">
+              {bookings === null ? (
+                <SkeletonRows count={2} />
+              ) : history.length === 0 ? (
                 <EmptyLine text="No past bookings." />
               ) : (
                 history.map((b) => (
@@ -264,13 +294,37 @@ export default function MyBookingsPage() {
 
           {/* Note */}
           <p className="mt-6 max-w-[720px] text-[11px] leading-5 text-muted">
-            Note: Cancelation of booking may result in cancelation charges. Charges vary
-            from property to property. They may also depend upon cancelation time. Read
-            cancelation policy of hosted place for furthur information.
+            Note: Cancellation of booking may result in cancellation charges. Charges vary
+            from property to property. They may also depend upon cancellation time. Read
+            cancellation policy of hosted place for further information.
           </p>
         </div>
       </div>
     </div>
+  );
+}
+
+function ColumnHeadings() {
+  return (
+    <div className="mt-6 grid min-w-[620px] grid-cols-[1.4fr_1fr_1.2fr_1fr_1fr] px-4 text-[13px] text-muted">
+      {COLUMNS.map((c) => (
+        <span key={c} className={c === "Status" ? "text-right" : ""}>
+          {c}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// Placeholders sized like a real row so the note below doesn't get shoved
+// down once the bookings arrive.
+function SkeletonRows({ count }: { count: number }) {
+  return (
+    <>
+      {Array.from({ length: count }, (_, i) => (
+        <div key={i} className="skeleton h-[50px] min-w-[620px]" />
+      ))}
+    </>
   );
 }
 

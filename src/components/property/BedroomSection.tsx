@@ -1,3 +1,5 @@
+import Img from "@/components/ui/Img";
+
 export default function BedroomSection({
   image,
   title,
@@ -10,9 +12,8 @@ export default function BedroomSection({
   return (
     <section className="border-b border-line py-6">
       <h3 className="mb-4 text-[18px] font-semibold text-primary">Your Bedroom</h3>
-      <div className="relative aspect-[16/10] w-full max-w-[440px] overflow-hidden rounded-2xl sm:aspect-[4/3]">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
+      <div className="img-frame relative aspect-[16/10] w-full max-w-[440px] overflow-hidden rounded-2xl sm:aspect-[4/3]">
+        <Img
           src={image}
           alt={title}
           className="absolute inset-0 h-full w-full object-cover"

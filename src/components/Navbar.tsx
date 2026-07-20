@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Menu, X, ChevronDown, Settings, LogOut, Heart } from "lucide-react";
 import AuthModal from "@/components/auth/AuthModal";
@@ -42,6 +42,25 @@ export default function Navbar() {
   const { user, signOut, authMode, openAuth, closeAuth } = useAuth();
   const loggedIn = !!user;
   const pathname = usePathname();
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close the account dropdown on Escape and return focus to its trigger.
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      setMenuOpen(false);
+      menuRef.current?.querySelector("button")?.focus();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [menuOpen]);
+
+  // Route changes should never leave a menu hanging open over the new page.
+  useEffect(() => {
+    setOpen(false);
+    setMenuOpen(false);
+  }, [pathname]);
 
   function handleLogout() {
     setMenuOpen(false);
@@ -68,7 +87,19 @@ export default function Navbar() {
               link.label === "Signin" ? (
                 <button
                   key={link.label}
+                  type="button"
                   onClick={() => openAuth("signin")}
+                  className="text-[15px] text-muted transition-colors hover:text-ink"
+                >
+                  {link.label}
+                </button>
+              ) : link.href === "#" ? (
+                // No destination built yet. Rendering these as <Link href="#">
+                // made every click jump the page to the top.
+                <button
+                  key={link.label}
+                  type="button"
+                  aria-disabled="true"
                   className="text-[15px] text-muted transition-colors hover:text-ink"
                 >
                   {link.label}
@@ -77,6 +108,7 @@ export default function Navbar() {
                 <Link
                   key={link.label}
                   href={link.href}
+                  aria-current={isActive(link.href, pathname) ? "page" : undefined}
                   className={`text-[15px] transition-colors hover:text-ink ${
                     isActive(link.href, pathname) ? "font-medium text-ink" : "text-muted"
                   }`}
@@ -88,9 +120,12 @@ export default function Navbar() {
           </nav>
 
           {loggedIn ? (
-            <div className="relative hidden sm:block">
+            <div ref={menuRef} className="relative hidden sm:block">
               <button
+                type="button"
                 onClick={() => setMenuOpen((v) => !v)}
+                aria-expanded={menuOpen}
+                aria-haspopup="menu"
                 className="flex items-center gap-1.5 rounded-lg bg-primary px-5 py-2.5 text-[14px] font-medium text-white shadow-sm transition-colors hover:bg-primary-dark"
               >
                 My Account
@@ -102,34 +137,42 @@ export default function Navbar() {
 
               {menuOpen && (
                 <>
-                  {/* click-away layer */}
-                  <button
-                    aria-label="Close menu"
+                  {/* Click-away layer. Not focusable: as a real <button> it sat
+                      in the tab order between the trigger and the menu items. */}
+                  <div
+                    aria-hidden
                     onClick={() => setMenuOpen(false)}
                     className="fixed inset-0 z-40 cursor-default"
                   />
-                  <div className="absolute right-0 top-[calc(100%+10px)] z-50 w-48 overflow-hidden rounded-xl border border-line bg-white py-1.5 shadow-xl">
+                  <div
+                    role="menu"
+                    className="animate-fade-in absolute right-0 top-[calc(100%+10px)] z-50 w-48 overflow-hidden rounded-xl border border-line bg-white py-1.5 shadow-xl"
+                  >
                     <Link
                       href="/saved"
+                      role="menuitem"
                       onClick={() => setMenuOpen(false)}
                       className="flex items-center gap-3 px-4 py-2.5 text-[14px] text-body transition-colors hover:bg-page hover:text-ink"
                     >
-                      <Heart size={17} className="text-muted" />
+                      <Heart size={17} aria-hidden className="text-muted" />
                       Saved
                     </Link>
                     <Link
                       href="/settings"
+                      role="menuitem"
                       onClick={() => setMenuOpen(false)}
                       className="flex items-center gap-3 px-4 py-2.5 text-[14px] text-body transition-colors hover:bg-page hover:text-ink"
                     >
-                      <Settings size={17} className="text-muted" />
+                      <Settings size={17} aria-hidden className="text-muted" />
                       Settings
                     </Link>
                     <button
+                      type="button"
+                      role="menuitem"
                       onClick={handleLogout}
                       className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-[14px] text-body transition-colors hover:bg-page hover:text-ink"
                     >
-                      <LogOut size={17} className="text-muted" />
+                      <LogOut size={17} aria-hidden className="text-muted" />
                       Logout
                     </button>
                   </div>
@@ -164,10 +207,20 @@ export default function Navbar() {
               link.label === "Signin" ? (
                 <button
                   key={link.label}
+                  type="button"
                   onClick={() => {
                     setOpen(false);
                     openAuth("signin");
                   }}
+                  className="py-3 text-left text-[15px] text-muted"
+                >
+                  {link.label}
+                </button>
+              ) : link.href === "#" ? (
+                <button
+                  key={link.label}
+                  type="button"
+                  aria-disabled="true"
                   className="py-3 text-left text-[15px] text-muted"
                 >
                   {link.label}
@@ -177,6 +230,7 @@ export default function Navbar() {
                   key={link.label}
                   href={link.href}
                   onClick={() => setOpen(false)}
+                  aria-current={isActive(link.href, pathname) ? "page" : undefined}
                   className={`py-3 text-[15px] ${
                     isActive(link.href, pathname) ? "font-medium text-ink" : "text-muted"
                   }`}
@@ -192,14 +246,15 @@ export default function Navbar() {
                   onClick={() => setOpen(false)}
                   className="flex items-center gap-3 py-3 text-[15px] text-body"
                 >
-                  <Settings size={18} className="text-muted" />
+                  <Settings size={18} aria-hidden className="text-muted" />
                   Settings
                 </Link>
                 <button
+                  type="button"
                   onClick={handleLogout}
                   className="flex items-center gap-3 py-3 text-left text-[15px] text-body"
                 >
-                  <LogOut size={18} className="text-muted" />
+                  <LogOut size={18} aria-hidden className="text-muted" />
                   Logout
                 </button>
               </div>
