@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ChevronDown } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { useLiveRefresh } from "@/lib/useLiveRefresh";
+import { useToast } from "@/lib/toast";
 import SettingsSidebar from "@/components/settings/SettingsSidebar";
 import Img from "@/components/ui/Img";
 import { fetchVillaBookings, respondBooking, type Booking } from "@/lib/api";
@@ -59,13 +61,16 @@ function TenantAvatar({ name, avatar }: { name: string; avatar: string }) {
 
 function RequestRow({
   req,
+  kind,
   onRespond,
   responding,
 }: {
   req: Booking;
+  kind: "active" | "history";
   onRespond: (id: string) => void;
   responding: boolean;
 }) {
+  const cancelled = req.status === "cancelled";
   return (
     <div className="grid min-w-[620px] grid-cols-[1.4fr_1.2fr_1.1fr_1fr_0.8fr] items-center rounded-lg border border-line px-4 py-3 text-[13px]">
       {/* Tenant */}
@@ -88,9 +93,18 @@ function RequestRow({
         {req.guests} {req.guests === 1 ? "guest" : "guests"}
       </span>
 
-      {/* No cancelled state here — cancelled requests are filtered out upstream. */}
+      {/* History rows are read-only: a cancelled or finished stay can't be
+          responded to any more, it's just a record for the owner. */}
       <span className="text-right">
-        {req.hostResponded ? (
+        {kind === "history" ? (
+          cancelled ? (
+            <span className="text-[13px] font-semibold text-red-400">Cancelled</span>
+          ) : req.hostResponded ? (
+            <span className="text-[13px] font-semibold text-primary">Responded</span>
+          ) : (
+            <span className="text-[13px] font-semibold text-body">Completed</span>
+          )
+        ) : req.hostResponded ? (
           <span className="text-[13px] font-semibold text-primary">Responded</span>
         ) : (
           <button
@@ -115,21 +129,55 @@ function RequestRow({
 
 export default function RentRequestsPage() {
   const { user, ready } = useAuth();
+  const toast = useToast();
   const [requests, setRequests] = useState<Booking[] | null>(null);
   const [error, setError] = useState("");
   const [respondingId, setRespondingId] = useState<string | null>(null);
+  // Each table sorts on its own — sorting the history shouldn't silently
+  // re-order the active requests above it.
   const [sort, setSort] = useState<"desc" | "asc">("desc");
+  const [historySort, setHistorySort] = useState<"desc" | "asc">("desc");
 
-  const load = useCallback(() => {
-    fetchVillaBookings()
+  // `silent` refreshes are background polls — a transient network blip there
+  // must not swap the list the owner is reading for an error banner.
+  const load = useCallback((silent = false) => {
+    return fetchVillaBookings()
       .then(setRequests)
-      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load rent requests."));
+      .catch((e) => {
+        if (!silent) {
+          setError(e instanceof Error ? e.message : "Failed to load rent requests.");
+        }
+      });
   }, []);
 
   useEffect(() => {
     if (!ready || !user) return;
     load();
   }, [ready, user, load]);
+
+  // Surfaces guest cancellations without a manual reload. Paused mid-respond so
+  // an in-flight poll can't land stale rows over the new state.
+  useLiveRefresh(() => load(true), ready && !!user && !respondingId);
+
+  // Active = live booking whose stay hasn't ended; History = cancelled or past.
+  const { active, history } = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const active: Booking[] = [];
+    const history: Booking[] = [];
+    for (const r of requests ?? []) {
+      const upcoming = new Date(r.checkOut) >= today;
+      if (r.status === "active" && upcoming) active.push(r);
+      else history.push(r);
+    }
+    const byCreated = (order: "desc" | "asc") => (a: Booking, b: Booking) => {
+      const diff = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      return order === "desc" ? diff : -diff;
+    };
+    active.sort(byCreated(sort));
+    history.sort(byCreated(historySort));
+    return { active, history };
+  }, [requests, sort, historySort]);
 
   function retryLoad() {
     setError("");
@@ -142,6 +190,7 @@ export default function RentRequestsPage() {
     try {
       const updated = await respondBooking(id);
       setRequests((prev) => (prev ?? []).map((r) => (r.id === id ? updated : r)));
+      toast.success("Response sent — the guest can see it now.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not respond to request.");
     } finally {
@@ -169,14 +218,8 @@ export default function RentRequestsPage() {
     );
   }
 
-  // Active requests = not cancelled, sorted by creation time.
   const toggleSort = () => setSort((s) => (s === "desc" ? "asc" : "desc"));
-  const active = (requests ?? [])
-    .filter((r) => r.status !== "cancelled")
-    .sort((a, b) => {
-      const diff = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-      return sort === "desc" ? diff : -diff;
-    });
+  const toggleHistorySort = () => setHistorySort((s) => (s === "desc" ? "asc" : "desc"));
 
   return (
     <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-10 lg:px-7">
@@ -208,14 +251,7 @@ export default function RentRequestsPage() {
 
           {/* Table (scrolls horizontally on small screens) */}
           <div className="overflow-x-auto">
-          {/* Column headings */}
-          <div className="mt-6 grid min-w-[620px] grid-cols-[1.4fr_1.2fr_1.1fr_1fr_0.8fr] px-4 text-[13px] text-muted">
-            {COLUMNS.map((c) => (
-              <span key={c} className={c === "Status" ? "text-right" : ""}>
-                {c}
-              </span>
-            ))}
-          </div>
+          <ColumnHeadings />
 
           {/* Rows */}
           <div className="mt-2.5 space-y-3">
@@ -248,6 +284,7 @@ export default function RentRequestsPage() {
                 <RequestRow
                   key={req.id}
                   req={req}
+                  kind="active"
                   onRespond={onRespond}
                   responding={respondingId === req.id}
                 />
@@ -255,8 +292,57 @@ export default function RentRequestsPage() {
             )}
           </div>
           </div>
+
+          {/* Booking history — cancelled and finished stays stay on record here
+              instead of vanishing from the owner's view. */}
+          <div className="mt-9 flex items-center justify-between">
+            <h2 className="text-[16px] font-bold text-ink">Booking History</h2>
+            <SortDropdown sort={historySort} onToggle={toggleHistorySort} />
+          </div>
+
+          <div className="overflow-x-auto">
+            <ColumnHeadings />
+
+            <div className="mt-2.5 space-y-3">
+              {requests === null ? (
+                error ? null : (
+                  <>
+                    {Array.from({ length: 2 }, (_, i) => (
+                      <div key={i} className="skeleton h-[48px] min-w-[620px]" />
+                    ))}
+                  </>
+                )
+              ) : history.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-line px-4 py-6 text-center text-[13px] text-muted">
+                  No past or cancelled bookings.
+                </div>
+              ) : (
+                history.map((req) => (
+                  <RequestRow
+                    key={req.id}
+                    req={req}
+                    kind="history"
+                    onRespond={onRespond}
+                    responding={false}
+                  />
+                ))
+              )}
+            </div>
+          </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ColumnHeadings() {
+  return (
+    <div className="mt-6 grid min-w-[620px] grid-cols-[1.4fr_1.2fr_1.1fr_1fr_0.8fr] px-4 text-[13px] text-muted">
+      {COLUMNS.map((c) => (
+        <span key={c} className={c === "Status" ? "text-right" : ""}>
+          {c}
+        </span>
+      ))}
     </div>
   );
 }

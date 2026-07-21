@@ -398,6 +398,7 @@ export type Booking = {
   pricePerNight: number;
   subtotal: number;
   serviceFee: number;
+  tax: number;
   total: number;
   paymentMethod: string;
   cardLast4: string;
@@ -410,7 +411,7 @@ const BOOKING_SELECTION = `
   id villaId villaTitle villaCover villaCity villaCountry
   guestName guestAvatar guestEmail
   checkIn checkOut nights guests
-  pricePerNight subtotal serviceFee total
+  pricePerNight subtotal serviceFee tax total
   paymentMethod cardLast4 status hostResponded createdAt`;
 
 export async function createBooking(input: BookingInput): Promise<Booking> {

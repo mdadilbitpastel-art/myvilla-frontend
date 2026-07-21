@@ -8,9 +8,7 @@ import Breadcrumb from "@/components/property/Breadcrumb";
 import Img from "@/components/ui/Img";
 import { useAuth } from "@/lib/auth";
 import { fetchVilla, createBooking, type Villa } from "@/lib/api";
-
-// Platform service fee — must match the backend (SERVICE_FEE_RATE).
-const SERVICE_FEE_RATE = 0.141;
+import { computeStayPricing, TAX_RATE } from "@/lib/pricing";
 
 const PLACEHOLDER_IMG =
   "https://images.unsplash.com/photo-1571896349842-33c89424de2d?auto=format&fit=crop&w=600&q=80";
@@ -24,7 +22,6 @@ const COUNTRIES = [
 ];
 
 const money = (n: number) => `$${n.toFixed(2)}`;
-const round2 = (n: number) => Math.round(n * 100) / 100;
 
 function fmtDate(d: Date) {
   const p = (x: number) => String(x).padStart(2, "0");
@@ -246,9 +243,7 @@ function BookVillaContent() {
 
   // --- Price details ---
   const price = v.pricePerNight || 0;
-  const subtotal = round2(price * trip.nights);
-  const serviceFee = round2(subtotal * SERVICE_FEE_RATE);
-  const total = round2(subtotal + serviceFee);
+  const { subtotal, serviceFee, tax, total } = computeStayPricing(price, trip.nights);
   const cover = v.photos[0]?.url || v.coverImage || "";
   // Narrowed once here — closures below can't see the `!dates` guard above.
   const stay = dates;
@@ -553,8 +548,16 @@ function BookVillaContent() {
                   <span className="text-ink">{money(subtotal)}</span>
                 </div>
                 <div className="flex items-center justify-between text-body">
+                  <span>Discount</span>
+                  <span className="text-ink">{money(0)}</span>
+                </div>
+                <div className="flex items-center justify-between text-body">
                   <span className="underline underline-offset-2">Service fee</span>
                   <span className="text-ink">{money(serviceFee)}</span>
+                </div>
+                <div className="flex items-center justify-between text-body">
+                  <span>Tax ({Math.round(TAX_RATE * 100)}%)</span>
+                  <span className="text-ink">{money(tax)}</span>
                 </div>
               </div>
 

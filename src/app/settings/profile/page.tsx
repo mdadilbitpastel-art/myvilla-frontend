@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
+import { useToast } from "@/lib/toast";
 import SettingsSidebar from "@/components/settings/SettingsSidebar";
 import Img from "@/components/ui/Img";
 import { fileToResizedDataUrl } from "@/lib/image";
@@ -27,13 +28,13 @@ const FIELDS: { key: keyof ProfileInput; label: string }[] = [
 
 export default function ProfileSettingsPage() {
   const { user, ready, setUser } = useAuth();
+  const toast = useToast();
 
   const [values, setValues] = useState<ProfileInput | null>(null);
   const [editing, setEditing] = useState<keyof ProfileInput | null>(null);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [avatarBusy, setAvatarBusy] = useState(false);
-  const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
   const [invalidField, setInvalidField] = useState<keyof ProfileInput | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -107,7 +108,6 @@ export default function ProfileSettingsPage() {
   if (!values) return <ProfileSkeleton />;
 
   function startEdit(key: keyof ProfileInput) {
-    setMsg("");
     setEditing(key);
     setDraft(values![key]);
   }
@@ -123,19 +123,17 @@ export default function ProfileSettingsPage() {
     if (!values) return;
     const emailError = validateEmail(values.email);
     if (emailError) {
-      setMsg("");
       setInvalidField("email");
       setError(emailError);
       return;
     }
     setInvalidField(null);
     setError("");
-    setMsg("");
     setSaving(true);
     try {
       const updated = await updateProfile(values);
       setUser(updated);
-      setMsg("Your changes have been saved.");
+      toast.success("Your changes have been saved.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
     } finally {
@@ -148,13 +146,12 @@ export default function ProfileSettingsPage() {
     e.target.value = ""; // allow re-picking the same file
     if (!file) return;
     setError("");
-    setMsg("");
     setAvatarBusy(true);
     try {
       const dataUrl = await fileToResizedDataUrl(file, 512);
       const updated = await updateAvatar(dataUrl);
       setUser(updated);
-      setMsg("Profile picture updated.");
+      toast.success("Profile picture updated.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not update the picture.");
     } finally {
@@ -247,14 +244,12 @@ export default function ProfileSettingsPage() {
                 })}
               </div>
 
-              {(msg || error) && (
+              {error && (
                 <p
-                  role={error ? "alert" : "status"}
-                  className={`mt-4 rounded-lg px-3 py-2 text-[13px] ${
-                    error ? "bg-red-50 text-red-600" : "bg-primary/5 text-primary"
-                  }`}
+                  role="alert"
+                  className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-[13px] text-red-600"
                 >
-                  {error || msg}
+                  {error}
                 </p>
               )}
 

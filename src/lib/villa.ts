@@ -109,12 +109,9 @@ export const villa = {
     checkIn: "02 - February - 2022",
     checkOut: "16 - February - 2022",
     guests: "2 guests",
-    breakdown: [
-      { label: "Accomodation", value: 426 },
-      { label: "Monthly Discount", value: 426 },
-      { label: "Service Fee", value: 426 },
-    ],
-    total: 426,
+    // No breakdown/total here on purpose: the reservation card derives every
+    // line from the selected dates (see lib/pricing.ts). The old fixed 426
+    // template showed the same numbers on every villa.
   },
 };
 

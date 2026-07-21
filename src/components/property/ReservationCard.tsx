@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Star, ChevronDown } from "lucide-react";
 import type { Villa } from "@/lib/villa";
 import { useAuth } from "@/lib/auth";
+import { computeStayPricing, money, TAX_RATE } from "@/lib/pricing";
 
 export default function ReservationCard({
   pricing,
@@ -95,6 +96,8 @@ export default function ReservationCard({
     if (checkOut <= next) setCheckOut(addDays(next, 1));
     else if (checkOut > addDays(next, MAX_NIGHTS)) setCheckOut(addDays(next, MAX_NIGHTS));
   }
+  // Everything below the Reserve button is derived from the chosen dates.
+  const stay = computeStayPricing(pricing.price, nights);
   const dateError = !datesReady
     ? ""
     : nights < 1
@@ -228,19 +231,32 @@ export default function ReservationCard({
         </p>
       )}
 
-      {/* Price breakdown */}
+      {/* Price breakdown — recomputed from the dates above, not a fixed
+          template, so it always matches what checkout will charge. */}
       <div className="mt-6 space-y-3 text-[15px]">
-        {pricing.breakdown.map((row) => (
-          <div key={row.label} className="flex items-center justify-between text-body">
-            <span>{row.label}</span>
-            <span>${row.value}</span>
-          </div>
-        ))}
+        <div className="flex items-center justify-between text-body">
+          <span>
+            {money(pricing.price)} x {nights} night{nights === 1 ? "" : "s"}
+          </span>
+          <span>{money(stay.subtotal)}</span>
+        </div>
+        <div className="flex items-center justify-between text-body">
+          <span>Discount</span>
+          <span>{stay.discount > 0 ? `-${money(stay.discount)}` : money(0)}</span>
+        </div>
+        <div className="flex items-center justify-between text-body">
+          <span>Service Fee</span>
+          <span>{money(stay.serviceFee)}</span>
+        </div>
+        <div className="flex items-center justify-between text-body">
+          <span>Tax ({Math.round(TAX_RATE * 100)}%)</span>
+          <span>{money(stay.tax)}</span>
+        </div>
       </div>
 
       <div className="mt-4 flex items-center justify-between border-t border-line pt-4 text-[16px] font-bold text-ink">
-        <span>Total before taxes</span>
-        <span>${pricing.total}</span>
+        <span>Total</span>
+        <span>{money(stay.total)}</span>
       </div>
     </div>
   );

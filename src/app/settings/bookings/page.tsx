@@ -1,9 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ChevronDown } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { useLiveRefresh } from "@/lib/useLiveRefresh";
+import { useToast } from "@/lib/toast";
+import { useConfirm } from "@/lib/confirm";
 import SettingsSidebar from "@/components/settings/SettingsSidebar";
 import { fetchMyBookings, cancelBooking, type Booking } from "@/lib/api";
 
@@ -64,6 +67,7 @@ function BookingRow({
   cancelling: boolean;
 }) {
   const cancelled = booking.status === "cancelled";
+  const responded = booking.hostResponded;
   return (
     <div className="grid min-w-[620px] grid-cols-[1.4fr_1fr_1.2fr_1fr_1fr] items-center rounded-lg border border-line px-4 py-3.5 text-[13px]">
       <Link
@@ -78,27 +82,39 @@ function BookingRow({
       <span className="text-body">
         {booking.guests} guest{booking.guests === 1 ? "" : "s"}
       </span>
-      <span className="text-right">
+      <span className="flex flex-col items-end gap-1 text-right">
         {kind === "active" ? (
-          <button
-            type="button"
-            onClick={() => onCancel(booking.id, booking.villaTitle)}
-            disabled={cancelling}
-            aria-busy={cancelling}
-            className="text-[13px] font-medium text-red-400 underline underline-offset-2 transition-colors hover:text-red-500 disabled:opacity-50"
-          >
-            {cancelling ? (
-              <>
-                <span className="spinner" aria-hidden /> Cancelling…
-              </>
-            ) : (
-              "Cancel Booking"
-            )}
-          </button>
+          <>
+            {/* The host's reply lands here without a reload — the page polls. */}
+            <span
+              className={`text-[13px] font-semibold ${
+                responded ? "text-primary" : "text-muted"
+              }`}
+            >
+              {responded ? "Responded" : "Awaiting response"}
+            </span>
+            <button
+              type="button"
+              onClick={() => onCancel(booking.id, booking.villaTitle)}
+              disabled={cancelling}
+              aria-busy={cancelling}
+              className="text-[12px] font-medium text-red-400 underline underline-offset-2 transition-colors hover:text-red-500 disabled:opacity-50"
+            >
+              {cancelling ? (
+                <>
+                  <span className="spinner" aria-hidden /> Cancelling…
+                </>
+              ) : (
+                "Cancel Booking"
+              )}
+            </button>
+          </>
         ) : cancelled ? (
           <span className="text-[13px] font-semibold text-red-400">Cancelled</span>
-        ) : (
+        ) : responded ? (
           <span className="text-[13px] font-semibold text-primary">Accepted</span>
+        ) : (
+          <span className="text-[13px] font-semibold text-body">Completed</span>
         )}
       </span>
     </div>
@@ -107,32 +123,48 @@ function BookingRow({
 
 export default function MyBookingsPage() {
   const { user, ready } = useAuth();
+  const toast = useToast();
+  const confirm = useConfirm();
   const [bookings, setBookings] = useState<Booking[] | null>(null);
   const [loadError, setLoadError] = useState("");
   const [cancellingId, setCancellingId] = useState<string | null>(null);
-  const [showBanner, setShowBanner] = useState(false);
   // Each table sorts independently — one shared state would make sorting the
   // history silently re-order the active table above it.
   const [activeSort, setActiveSort] = useState<"desc" | "asc">("desc");
   const [historySort, setHistorySort] = useState<"desc" | "asc">("desc");
   const errorRef = useRef<HTMLDivElement>(null);
 
+  // One-time toast after a successful checkout (?booked=1).
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const sp = new URLSearchParams(window.location.search);
-      if (sp.get("booked") === "1") {
-        setShowBanner(true);
-        window.history.replaceState(null, "", window.location.pathname);
-      }
+    const sp = new URLSearchParams(window.location.search);
+    if (sp.get("booked") === "1") {
+      toast.success("Payment successful — your booking is confirmed!");
+      window.history.replaceState(null, "", window.location.pathname);
     }
+    // Runs once on mount — `toast` is stable, and re-running would double-fire.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // `silent` refreshes are background polls — a transient network blip there
+  // must not replace the list the user is looking at with an error banner.
+  const load = useCallback((silent = false) => {
+    return fetchMyBookings()
+      .then(setBookings)
+      .catch((e) => {
+        if (!silent) {
+          setLoadError(e instanceof Error ? e.message : "Failed to load bookings.");
+        }
+      });
   }, []);
 
   useEffect(() => {
     if (!ready || !user) return;
-    fetchMyBookings()
-      .then(setBookings)
-      .catch((e) => setLoadError(e instanceof Error ? e.message : "Failed to load bookings."));
-  }, [ready, user]);
+    load();
+  }, [ready, user, load]);
+
+  // Keeps the host's "Responded" state current without a manual reload. Paused
+  // mid-cancel so an in-flight poll can't land stale rows over the new state.
+  useLiveRefresh(() => load(true), ready && !!user && !cancellingId);
 
   // Active = still upcoming and not cancelled; History = past or cancelled.
   const { active, history } = useMemo(() => {
@@ -160,19 +192,21 @@ export default function MyBookingsPage() {
 
   async function onCancel(id: string, title: string) {
     if (cancellingId) return;
-    if (
-      !window.confirm(
-        `Cancel your booking for "${title}"? This can't be undone and cancellation charges may apply.`
-      )
-    ) {
-      return;
-    }
+    const ok = await confirm({
+      title: "Cancel this booking?",
+      message: `Your stay at "${title}" will be cancelled. This can't be undone and cancellation charges may apply.`,
+      confirmLabel: "Cancel booking",
+      cancelLabel: "Keep booking",
+      tone: "danger",
+    });
+    if (!ok) return;
     setCancellingId(id);
     try {
       const updated = await cancelBooking(id);
       setBookings((prev) =>
         (prev ?? []).map((b) => (b.id === id ? updated : b))
       );
+      toast.success("Booking cancelled.");
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Could not cancel booking.");
       // The banner sits at the top of the card, far above the row the user just
@@ -213,11 +247,6 @@ export default function MyBookingsPage() {
 
         {/* Right — bookings card */}
         <div className="w-full rounded-2xl border border-line bg-white p-6 sm:p-8">
-          {showBanner && (
-            <div className="mb-6 rounded-lg bg-green-50 px-4 py-3 text-[13px] font-medium text-green-700">
-              🎉 Payment successful — your booking is confirmed!
-            </div>
-          )}
           {loadError && (
             <div
               ref={errorRef}

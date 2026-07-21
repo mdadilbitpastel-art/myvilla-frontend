@@ -5,6 +5,8 @@ import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import { AuthProvider } from "@/lib/auth";
 import { FavoritesProvider } from "@/lib/favorites";
+import { ToastProvider } from "@/lib/toast";
+import { ConfirmProvider } from "@/lib/confirm";
 
 const poppins = Poppins({
   variable: "--font-poppins",
@@ -31,13 +33,17 @@ export default function RootLayout({
       className={`${poppins.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col bg-page text-ink">
-        <AuthProvider>
-          <FavoritesProvider>
-            <Navbar />
-            <main className="flex-1">{children}</main>
-            <Footer />
-          </FavoritesProvider>
-        </AuthProvider>
+        <ToastProvider>
+          <ConfirmProvider>
+            <AuthProvider>
+              <FavoritesProvider>
+                <Navbar />
+                <main className="flex-1">{children}</main>
+                <Footer />
+              </FavoritesProvider>
+            </AuthProvider>
+          </ConfirmProvider>
+        </ToastProvider>
       </body>
     </html>
   );

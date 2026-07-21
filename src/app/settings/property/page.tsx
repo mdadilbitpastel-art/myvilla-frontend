@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Star, X } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { useToast } from "@/lib/toast";
+import { useConfirm } from "@/lib/confirm";
 import SettingsSidebar from "@/components/settings/SettingsSidebar";
 import Img from "@/components/ui/Img";
 import { fetchMyVillas, deleteVilla, type Villa } from "@/lib/api";
@@ -66,6 +68,8 @@ function villaToRow(v: Villa): Row {
 
 export default function MyPropertyPage() {
   const { user, ready } = useAuth();
+  const toast = useToast();
+  const confirm = useConfirm();
   const [villas, setVillas] = useState<Villa[] | null>(null);
   // A failed load is not the same thing as "you have no listings".
   const [loadError, setLoadError] = useState("");
@@ -76,14 +80,18 @@ export default function MyPropertyPage() {
   // list; the villa's images are removed server-side too.
   async function handleRemove(id: string, label: string) {
     if (removingId) return;
-    if (!window.confirm(`Remove "${label}"? This permanently deletes the listing.`)) {
-      return;
-    }
+    const ok = await confirm({
+      title: "Remove this property?",
+      message: `"${label}" will be permanently deleted, along with its photos. This can't be undone.`,
+      confirmLabel: "Remove",
+      tone: "danger",
+    });
+    if (!ok) return;
     setRemovingId(id);
     try {
       await deleteVilla(id);
       setVillas((prev) => (prev ? prev.filter((v) => v.id !== id) : prev));
-      setBanner({ kind: "success", text: "🗑️ Property removed." });
+      toast.success("Property removed.");
     } catch {
       setBanner({ kind: "error", text: "Could not remove the property. Please try again." });
     } finally {
@@ -91,29 +99,21 @@ export default function MyPropertyPage() {
     }
   }
 
-  // One-time success banner after publishing (?added=1) or editing (?updated=1).
+  // One-time toast after publishing (?added=1) or editing (?updated=1).
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      if (params.get("added") === "1") {
-        setBanner({ kind: "success", text: "🎉 Your villa has been published successfully." });
-      } else if (params.get("updated") === "1") {
-        setBanner({ kind: "success", text: "✅ Your villa has been updated successfully." });
-      }
-      if (params.has("added") || params.has("updated")) {
-        // Clean the URL so a refresh doesn't re-show the banner.
-        window.history.replaceState({}, "", "/settings/property");
-      }
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("added") === "1") {
+      toast.success("Your villa has been published successfully.");
+    } else if (params.get("updated") === "1") {
+      toast.success("Your villa has been updated successfully.");
     }
+    if (params.has("added") || params.has("updated")) {
+      // Clean the URL so a refresh doesn't re-show the toast.
+      window.history.replaceState({}, "", "/settings/property");
+    }
+    // Runs once on mount — `toast` is stable, and re-running would double-fire.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Success banners are informational — clear them so they don't linger.
-  // Errors stay until the user dismisses them.
-  useEffect(() => {
-    if (banner?.kind !== "success") return;
-    const t = setTimeout(() => setBanner(null), 4000);
-    return () => clearTimeout(t);
-  }, [banner]);
 
   // Load the user's real villas from the backend.
   const load = useCallback(() => {

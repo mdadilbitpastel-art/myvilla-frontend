@@ -44,16 +44,33 @@ export default function Navbar() {
   const pathname = usePathname();
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Close the account dropdown on Escape and return focus to its trigger.
+  // Close the account dropdown on Escape (returning focus to its trigger) or on
+  // any press outside it. A click-away <div> overlay can't do the latter job:
+  // it renders inside the header's z-50 stacking context, so anything on the
+  // page with its own stacking context swallowed the click before it landed.
   useEffect(() => {
     if (!menuOpen) return;
+
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
       setMenuOpen(false);
       menuRef.current?.querySelector("button")?.focus();
     }
+
+    // The trigger lives inside menuRef, so its own toggle still wins here.
+    function onPressOutside(e: Event) {
+      if (menuRef.current?.contains(e.target as Node)) return;
+      setMenuOpen(false);
+    }
+
     document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+    document.addEventListener("mousedown", onPressOutside);
+    document.addEventListener("touchstart", onPressOutside);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("mousedown", onPressOutside);
+      document.removeEventListener("touchstart", onPressOutside);
+    };
   }, [menuOpen]);
 
   // Route changes should never leave a menu hanging open over the new page.
@@ -136,47 +153,38 @@ export default function Navbar() {
               </button>
 
               {menuOpen && (
-                <>
-                  {/* Click-away layer. Not focusable: as a real <button> it sat
-                      in the tab order between the trigger and the menu items. */}
-                  <div
-                    aria-hidden
+                <div
+                  role="menu"
+                  className="animate-fade-in absolute right-0 top-[calc(100%+10px)] z-50 w-48 overflow-hidden rounded-xl border border-line bg-white py-1.5 shadow-xl"
+                >
+                  <Link
+                    href="/saved"
+                    role="menuitem"
                     onClick={() => setMenuOpen(false)}
-                    className="fixed inset-0 z-40 cursor-default"
-                  />
-                  <div
-                    role="menu"
-                    className="animate-fade-in absolute right-0 top-[calc(100%+10px)] z-50 w-48 overflow-hidden rounded-xl border border-line bg-white py-1.5 shadow-xl"
+                    className="flex items-center gap-3 px-4 py-2.5 text-[14px] text-body transition-colors hover:bg-page hover:text-ink"
                   >
-                    <Link
-                      href="/saved"
-                      role="menuitem"
-                      onClick={() => setMenuOpen(false)}
-                      className="flex items-center gap-3 px-4 py-2.5 text-[14px] text-body transition-colors hover:bg-page hover:text-ink"
-                    >
-                      <Heart size={17} aria-hidden className="text-muted" />
-                      Saved
-                    </Link>
-                    <Link
-                      href="/settings"
-                      role="menuitem"
-                      onClick={() => setMenuOpen(false)}
-                      className="flex items-center gap-3 px-4 py-2.5 text-[14px] text-body transition-colors hover:bg-page hover:text-ink"
-                    >
-                      <Settings size={17} aria-hidden className="text-muted" />
-                      Settings
-                    </Link>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={handleLogout}
-                      className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-[14px] text-body transition-colors hover:bg-page hover:text-ink"
-                    >
-                      <LogOut size={17} aria-hidden className="text-muted" />
-                      Logout
-                    </button>
-                  </div>
-                </>
+                    <Heart size={17} aria-hidden className="text-muted" />
+                    Saved
+                  </Link>
+                  <Link
+                    href="/settings"
+                    role="menuitem"
+                    onClick={() => setMenuOpen(false)}
+                    className="flex items-center gap-3 px-4 py-2.5 text-[14px] text-body transition-colors hover:bg-page hover:text-ink"
+                  >
+                    <Settings size={17} aria-hidden className="text-muted" />
+                    Settings
+                  </Link>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={handleLogout}
+                    className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-[14px] text-body transition-colors hover:bg-page hover:text-ink"
+                  >
+                    <LogOut size={17} aria-hidden className="text-muted" />
+                    Logout
+                  </button>
+                </div>
               )}
             </div>
           ) : (
