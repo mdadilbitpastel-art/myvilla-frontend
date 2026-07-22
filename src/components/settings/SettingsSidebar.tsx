@@ -27,7 +27,10 @@ export default function SettingsSidebar({ active }: { active?: string }) {
   const current = active ?? activeFromPath(pathname ?? "");
 
   return (
-    <nav className="flex flex-col gap-4">
+    // Sticky below the 68px header so only the settings panel on the right
+    // scrolls. The wrapping <aside> keeps its stretched full-row height, which
+    // is exactly the room this needs to travel in.
+    <nav className="flex flex-col gap-4 lg:sticky lg:top-[84px]">
       {ITEMS.map((item) => {
         const isActive = current === item.label;
         return (

@@ -6,6 +6,8 @@ import Image from "next/image";
 import Link from "next/link";
 import { X, ChevronDown } from "lucide-react";
 import { loginUser, registerUser, getRememberedEmail } from "@/lib/api";
+import GoogleSignInButton from "@/components/auth/GoogleSignInButton";
+import { COUNTRIES, COUNTRIES_BY_DIAL, countryByCode } from "@/lib/countries";
 import { useAuth } from "@/lib/auth";
 import {
   validateEmail,
@@ -102,14 +104,18 @@ export default function AuthModal({
   return createPortal(
     // Backdrop — sits BELOW the 68px header and dims the page.
     // Clicking it does NOT close (only the cross / Escape does).
-    <div className="animate-fade-in fixed inset-x-0 bottom-0 top-[68px] z-[60] overflow-y-auto bg-black/50">
-      <div className="flex min-h-full items-center justify-center p-4">
+    // The backdrop never scrolls: register is the tall form, and letting the
+    // whole modal scroll dragged the image panel out of view with it.
+    <div className="animate-fade-in fixed inset-x-0 bottom-0 top-[68px] z-[60] overflow-hidden bg-black/50">
+      <div className="flex h-full items-center justify-center p-4">
         <div
           ref={panelRef}
           role="dialog"
           aria-modal="true"
           aria-labelledby={titleId}
-          className="relative grid w-full max-w-[960px] overflow-hidden rounded-2xl bg-white shadow-2xl lg:grid-cols-[1.6fr_1fr]"
+          // One height for both modes, so switching sign-in <-> register
+          // doesn't resize the panel under the cursor.
+          className="relative grid h-[min(640px,100%)] w-full max-w-[960px] overflow-hidden rounded-2xl bg-white shadow-2xl lg:grid-cols-[1.6fr_1fr]"
         >
         {/* Left — image with cancel + heading (desktop only) */}
         <div className="relative hidden lg:block">
@@ -125,10 +131,10 @@ export default function AuthModal({
           <button
             type="button"
             onClick={onClose}
-            className="absolute left-5 top-5 flex items-center gap-2 text-[15px] text-white transition-opacity hover:opacity-80"
+            aria-label="Close"
+            className="absolute left-5 top-5 text-white transition-opacity hover:opacity-80"
           >
-            <X size={20} strokeWidth={2} />
-            <span className="underline underline-offset-2">Cancel</span>
+            <X size={28} strokeWidth={2.75} />
           </button>
 
           <div className="absolute inset-x-7 top-16 text-white">
@@ -146,15 +152,16 @@ export default function AuthModal({
           type="button"
           onClick={onClose}
           aria-label="Close"
-          className="absolute left-4 top-4 z-10 flex items-center gap-2 text-[15px] text-ink lg:hidden"
+          className="absolute left-4 top-4 z-10 text-ink transition-opacity hover:opacity-70 lg:hidden"
         >
-          <X size={20} strokeWidth={2} />
-          <span className="underline underline-offset-2">Cancel</span>
+          <X size={28} strokeWidth={2.75} />
         </button>
 
-        {/* Right — form (no inner scroll; height is driven by content) */}
-        <div className="p-7 pt-14 sm:p-9 lg:pt-9">
-          <div className="mx-auto w-full max-w-[340px]">
+        {/* Right — the only scrollable region; the image panel stays frozen. */}
+        <div className="flex overflow-y-auto overscroll-contain p-7 pt-14 sm:p-9 lg:pt-9">
+          {/* my-auto centres the shorter sign-in form in the fixed-height panel
+              instead of stranding it at the top. */}
+          <div className="mx-auto my-auto w-full max-w-[340px]">
             {mode === "signin" ? (
               <SigninForm
                 titleId={titleId}
@@ -263,8 +270,7 @@ function SigninForm({
         <FormError message={error} />
         <SubmitButton loading={loading}>Sign in</SubmitButton>
         <OrDivider />
-        <SocialButton>Continue with facebook</SocialButton>
-        <SocialButton>Continue with Google</SocialButton>
+        <GoogleSignInButton onSuccess={onSuccess} />
 
         <p className="text-center text-[13px] text-body">
           New to MyVilla?{" "}
@@ -289,9 +295,14 @@ function RegisterForm({
   const { setUser } = useAuth();
   const uid = useId();
   const [email, setEmail] = useState("");
-  const [dialCode, setDialCode] = useState("+00");
   const [phone, setPhone] = useState("");
-  const [country, setCountry] = useState("");
+  // Both the dial-code picker and the country select write this single ISO
+  // code, which is what keeps them in sync in either direction — +1 maps to a
+  // dozen countries, so a dial *number* could never drive the pairing alone.
+  const [countryCode, setCountryCode] = useState("");
+  const selected = countryByCode(countryCode);
+  const country = selected?.name ?? "";
+  const dialCode = selected ? `+${selected.dial}` : "";
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [errors, setErrors] = useState<FieldErrors<RegisterField>>({});
@@ -311,6 +322,7 @@ function RegisterForm({
       email: validateEmail(email),
       phone: validatePhone(phone),
       country: validateRequired(country, "Country or region"),
+      // The dial code rides along with the country, so one message covers both.
       password: validatePassword(password),
       confirm: validateConfirm(password, confirm),
     };
@@ -322,7 +334,7 @@ function RegisterForm({
       const { user } = await registerUser({
         email: email.trim(),
         password,
-        phoneNumber: `${dialCode} ${phone.trim()}`,
+        phoneNumber: `${dialCode} ${phone.trim()}`.trim(),
         country,
       });
       setUser(user);
@@ -339,27 +351,44 @@ function RegisterForm({
       <h2 id={titleId} className="text-[20px] font-bold text-ink">
         Welcome to MyVilla
       </h2>
-      <p className="mt-1 text-[13px] text-body">Create your account to continue</p>
-
-      <div className="mt-4 space-y-3">
-        <Field label="Email" type="email" autoComplete="email" placeholder="someone@example.com" value={email} onChange={(v) => { setEmail(v); clear("email"); }} error={errors.email} />
+      {/* Tight rhythm on purpose: the register form has to fit the same panel
+          height as sign-in without ever scrolling inside it. */}
+      <div className="mt-3 space-y-2">
+        <Field compact label="Email" type="email" autoComplete="email" placeholder="someone@example.com" value={email} onChange={(v) => { setEmail(v); clear("email"); }} error={errors.email} />
 
         {/* Phone number with dial-code prefix */}
         <div>
           <label
             htmlFor={`${uid}-phone`}
-            className="mb-1.5 block text-[14px] font-semibold text-ink"
+            className="mb-1 block text-[14px] font-semibold text-ink"
           >
             Phone Number
           </label>
           <div className="flex gap-2">
-            <input
-              value={dialCode}
-              onChange={(e) => setDialCode(e.target.value)}
-              aria-label="Country dial code"
-              inputMode="tel"
-              className="w-16 rounded-lg border border-line bg-white px-3 py-2.5 text-center text-[14px] text-ink transition-colors focus:border-primary focus:outline-none"
-            />
+            <div className="relative shrink-0">
+              <select
+                value={countryCode}
+                onChange={(e) => {
+                  setCountryCode(e.target.value);
+                  clear("country");
+                }}
+                aria-label="Country dial code"
+                className={`w-[104px] cursor-pointer appearance-none rounded-lg border bg-white py-2 pl-3 pr-7 text-[14px] transition-colors focus:outline-none ${
+                  errors.country ? "border-red-400 focus:border-red-400" : "border-line focus:border-primary"
+                } ${countryCode ? "text-ink" : "text-muted"}`}
+              >
+                <option value="">+ code</option>
+                {COUNTRIES_BY_DIAL.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.flag} +{c.dial}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown
+                size={16}
+                className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-primary"
+              />
+            </div>
             <input
               id={`${uid}-phone`}
               value={phone}
@@ -369,7 +398,7 @@ function RegisterForm({
               autoComplete="tel-national"
               aria-invalid={!!errors.phone}
               aria-describedby={errors.phone ? `${uid}-phone-error` : undefined}
-              className={`min-w-0 flex-1 rounded-lg border bg-white px-3.5 py-2.5 text-[14px] text-ink transition-colors placeholder:text-muted focus:outline-none ${
+              className={`min-w-0 flex-1 rounded-lg border bg-white px-3.5 py-2 text-[14px] text-ink transition-colors placeholder:text-muted focus:outline-none ${
                 errors.phone ? "border-red-400 focus:border-red-400" : "border-line focus:border-primary"
               }`}
             />
@@ -385,25 +414,25 @@ function RegisterForm({
         <div>
           <label
             htmlFor={`${uid}-country`}
-            className="mb-1.5 block text-[14px] font-semibold text-ink"
+            className="mb-1 block text-[14px] font-semibold text-ink"
           >
             Country or Region
           </label>
           <div className="relative">
             <select
               id={`${uid}-country`}
-              value={country}
-              onChange={(e) => { setCountry(e.target.value); clear("country"); }}
+              value={countryCode}
+              onChange={(e) => { setCountryCode(e.target.value); clear("country"); }}
               aria-invalid={!!errors.country}
               autoComplete="country-name"
-              className={`w-full cursor-pointer appearance-none rounded-lg border bg-white px-3.5 py-2.5 pr-10 text-[14px] transition-colors focus:outline-none ${
+              className={`w-full cursor-pointer appearance-none rounded-lg border bg-white px-3.5 py-2 pr-10 text-[14px] transition-colors focus:outline-none ${
                 errors.country ? "border-red-400 focus:border-red-400" : "border-line focus:border-primary"
-              } ${country ? "text-ink" : "text-muted"}`}
+              } ${countryCode ? "text-ink" : "text-muted"}`}
             >
               <option value="">Choose country or region</option>
               {COUNTRIES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
+                <option key={c.code} value={c.code}>
+                  {c.name}
                 </option>
               ))}
             </select>
@@ -415,14 +444,16 @@ function RegisterForm({
           {errors.country && <p className="mt-1 text-[12px] text-red-600">{errors.country}</p>}
         </div>
 
-        <Field label="Password" type="password" autoComplete="new-password" placeholder="Min 8 chars, letters & numbers" value={password} onChange={(v) => { setPassword(v); clear("password"); }} error={errors.password} />
-        <Field label="Confirm Password" type="password" autoComplete="new-password" placeholder="Re-enter your password" value={confirm} onChange={(v) => { setConfirm(v); clear("confirm"); }} error={errors.confirm} />
+        <div className="grid grid-cols-2 gap-2.5">
+          <Field compact label="Password" type="password" autoComplete="new-password" placeholder="Min 8 chars" value={password} onChange={(v) => { setPassword(v); clear("password"); }} error={errors.password} />
+          <Field compact label="Confirm" type="password" autoComplete="new-password" placeholder="Re-enter" value={confirm} onChange={(v) => { setConfirm(v); clear("confirm"); }} error={errors.confirm} />
+        </div>
 
         <FormError message={error} />
         <SubmitButton loading={loading}>Register</SubmitButton>
 
-        <p className="text-center text-[11px] leading-5 text-muted">
-          By clicking <span className="text-primary">Register</span> I agree to the{" "}
+        <p className="text-center text-[11px] leading-4 text-muted">
+          By registering you agree to the{" "}
           <Link
             href="/terms"
             onClick={onSuccess}
@@ -434,8 +465,7 @@ function RegisterForm({
         </p>
 
         <OrDivider />
-        <SocialButton>Continue with facebook</SocialButton>
-        <SocialButton>Continue with Google</SocialButton>
+        <GoogleSignInButton onSuccess={onSuccess} />
 
         <p className="text-center text-[13px] text-body">
           Already have an account?{" "}
@@ -447,19 +477,6 @@ function RegisterForm({
     </form>
   );
 }
-
-const COUNTRIES = [
-  "United States",
-  "United Kingdom",
-  "India",
-  "United Arab Emirates",
-  "Australia",
-  "Canada",
-  "Germany",
-  "France",
-  "Singapore",
-  "Japan",
-];
 
 /* ------------------------------------------------------------------ */
 /* Building blocks                                                     */
@@ -473,6 +490,7 @@ function Field({
   onChange,
   error,
   autoComplete,
+  compact = false,
 }: {
   label: string;
   type?: string;
@@ -481,6 +499,8 @@ function Field({
   onChange: (v: string) => void;
   error?: string;
   autoComplete?: string;
+  /** Tighter label gap and shorter input — lets register fit without scrolling. */
+  compact?: boolean;
 }) {
   const id = useId();
   const errorId = `${id}-error`;
@@ -489,7 +509,7 @@ function Field({
     <div>
       <label
         htmlFor={id}
-        className="mb-1.5 block text-[14px] font-semibold text-ink"
+        className={`block text-[14px] font-semibold text-ink ${compact ? "mb-1" : "mb-1.5"}`}
       >
         {label}
       </label>
@@ -502,7 +522,9 @@ function Field({
         autoComplete={autoComplete}
         aria-invalid={!!error}
         aria-describedby={error ? errorId : undefined}
-        className={`w-full rounded-lg border bg-white px-3.5 py-2.5 text-[14px] text-ink transition-colors placeholder:text-muted focus:outline-none focus:ring-2 ${
+        className={`w-full rounded-lg border bg-white px-3.5 text-[14px] text-ink transition-colors placeholder:text-muted focus:outline-none focus:ring-2 ${
+          compact ? "py-2" : "py-2.5"
+        } ${
           error
             ? "border-red-400 focus:border-red-400 focus:ring-red-500/15"
             : "border-line focus:border-primary focus:ring-primary/15"
@@ -546,17 +568,6 @@ function SubmitButton({
     >
       {loading && <span className="spinner" aria-hidden />}
       {loading ? "Please wait…" : children}
-    </button>
-  );
-}
-
-function SocialButton({ children }: { children: React.ReactNode }) {
-  return (
-    <button
-      type="button"
-      className="w-full rounded-lg border border-line bg-white px-4 py-2.5 text-left text-[14px] text-body transition-colors hover:bg-page"
-    >
-      {children}
     </button>
   );
 }

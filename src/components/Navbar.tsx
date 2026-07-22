@@ -26,9 +26,19 @@ function isActive(href: string, pathname: string): boolean {
   return pathname === href || pathname.startsWith(href + "/");
 }
 
-export function Logo({ className = "" }: { className?: string }) {
+export function Logo({
+  className = "",
+  onClick,
+}: {
+  className?: string;
+  onClick?: () => void;
+}) {
   return (
-    <Link href="/" className={`text-[22px] font-bold tracking-tight ${className}`}>
+    <Link
+      href="/"
+      onClick={onClick}
+      className={`text-[22px] font-bold tracking-tight ${className}`}
+    >
       <span className="text-ink">My</span>
       <span className="text-primary">Villa</span>
       <span className="text-ink">.com</span>
@@ -92,9 +102,14 @@ export default function Navbar() {
     : NAV_LINKS;
 
   return (
-    <header className="sticky top-0 z-50 border-b border-line bg-white/95 backdrop-blur">
+    <header className="sticky top-0 z-50 border-b border-line bg-white">
       <div className="flex h-[68px] w-full items-center justify-between px-5 lg:px-7">
-        <Logo />
+        {/* The auth modal's backdrop starts below the 68px header, so the nav
+            stays clickable while it's open. Navigating away has to take the
+            modal with it — closed on click rather than on pathname change,
+            because /reset-password deliberately navigates first and opens the
+            sign-in modal second. */}
+        <Logo onClick={closeAuth} />
 
         {/* Right group: nav links + CTA (logo stays left-most, button right-most) */}
         <div className="flex items-center gap-8">
@@ -125,6 +140,7 @@ export default function Navbar() {
                 <Link
                   key={link.label}
                   href={link.href}
+                  onClick={closeAuth}
                   aria-current={isActive(link.href, pathname) ? "page" : undefined}
                   className={`text-[15px] transition-colors hover:text-ink ${
                     isActive(link.href, pathname) ? "font-medium text-ink" : "text-muted"
@@ -237,7 +253,10 @@ export default function Navbar() {
                 <Link
                   key={link.label}
                   href={link.href}
-                  onClick={() => setOpen(false)}
+                  onClick={() => {
+                    setOpen(false);
+                    closeAuth();
+                  }}
                   aria-current={isActive(link.href, pathname) ? "page" : undefined}
                   className={`py-3 text-[15px] ${
                     isActive(link.href, pathname) ? "font-medium text-ink" : "text-muted"

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { fetchVilla, type Villa } from "@/lib/api";
@@ -17,8 +17,16 @@ import LocationMap from "@/components/property/LocationMap";
 import HostSection from "@/components/property/HostSection";
 import HouseRules from "@/components/property/HouseRules";
 import ReservationCard from "@/components/property/ReservationCard";
+import { useCollapseOnScroll } from "@/lib/useCollapseOnScroll";
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+// Ignore hand-over checks for this long after one, so the swap can animate
+// without the reflow it causes triggering the opposite swap.
+const SETTLE_MS = 420;
+
+// Height of the site header this page's own header sticks below (see Navbar).
+const NAV_HEIGHT = 68;
 
 // Map a real service label to one of the facility icons.
 function serviceIcon(s: string): Facility["icon"] {
@@ -44,6 +52,21 @@ export default function VillaDetailPage() {
   // and telling a user their villa "may have been removed" is alarming.
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  // Two stages. The text rows collapse at 120px and come back at 100px — i.e.
+  // essentially the same spot they went away at, rather than on any scroll-up
+  // gesture. Passing Infinity for the gesture distance is what disables that.
+  const collapsed = useCollapseOnScroll(120, 100, Infinity, 0);
+
+  // The photo strip is a second, independent stage, and it watches one thing
+  // only: the hero gallery. It shows exactly while no part of that gallery is
+  // on screen — nothing further down the page can influence it.
+  const headerRef = useRef<HTMLDivElement>(null);
+  const heroRef = useRef<HTMLDivElement>(null);
+  const heroInnerRef = useRef<HTMLDivElement>(null);
+  const [galleryCollapsed, setGalleryCollapsed] = useState(false);
+  const galleryCollapsedRef = useRef(false);
+  // Live height of that header, so the reservation card can park below it.
+  const [headerHeight, setHeaderHeight] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -62,6 +85,83 @@ export default function VillaDetailPage() {
       active = false;
     };
   }, [id, attempt]);
+
+  // The hand-over is measured once, then remembered — never re-measured while
+  // the strip is up.
+  //
+  // Measuring in both directions is what made it flicker: the strip is part of
+  // the header, so showing it makes the header taller, which moves the very
+  // edges the test compares. Test → toggle → the test's own inputs move → test
+  // again. Hence the two or three flips per scroll.
+  //
+  // So: while the photos are on screen, geometry decides when they leave (the
+  // hero gallery's bottom edge reaching the bottom of the pinned header — the
+  // moment the last of it goes out of view). At that instant the scroll
+  // position is recorded, and the strip stays up until the page is scrolled
+  // back above it, which is exactly where the photos start showing again.
+  // Nothing the toggle changes can feed back into that.
+  useEffect(() => {
+    let lockedUntil = 0;
+    let handOverY = 0;
+
+    const check = () => {
+      const header = headerRef.current;
+      const hero = heroRef.current;
+      const heroInner = heroInnerRef.current;
+      if (!header || !hero || !heroInner) return;
+
+      const now = performance.now();
+      const y = window.scrollY;
+      const prev = galleryCollapsedRef.current;
+
+      if (now < lockedUntil) {
+        // Collapsing shortens the page, which can pull the scroll position
+        // down with it. Absorb that so it doesn't read as a scroll up.
+        if (prev) handOverY = Math.min(handOverY, y);
+        return;
+      }
+
+      let next = prev;
+      if (!prev) {
+        const headerBottom = header.getBoundingClientRect().bottom;
+        const heroBottom = hero.getBoundingClientRect().top + heroInner.offsetHeight;
+        if (heroBottom <= headerBottom) {
+          handOverY = y;
+          next = true;
+        }
+      } else if (y < handOverY - 8) {
+        next = false;
+      }
+      if (next === prev) return;
+
+      galleryCollapsedRef.current = next;
+      lockedUntil = now + SETTLE_MS;
+      setGalleryCollapsed(next);
+    };
+
+    window.addEventListener("scroll", check, { passive: true });
+    window.addEventListener("resize", check);
+    // A frame late: the images decide the height, and it keeps the setState
+    // out of the effect body.
+    const raf = requestAnimationFrame(check);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("scroll", check);
+      window.removeEventListener("resize", check);
+    };
+  }, [v]);
+
+  // Track the header's height for the reservation card's sticky offset.
+  // Rounded to 8px so the collapse animation doesn't re-render on every frame.
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(([entry]) => {
+      setHeaderHeight(Math.ceil(entry.contentRect.height / 8) * 8);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [v]);
 
   if (failed) {
     return (
@@ -170,14 +270,50 @@ export default function VillaDetailPage() {
 
   return (
     <div className="mx-auto max-w-[1200px] px-5 pb-20 pt-6">
-      <Breadcrumb items={breadcrumb} />
-      <PropertyHeader
-        title={v.title}
-        rating={dummy.rating}
-        reviewsCount={dummy.reviewsCount}
-        villaId={v.id}
-      />
-      <Gallery hero={hero} thumbs={thumbs} />
+      {/* Sticky page header — breadcrumb, title and Share/Save. Bleeds to the
+          viewport edges so its background covers the full width. It collapses
+          in two stages: the text rows tighten early, and the photo strip only
+          appears once the gallery below has scrolled past. */}
+      <div
+        ref={headerRef}
+        className={`sticky top-[68px] z-30 -mx-5 bg-page px-5 transition-all duration-300 ease-out ${
+          collapsed ? "py-2.5" : "pt-0"
+        }`}
+      >
+        <Breadcrumb items={breadcrumb} compact={collapsed} />
+        <PropertyHeader
+          title={v.title}
+          rating={dummy.rating}
+          reviewsCount={dummy.reviewsCount}
+          villaId={v.id}
+          compact={collapsed}
+        />
+        {/* The thumbnail strip only joins the pinned header once the real
+            gallery below has scrolled past it. */}
+        <div
+          className={`overflow-hidden transition-[max-height,margin,opacity] duration-300 ease-out ${
+            galleryCollapsed ? "mt-2 max-h-[60px] opacity-100" : "mt-0 max-h-0 opacity-0"
+          }`}
+        >
+          <Gallery hero={hero} thumbs={thumbs} compact />
+        </div>
+      </div>
+
+      {/* The full gallery stays in normal flow so it scrolls away like any
+          other content; its height eases to zero as the strip takes over — same
+          duration and easing, so the two read as one movement. */}
+      <div
+        ref={heroRef}
+        className={`overflow-hidden transition-[max-height,opacity] duration-300 ease-out ${
+          galleryCollapsed ? "max-h-0 opacity-0" : "max-h-[900px] opacity-100"
+        }`}
+      >
+        {/* Inner element: keeps its natural height whatever the wrapper's
+            max-height is doing, which is what the hand-over test reads. */}
+        <div ref={heroInnerRef}>
+          <Gallery hero={hero} thumbs={thumbs} />
+        </div>
+      </div>
 
       {/* Full-width overview under the gallery */}
       <div className="mt-8">
@@ -208,7 +344,16 @@ export default function VillaDetailPage() {
 
         {/* Reservation sidebar */}
         <aside className="lg:col-start-2 lg:row-start-1">
-          <div className="pt-6 lg:sticky lg:top-[88px]">
+          {/* Parks below the pinned page header instead of under it — at the
+              old fixed offset the card's price and rating were clipped. The
+              offset follows the header, which changes height as it collapses
+              and as the photo strip comes and goes. */}
+          <div
+            // The offset follows the collapsing header, so ease it there —
+            // a bare `top` swap makes the card jump as the header settles.
+            className="pt-6 transition-[top] duration-300 ease-out lg:sticky lg:top-[68px]"
+            style={headerHeight ? { top: NAV_HEIGHT + headerHeight - 8 } : undefined}
+          >
             <ReservationCard
               pricing={pricing}
               rating={dummy.rating}

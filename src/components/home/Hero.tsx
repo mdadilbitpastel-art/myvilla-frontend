@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { MapPin, CircleUserRound, Calendar } from "lucide-react";
@@ -31,6 +31,9 @@ function openPicker(e: React.MouseEvent<HTMLInputElement>) {
 export default function Hero() {
   const router = useRouter();
   const [slide, setSlide] = useState(0);
+  // The slide we just left. It keeps zooming while it fades out, so the
+  // crossfade is the only thing that changes — no scale snap-back.
+  const [leaving, setLeaving] = useState(-1);
   const [tab, setTab] = useState("Resort");
 
   // Search widget state
@@ -41,6 +44,19 @@ export default function Hero() {
   // Set after mount so server/client first render match (no hydration mismatch).
   const [today, setToday] = useState("");
   useEffect(() => setToday(todayStr()), []);
+
+  // Remember which slide is on its way out (one render behind `slide`).
+  const shownRef = useRef(slide);
+  useEffect(() => {
+    if (shownRef.current === slide) return;
+    const gone = shownRef.current;
+    shownRef.current = slide;
+    setLeaving(gone);
+    // Drop it once the crossfade is over: the zoom class has to come off while
+    // the slide is invisible, otherwise the animation won't replay next time.
+    const id = setTimeout(() => setLeaving((l) => (l === gone ? -1 : l)), 1700);
+    return () => clearTimeout(id);
+  }, [slide]);
 
   // Auto-advance the background carousel. Honour reduced-motion: the CSS
   // stops the ken-burns zoom but the slide swap is motion too.
@@ -73,7 +89,7 @@ export default function Hero() {
       {heroSlides.map((src, i) => (
         <div
           key={src}
-          className={`absolute inset-0 transition-opacity duration-1000 ${
+          className={`absolute inset-0 transition-opacity duration-[1600ms] ease-in-out ${
             i === slide ? "opacity-100" : "opacity-0"
           }`}
         >
@@ -83,7 +99,11 @@ export default function Hero() {
             fill
             priority={i === 0}
             sizes="100vw"
-            className={`object-cover ${i === slide ? "ken-burns" : ""}`}
+            // Idle slides sit at the zoom's starting scale, so the class going
+            // on or off is never visible as a jump.
+            className={`scale-[1.08] object-cover ${
+              i === slide || i === leaving ? "hero-zoom" : ""
+            }`}
           />
         </div>
       ))}

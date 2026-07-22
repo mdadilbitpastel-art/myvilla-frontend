@@ -6,7 +6,7 @@ import Link from "next/link";
 import { Star, BadgeCheck, Lock, ArrowRight } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import VillaCard from "@/components/home/VillaCard";
-import Img from "@/components/ui/Img";
+import Avatar from "@/components/ui/Avatar";
 import { fetchMyVillas, type Villa } from "@/lib/api";
 import type { VillaCardData } from "@/lib/home";
 import {
@@ -99,13 +99,7 @@ function ProfileCard({ user }: { user: import("@/lib/api").AuthUser }) {
     <div>
       {/* Avatar + name */}
       <div className="flex items-center gap-4">
-        <div className="img-frame relative h-[74px] w-[74px] shrink-0 overflow-hidden rounded-full bg-page">
-          {user.avatar ? (
-            <Img src={user.avatar} alt={name} className="h-full w-full object-cover" />
-          ) : (
-            <Image src={p.avatar} alt={name} fill sizes="74px" className="object-cover" />
-          )}
-        </div>
+        <Avatar src={user.avatar} name={name} size={74} />
         <div>
           <p className="text-[18px] font-bold text-ink">{name}</p>
           <p className="mt-0.5 text-[14px] text-muted">{p.joined}</p>

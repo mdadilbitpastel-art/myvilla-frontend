@@ -9,11 +9,14 @@ export default function PropertyHeader({
   rating,
   reviewsCount,
   villaId,
+  compact = false,
 }: {
   title: string;
   rating: number;
   reviewsCount: number;
   villaId?: string;
+  /** Collapsed form used while the page header is stuck to the navbar. */
+  compact?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const { isSaved, toggle } = useFavorites();
@@ -40,26 +43,46 @@ export default function PropertyHeader({
   }
 
   return (
-    <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-      <div>
-        <h1 className="text-[26px] font-bold leading-tight text-ink sm:text-[28px]">
+    <div
+      className={`flex transition-all duration-200 ${
+        compact
+          ? "mb-0 flex-row items-center justify-between gap-4"
+          : "mb-6 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"
+      }`}
+    >
+      <div className={compact ? "flex min-w-0 items-center gap-3" : ""}>
+        <h1
+          className={`font-bold leading-tight text-ink transition-all duration-200 ${
+            compact ? "truncate text-[18px]" : "text-[26px] sm:text-[28px]"
+          }`}
+        >
           {title}
         </h1>
-        <div className="mt-2 flex items-center gap-3 text-[15px]">
+        <div
+          className={`flex shrink-0 items-center gap-3 ${
+            compact ? "text-[13px]" : "mt-2 text-[15px]"
+          }`}
+        >
           <span className="flex items-center gap-1.5 font-medium text-ink">
-            <Star size={18} className="fill-primary text-primary" />
+            <Star size={compact ? 15 : 18} className="fill-primary text-primary" />
             {rating}
           </span>
           <span className="text-muted">·</span>
-          <span className="text-ink">{reviewsCount} Reviews</span>
+          {/* "Reviews" is the first thing to go when space is tight. */}
+          <span className="whitespace-nowrap text-ink">
+            {reviewsCount}
+            {compact ? "" : " Reviews"}
+          </span>
         </div>
       </div>
 
-      <div className="flex items-center gap-6">
+      <div className={`flex items-center ${compact ? "shrink-0 gap-4" : "gap-6"}`}>
         <button
           type="button"
           onClick={onShare}
-          className="flex items-center gap-2 text-[15px] font-medium text-ink transition-colors hover:text-primary"
+          className={`flex items-center gap-2 font-medium text-ink transition-colors hover:text-primary ${
+            compact ? "text-[13px]" : "text-[15px]"
+          }`}
         >
           {copied ? (
             <Check size={18} strokeWidth={2} aria-hidden className="text-primary" />
@@ -74,7 +97,9 @@ export default function PropertyHeader({
           type="button"
           aria-pressed={saved}
           onClick={() => villaId && toggle(villaId)}
-          className="flex items-center gap-2 text-[15px] font-medium text-ink transition-colors hover:text-primary"
+          className={`flex items-center gap-2 font-medium text-ink transition-colors hover:text-primary ${
+            compact ? "text-[13px]" : "text-[15px]"
+          }`}
         >
           <Heart
             size={18}

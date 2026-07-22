@@ -135,6 +135,21 @@ export async function loginUser(
   return data.login;
 }
 
+export async function googleLogin(credential: string): Promise<AuthResult> {
+  const data = await gql<{ googleLogin: AuthResult }>(
+    `mutation GoogleLogin($credential: String!) {
+       googleLogin(credential: $credential) {
+         accessToken refreshToken ${USER_FIELDS}
+       }
+     }`,
+    { credential }
+  );
+  // Google sign-in is always "remember me": the user picked a persistent
+  // identity provider, so dropping the session on tab close would surprise them.
+  persistSession(data.googleLogin, true);
+  return data.googleLogin;
+}
+
 export async function registerUser(input: {
   email: string;
   password: string;
@@ -197,6 +212,16 @@ export async function updateAvatar(image: string): Promise<AuthUser> {
   );
   persistUser(data.updateAvatar);
   return data.updateAvatar;
+}
+
+// Clears the picture; the UI then falls back to the placeholder avatar.
+export async function removeAvatar(): Promise<AuthUser> {
+  const data = await gql<{ removeAvatar: AuthUser }>(
+    `mutation RemoveAvatar { removeAvatar { ${USER_SELECTION} } }`,
+    {}
+  );
+  persistUser(data.removeAvatar);
+  return data.removeAvatar;
 }
 
 /* ---- Villas / "Add your Villa" ---- */

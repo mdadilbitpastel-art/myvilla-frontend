@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useId, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -24,9 +24,6 @@ import {
 import { useAuth } from "@/lib/auth";
 import Img from "@/components/ui/Img";
 import {
-  fetchMe,
-  updateProfile,
-  updateAvatar,
   createVilla,
   updateVilla,
   fetchMyVillas,
@@ -35,13 +32,13 @@ import {
   type VillaInput,
 } from "@/lib/api";
 import { fileToResizedDataUrl } from "@/lib/image";
-import { validateEmail } from "@/lib/validation";
+
+// Height of the global navbar the sticky page header parks under.
+const NAV_HEIGHT = 68;
 
 const STEPS = [
-  "Personal Details",
   "Villa Details",
   "Add Images",
-  "Extra Services",
   "Pricing",
   "Payment Method",
 ];
@@ -80,10 +77,10 @@ const EXTRA_SERVICES = [
 const PAYMENT_METHODS = ["Mastercard", "Google Pay", "PayPal", "Visa"];
 const ACCOUNT_TYPES = ["Credit Card", "Debit Card"];
 
-const FALLBACK_AVATAR = "https://i.pravatar.cc/220?img=15";
-
 // Steps with no mandatory fields (always "complete").
-const OPTIONAL_STEPS = new Set([3]); // Extra Services
+// Extra services now live inside "Villa Details" as an optional block, so
+// every remaining step is mandatory.
+const OPTIONAL_STEPS = new Set<number>();
 
 const digitsOf = (s: string) => s.replace(/\D/g, "");
 
@@ -106,39 +103,6 @@ const imageSrc = (im: WizardImage) => (im.kind === "existing" ? im.url : im.data
 
 // Which field blocked the step, so the input itself can be marked invalid.
 type FieldIssue = { field: string; message: string };
-
-// Accept DD/MM/YYYY or YYYY-MM-DD; must be a real, non-future date.
-function validDob(s: string): boolean {
-  const t = s.trim();
-  let y: number, mo: number, d: number;
-  let m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(t);
-  if (m) { d = +m[1]; mo = +m[2]; y = +m[3]; }
-  else {
-    m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(t);
-    if (!m) return false;
-    y = +m[1]; mo = +m[2]; d = +m[3];
-  }
-  const dt = new Date(y, mo - 1, d);
-  return (
-    dt.getFullYear() === y &&
-    dt.getMonth() === mo - 1 &&
-    dt.getDate() === d &&
-    y >= 1900 &&
-    dt <= new Date()
-  );
-}
-
-function personalError(p: Personal): FieldIssue | null {
-  if (!p.fullName.trim()) return { field: "fullName", message: "Full name is required." };
-  if (!p.gender.trim()) return { field: "gender", message: "Please select your gender." };
-  if (validateEmail(p.email))
-    return { field: "email", message: "A valid email address is required." };
-  if (!p.dateOfBirth.trim())
-    return { field: "dateOfBirth", message: "Date of birth is required." };
-  if (!validDob(p.dateOfBirth))
-    return { field: "dateOfBirth", message: "Enter a valid date of birth (DD/MM/YYYY)." };
-  return null;
-}
 
 function villaError(v: VillaForm): FieldIssue | null {
   if (!v.title.trim()) return { field: "title", message: "Villa name is required." };
@@ -199,7 +163,7 @@ export default function AddVillaPage() {
 
 function Wizard() {
   const router = useRouter();
-  const { user, setUser } = useAuth();
+  useAuth();
 
   // Edit mode when the URL carries ?edit=<villaId>. Read through the router
   // hook: `window.location` doesn't exist on the server, so the page would
@@ -216,20 +180,31 @@ function Wizard() {
   // Set when an existing villa can't be loaded — that must not fall through to
   // a blank create form.
   const [loadFailed, setLoadFailed] = useState("");
+
+  // Collapse the sticky page header once it's actually stuck. Watched via a
+  // sentinel that sits BEFORE the header in the flow, so the header shrinking
+  // can't move it — a window.scrollY threshold fed its own height change back
+  // into the trigger and flickered open/shut.
+  //
+  // Attached through a callback ref, not an effect: in edit mode the wizard
+  // renders <WizardSkeleton /> first, so on mount the sentinel doesn't exist
+  // yet and an effect would silently observe nothing — which is why edit mode
+  // never collapsed while add mode did.
+  const [scrolled, setScrolled] = useState(false);
+  const observer = useRef<IntersectionObserver | null>(null);
+  const headerSentinel = useCallback((node: HTMLDivElement | null) => {
+    observer.current?.disconnect();
+    if (!node) return;
+    observer.current = new IntersectionObserver(
+      ([entry]) => setScrolled(!entry.isIntersecting),
+      { rootMargin: `-${NAV_HEIGHT}px 0px 0px 0px`, threshold: 0 }
+    );
+    observer.current.observe(node);
+  }, []);
   const [reloadKey, setReloadKey] = useState(0);
   const errorRef = useRef<HTMLParagraphElement>(null);
 
-  // Step 1 — personal details (persisted to the user profile).
-  const [personal, setPersonal] = useState({
-    fullName: "",
-    gender: "",
-    email: "",
-    dateOfBirth: "",
-    address: "",
-    emergencyContact: "",
-  });
-
-  // Step 2 — villa details.
+  // Step 1 — villa details.
   const [villa, setVilla] = useState({
     title: "",
     propertyType: "Villa Living",
@@ -241,30 +216,13 @@ function Wizard() {
   });
   const [villaTypeOther, setVillaTypeOther] = useState("");
 
-  // Step 3–6.
+  // Step 2–5.
   const [images, setImages] = useState<WizardImage[]>([]);
   const [services, setServices] = useState<string[]>([]);
   const [price, setPrice] = useState("");
   const [acceptedPayments, setAcceptedPayments] = useState<string[]>([...PAYMENT_METHODS]);
   const [accountType, setAccountType] = useState("");
   const [cardNumber, setCardNumber] = useState("");
-
-  // Pull fresh profile once, then seed the personal-details form.
-  useEffect(() => {
-    if (!user) return;
-    let cancelled = false;
-    fetchMe()
-      .then((me) => {
-        if (!cancelled) setUser(me);
-      })
-      .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : "Could not load your profile.");
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // Edit mode — load the villa and pre-fill every section.
   useEffect(() => {
@@ -317,19 +275,6 @@ function Wizard() {
       cancelled = true;
     };
   }, [editId, reloadKey]);
-  useEffect(() => {
-    if (user) {
-      setPersonal({
-        fullName: user.fullName || "",
-        gender: user.gender || "",
-        email: user.email || "",
-        dateOfBirth: user.dateOfBirth || "",
-        address: user.address || "",
-        emergencyContact: user.emergencyContact || "",
-      });
-    }
-  }, [user]);
-
   // Publishing jumps back to the first incomplete section, so the banner can
   // appear on a step the user isn't looking at — bring it into view.
   useEffect(() => {
@@ -339,10 +284,8 @@ function Wizard() {
   // Live per-section validation — recomputed every render from current state,
   // so the stepper's complete/incomplete badges stay correct from ANY step.
   const stepIssues = [
-    personalError(personal),
     villaError(villa),
     imagesError(images),
-    null, // Extra Services — optional
     pricingError(price),
     paymentError(acceptedPayments, accountType, cardNumber, editMode),
   ];
@@ -370,21 +313,6 @@ function Wizard() {
     if (issue) {
       setError(issue.message);
       setInvalidField(issue.field);
-      return;
-    }
-
-    if (step === 0) {
-      // Persist personal details, then move on.
-      setBusy(true);
-      try {
-        const updated = await updateProfile(personal);
-        setUser(updated);
-        advance();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Could not save your details.");
-      } finally {
-        setBusy(false);
-      }
       return;
     }
 
@@ -486,7 +414,19 @@ function Wizard() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1120px] px-5 pb-20 pt-8 lg:px-7">
+    <div className="mx-auto w-full max-w-[1120px] px-5 pb-20 lg:px-7">
+      {/* Watched by the observer above: once it scrolls under the navbar the
+          header below is stuck, so it collapses. */}
+      <div ref={headerSentinel} aria-hidden className="h-px" />
+
+      {/* Sticky page header — breadcrumb + title + Back. Bleeds to the viewport
+          edges (-mx / px) so the blurred backdrop covers the full width while
+          the content stays on the page's grid. */}
+      <div
+        className={`sticky top-[68px] z-30 -mx-5 border-b bg-page/90 px-5 backdrop-blur transition-all duration-200 lg:-mx-7 lg:px-7 ${
+          scrolled ? "border-line py-3" : "border-transparent pb-5 pt-8"
+        }`}
+      >
       {/* Breadcrumb */}
       <nav aria-label="Breadcrumb" className="text-[13px] text-body">
         <Link href="/" className="underline underline-offset-2 hover:text-primary">Home</Link>
@@ -499,8 +439,16 @@ function Wizard() {
       </nav>
 
       {/* Title + Back */}
-      <div className="mt-5 flex items-center justify-between">
-        <h1 className="text-[30px] font-extrabold text-ink">
+      <div
+        className={`flex items-center justify-between transition-all duration-200 ${
+          scrolled ? "mt-1" : "mt-5"
+        }`}
+      >
+        <h1
+          className={`font-extrabold text-ink transition-all duration-200 ${
+            scrolled ? "text-[20px]" : "text-[30px]"
+          }`}
+        >
           {editMode ? "Edit your Villa" : "Add your Villa"}
         </h1>
         <Link
@@ -510,6 +458,7 @@ function Wizard() {
           Back
         </Link>
       </div>
+      </div>
 
       <div className="mt-8 grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
         {/* Stepper */}
@@ -518,15 +467,6 @@ function Wizard() {
         {/* Card */}
         <div className="w-full rounded-2xl border border-line bg-white p-6 sm:p-8">
           {step === 0 && (
-            <PersonalStep
-              values={personal}
-              onChange={(k, v) => setPersonal((p) => ({ ...p, [k]: v }))}
-              user={user}
-              setUser={setUser}
-              invalidField={invalidField}
-            />
-          )}
-          {step === 1 && (
             <VillaDetailsStep
               values={villa}
               onChange={(k, v) => setVilla((p) => ({ ...p, [k]: v }))}
@@ -537,16 +477,13 @@ function Wizard() {
               invalidField={invalidField}
             />
           )}
-          {step === 2 && (
+          {step === 1 && (
             <ImagesStep images={images} setImages={setImages} setError={setError} />
           )}
-          {step === 3 && (
-            <ServicesStep selected={services} setSelected={setServices} />
-          )}
-          {step === 4 && (
+          {step === 2 && (
             <PricingStep price={price} setPrice={setPrice} invalidField={invalidField} />
           )}
-          {step === 5 && (
+          {step === 3 && (
             <PaymentStep
               accepted={acceptedPayments}
               setAccepted={setAcceptedPayments}
@@ -607,7 +544,12 @@ function Stepper({
   onSelect: (i: number) => void;
 }) {
   return (
-    <nav className="lg:pt-1">
+    // Sticky below the collapsed page header, so only the step's own panel
+    // scrolls. `self-start` is required, not cosmetic: this <nav> IS the grid
+    // item, and a stretched item fills its whole grid area, leaving sticky no
+    // room to travel. (The settings sidebar differs — its nav sits inside an
+    // <aside>, which does the stretching for it.)
+    <nav className="lg:sticky lg:top-[148px] lg:self-start lg:pt-1">
       <ol className="relative">
         {STEPS.map((label, i) => {
           const active = i === step;
@@ -684,95 +626,7 @@ function Stepper({
 }
 
 /* ================================================================== */
-/* Step 1 — Personal Details                                          */
-/* ================================================================== */
-
-type Personal = {
-  fullName: string;
-  gender: string;
-  email: string;
-  dateOfBirth: string;
-  address: string;
-  emergencyContact: string;
-};
-
-function PersonalStep({
-  values,
-  onChange,
-  user,
-  setUser,
-  invalidField,
-}: {
-  values: Personal;
-  onChange: (k: keyof Personal, v: string) => void;
-  user: ReturnType<typeof useAuth>["user"];
-  setUser: ReturnType<typeof useAuth>["setUser"];
-  invalidField: string;
-}) {
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [avatarBusy, setAvatarBusy] = useState(false);
-  const avatarSrc = user?.avatar || FALLBACK_AVATAR;
-
-  async function onPickAvatar(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    setAvatarBusy(true);
-    try {
-      const dataUrl = await fileToResizedDataUrl(file, 512, 0.85);
-      const updated = await updateAvatar(dataUrl);
-      setUser(updated);
-    } catch {
-      /* avatar optional */
-    } finally {
-      setAvatarBusy(false);
-    }
-  }
-
-  return (
-    <div>
-      <h2 className="text-[16px] font-bold text-ink">
-        First time hosting? You must add your personal details first to start hosting
-      </h2>
-
-      <div className="mt-6 grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1fr)_200px] lg:gap-12">
-        <div className="space-y-4">
-          <LabeledInput label="Full name" required placeholder="Add Full name" value={values.fullName} onChange={(v) => onChange("fullName", v)} invalid={invalidField === "fullName"} />
-          <SelectBox label="Gender" required value={values.gender} onChange={(v) => onChange("gender", v)} placeholder="Select your gender." options={["Male", "Female", "Other", "Prefer not to say"]} invalid={invalidField === "gender"} />
-          <LabeledInput label="Email Address" required type="email" placeholder="Example1@myvilla.com" value={values.email} onChange={(v) => onChange("email", v)} invalid={invalidField === "email"} />
-          <LabeledInput label="Date of Birth" required placeholder="DD/MM/YYYY" value={values.dateOfBirth} onChange={(v) => onChange("dateOfBirth", v)} invalid={invalidField === "dateOfBirth"} />
-          <LabeledInput label="Address" placeholder="Not Provided" value={values.address} onChange={(v) => onChange("address", v)} />
-          <LabeledInput label="Emergency Contact" placeholder="Not Provided" value={values.emergencyContact} onChange={(v) => onChange("emergencyContact", v)} />
-        </div>
-
-        <div className="order-first flex flex-col items-center lg:order-none lg:pt-2">
-          <div className="img-frame relative h-[120px] w-[120px] overflow-hidden rounded-full bg-page">
-            <Img src={avatarSrc} alt="Profile" fallback={FALLBACK_AVATAR} className="h-full w-full object-cover" />
-            {avatarBusy && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/40 text-[11px] font-medium text-white">
-                Uploading…
-              </div>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={() => fileRef.current?.click()}
-            disabled={avatarBusy}
-            className="mt-3 text-center text-[13px] text-ink underline underline-offset-2 disabled:opacity-70"
-          >
-            Upload your profile
-            <br />
-            picture
-          </button>
-          <input ref={fileRef} type="file" accept="image/*" onChange={onPickAvatar} className="hidden" />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ================================================================== */
-/* Step 2 — Villa Details (Screenshot_1 + _2)                         */
+/* Step 1 — Villa Details (Screenshot_1 + _2)                         */
 /* ================================================================== */
 
 type VillaForm = {
@@ -952,6 +806,44 @@ function VillaDetailsStep({
           </div>
         </div>
 
+        {/* Extra services — optional, and deliberately below the required
+            fields so it never looks like something the host must fill in. */}
+        <div>
+          <FieldLabel>
+            Extra Services{" "}
+            <span className="font-normal text-muted">(Optional)</span>
+          </FieldLabel>
+          <p className="mb-2 text-[12px] text-muted">
+            Premium services guests can add to their stay.
+          </p>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            {EXTRA_SERVICES.map((service) => {
+              const on = services.includes(service);
+              return (
+                <button
+                  key={service}
+                  type="button"
+                  onClick={() => toggleFacility(service)}
+                  className={`flex items-center gap-2 rounded-lg border px-3 py-2.5 text-left text-[13px] transition-colors ${
+                    on
+                      ? "border-primary bg-primary/[0.06] text-primary"
+                      : "border-line text-ink hover:border-primary/40"
+                  }`}
+                >
+                  <span
+                    className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border ${
+                      on ? "border-primary bg-primary text-white" : "border-line"
+                    }`}
+                  >
+                    {on && <Check size={12} />}
+                  </span>
+                  {service}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         {/* Map — follows the address / city / country the host types above */}
         <div>
           <FieldLabel>Villa Location on Map</FieldLabel>
@@ -975,7 +867,7 @@ function VillaDetailsStep({
 }
 
 /* ================================================================== */
-/* Step 3 — Add Images                                                */
+/* Step 2 — Add Images                                                */
 /* ================================================================== */
 
 function ImagesStep({
@@ -1057,53 +949,7 @@ function ImagesStep({
 }
 
 /* ================================================================== */
-/* Step 4 — Extra Services                                            */
-/* ================================================================== */
-
-function ServicesStep({
-  selected,
-  setSelected,
-}: {
-  selected: string[];
-  setSelected: React.Dispatch<React.SetStateAction<string[]>>;
-}) {
-  function toggle(s: string) {
-    setSelected((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]));
-  }
-  return (
-    <div>
-      <h2 className="text-[16px] font-bold text-ink">Any extra services on offer?</h2>
-      <p className="mt-1 text-[13px] text-muted">Optional — pick the premium services guests can add.</p>
-      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
-        {EXTRA_SERVICES.map((s) => {
-          const on = selected.includes(s);
-          return (
-            <button
-              key={s}
-              type="button"
-              onClick={() => toggle(s)}
-              className={`flex items-center gap-2 rounded-lg border px-3 py-2.5 text-left text-[13px] transition-colors ${
-                on ? "border-primary bg-primary/[0.06] text-primary" : "border-line text-ink hover:border-primary/40"
-              }`}
-            >
-              <span
-                className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border ${
-                  on ? "border-primary bg-primary text-white" : "border-line"
-                }`}
-              >
-                {on && <Check size={12} />}
-              </span>
-              {s}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-/* ================================================================== */
-/* Step 5 — Pricing (Screenshot_3)                                    */
+/* Step 3 — Pricing (Screenshot_3)                                    */
 /* ================================================================== */
 
 function PricingStep({
@@ -1177,7 +1023,7 @@ function PricingStep({
 }
 
 /* ================================================================== */
-/* Step 6 — Payment Method (Screenshot_4 / _5)                        */
+/* Step 4 — Payment Method (Screenshot_4 / _5)                        */
 /* ================================================================== */
 
 function PaymentStep({
@@ -1378,50 +1224,6 @@ function NumberInput({
         aria-invalid={invalid || undefined}
         className="w-full rounded-md border border-line px-3.5 py-2.5 text-[14px] text-ink focus:border-primary focus:outline-none"
       />
-    </div>
-  );
-}
-
-function SelectBox({
-  value,
-  onChange,
-  placeholder,
-  options,
-  label,
-  required,
-  invalid,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  placeholder: string;
-  options: string[];
-  label: string;
-  required?: boolean;
-  invalid?: boolean;
-}) {
-  const id = useId();
-  return (
-    <div>
-      <FieldLabel htmlFor={id} required={required}>{label}</FieldLabel>
-      <div className="relative">
-        <select
-          id={id}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          aria-invalid={invalid || undefined}
-          className={`w-full appearance-none rounded-md border border-line bg-white px-3.5 py-2.5 pr-10 text-[14px] focus:border-primary focus:outline-none ${
-            value ? "text-ink" : "text-muted"
-          }`}
-        >
-          <option value="">{placeholder}</option>
-          {options.map((o) => (
-            <option key={o} value={o} className="text-ink">
-              {o}
-            </option>
-          ))}
-        </select>
-        <ChevronDown size={18} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-muted" />
-      </div>
     </div>
   );
 }

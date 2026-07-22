@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { MapPin, CircleUserRound, Search as SearchIcon } from "lucide-react";
 import VillaCard from "@/components/home/VillaCard";
+import { useCollapseOnScroll } from "@/lib/useCollapseOnScroll";
 import { searchVillas, type Villa, type VillaFilters } from "@/lib/api";
 import type { VillaCardData } from "@/lib/home";
 
@@ -72,6 +73,14 @@ function SearchPageContent() {
   const [results, setResults] = useState<Villa[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // True once the page is scrolled and the search block is stuck to the navbar.
+  //
+  // Position-based, not direction-based: it re-expands at the same place it
+  // collapsed (160px down), rather than the moment the user nudges upward from
+  // anywhere on the page. `Infinity` disables the scroll-up gesture entirely;
+  // the 12px between the two thresholds is only there so jitter exactly on the
+  // line can't toggle it.
+  const collapsed = useCollapseOnScroll(160, 148, Infinity, 0);
   // Only the newest request may commit; chips/guests can be changed faster
   // than the network responds.
   const seq = useRef(0);
@@ -113,6 +122,7 @@ function SearchPageContent() {
     run(initial.current);
   }, [run]);
 
+
   function submitSearch(e?: React.FormEvent) {
     e?.preventDefault();
     const next = { ...state, q: query.trim() };
@@ -136,74 +146,113 @@ function SearchPageContent() {
 
   return (
     <div className="mx-auto max-w-[1200px] px-5 pb-20 pt-8">
-      <h1 className="text-[26px] font-bold text-ink">Search villas</h1>
-      <p className="mt-1 text-[14px] text-muted">
-        Find your next stay from villas listed around the world.
-      </p>
-
-      {/* Search bar */}
-      <form
-        onSubmit={submitSearch}
-        className="mt-6 flex flex-col gap-3 rounded-2xl border border-line bg-white p-3 shadow-sm sm:flex-row sm:items-center"
+      {/* Sticky search block. Bleeds to the viewport edges (-mx / px) so its
+          background covers the full width while the content stays on the
+          page's grid. Collapsed, the intro line goes and the heading moves
+          beside the bar. */}
+      <div
+        className={`sticky top-[68px] z-30 -mx-5 bg-page px-5 transition-all duration-200 ${
+          collapsed ? "pb-3 pt-3" : "pb-1 pt-0"
+        }`}
       >
-        <div className="flex flex-1 items-center gap-2 rounded-xl border border-line px-4 py-2.5">
-          <MapPin size={18} className="shrink-0 text-primary" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            aria-label="Search by city, country or villa name"
-            placeholder="Search by city, country or villa name"
-            className="w-full bg-transparent text-[14px] text-ink outline-none placeholder:text-muted/70"
-          />
-        </div>
-
-        <div className="relative flex items-center gap-2 rounded-xl border border-line px-4 py-2.5 sm:w-[170px]">
-          <CircleUserRound size={18} className="shrink-0 text-primary" />
-          <select
-            value={state.guests}
-            onChange={(e) => pickGuests(parseInt(e.target.value, 10))}
-            aria-label="Number of guests"
-            className="w-full appearance-none bg-transparent text-[14px] text-ink outline-none"
-          >
-            {GUEST_OPTIONS.map((g) => (
-              <option key={g.value} value={g.value}>
-                {g.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <button
-          type="submit"
-          disabled={loading}
-          aria-busy={loading}
-          className="flex shrink-0 items-center justify-center gap-2 rounded-xl bg-primary px-8 py-3 text-[15px] font-medium text-white transition-colors hover:bg-primary-dark"
-        >
-          {loading ? <span className="spinner" aria-hidden /> : <SearchIcon size={17} />}
-          Search
-        </button>
-      </form>
-
-      {/* Category chips */}
-      <div className="mt-5 flex flex-wrap gap-2">
-        {CATEGORIES.map((cat) => {
-          const active = state.category === cat;
-          return (
-            <button
-              key={cat}
-              type="button"
-              aria-pressed={active}
-              onClick={() => pickCategory(cat)}
-              className={`rounded-full border px-4 py-1.5 text-[13px] transition-colors ${
-                active
-                  ? "border-primary bg-primary text-white"
-                  : "border-line text-body hover:border-primary/40"
+        <div className={collapsed ? "flex items-center gap-4" : ""}>
+          <div className={collapsed ? "shrink-0" : ""}>
+            <h1
+              className={`font-bold text-ink transition-[font-size] duration-200 ${
+                collapsed ? "hidden whitespace-nowrap text-[18px] sm:block" : "text-[26px]"
               }`}
             >
-              {cat}
+              Search villas
+            </h1>
+            {/* Dropped entirely when collapsed — it's the line that makes room
+                for the bar to sit beside the heading. */}
+            {!collapsed && (
+              <p className="mt-1 text-[14px] text-muted">
+                Find your next stay from villas listed around the world.
+              </p>
+            )}
+          </div>
+
+          {/* Search bar */}
+          <form
+            onSubmit={submitSearch}
+            className={`flex gap-3 rounded-2xl border border-line bg-white sm:flex-row sm:items-center ${
+              collapsed ? "min-w-0 flex-1 flex-row items-center p-2" : "mt-6 flex-col p-3"
+            }`}
+          >
+            <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-line px-4 py-2.5">
+              <MapPin size={18} className="shrink-0 text-primary" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                aria-label="Search by city, country or villa name"
+                placeholder="Search by city, country or villa name"
+                className="w-full bg-transparent text-[14px] text-ink outline-none placeholder:text-muted/70"
+              />
+            </div>
+
+            <div
+              className={`relative items-center gap-2 rounded-xl border border-line px-4 py-2.5 sm:w-[170px] ${
+                collapsed ? "hidden sm:flex" : "flex"
+              }`}
+            >
+              <CircleUserRound size={18} className="shrink-0 text-primary" />
+              <select
+                value={state.guests}
+                onChange={(e) => pickGuests(parseInt(e.target.value, 10))}
+                aria-label="Number of guests"
+                className="w-full appearance-none bg-transparent text-[14px] text-ink outline-none"
+              >
+                {GUEST_OPTIONS.map((g) => (
+                  <option key={g.value} value={g.value}>
+                    {g.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              aria-busy={loading}
+              className={`flex shrink-0 items-center justify-center gap-2 rounded-xl bg-primary text-[15px] font-medium text-white transition-colors hover:bg-primary-dark ${
+                collapsed ? "px-5 py-2.5" : "px-8 py-3"
+              }`}
+            >
+              {loading ? <span className="spinner" aria-hidden /> : <SearchIcon size={17} />}
+              <span className={collapsed ? "hidden sm:inline" : ""}>Search</span>
             </button>
-          );
-        })}
+          </form>
+        </div>
+
+        {/* Category chips — part of the sticky block, tightened when collapsed
+            so the filters stay reachable without eating the viewport. */}
+        <div
+          className={`flex flex-wrap gap-2 transition-all duration-200 ${
+            collapsed ? "mt-3" : "mt-5"
+          }`}
+        >
+          {CATEGORIES.map((cat) => {
+            const active = state.category === cat;
+            return (
+              <button
+                key={cat}
+                type="button"
+                aria-pressed={active}
+                onClick={() => pickCategory(cat)}
+                className={`rounded-full border transition-all duration-200 ${
+                  collapsed ? "px-3 py-1 text-[12px]" : "px-4 py-1.5 text-[13px]"
+                } ${
+                  active
+                    ? "border-primary bg-primary text-white"
+                    : "border-line text-body hover:border-primary/40"
+                }`}
+              >
+                {cat}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Results — held at a minimum height so the footer doesn't jump. */}

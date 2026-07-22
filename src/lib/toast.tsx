@@ -8,9 +8,10 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { createPortal } from "react-dom";
-import { CheckCircle2, AlertCircle, Info, X } from "lucide-react";
+import { CheckCircle2, AlertCircle, Info } from "lucide-react";
 
 export type ToastKind = "success" | "error" | "info";
 
@@ -24,6 +25,18 @@ type ToastApi = {
 };
 
 const ToastContext = createContext<ToastApi | null>(null);
+
+// Portals can only target document.body on the client. useSyncExternalStore
+// reports false during SSR and true after hydration WITHOUT a setState in an
+// effect, which is the cascading-render pattern React now warns about.
+const neverChanges = () => () => {};
+function useMounted(): boolean {
+  return useSyncExternalStore(
+    neverChanges,
+    () => true,
+    () => false
+  );
+}
 
 // Errors linger longer — they usually ask the user to do something.
 const DURATION: Record<ToastKind, number> = {
@@ -46,13 +59,11 @@ const ACCENT: Record<ToastKind, string> = {
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [mounted, setMounted] = useState(false);
+  const mounted = useMounted();
   // Ids come from a counter, not Math.random/Date.now, so server and client
   // markup can never disagree.
   const nextId = useRef(1);
   const timers = useRef(new Map<number, number>());
-
-  useEffect(() => setMounted(true), []);
 
   const dismiss = useCallback((id: number) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -107,23 +118,19 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             {toasts.map((t) => {
               const Icon = ICONS[t.kind];
               return (
+                // Width follows the text: `w-auto` between a standard minimum
+                // (so a two-word toast still reads as a proper card) and a cap
+                // that keeps long messages from spanning the viewport. The
+                // max-w also has to survive narrow screens, hence the vw term.
                 <div
                   key={t.id}
                   role={t.kind === "error" ? "alert" : "status"}
-                  className="animate-toast-in pointer-events-auto flex w-full max-w-[420px] items-start gap-3 rounded-xl border border-line bg-white px-4 py-3 shadow-xl"
+                  className="animate-toast-in pointer-events-auto flex w-auto min-w-[260px] max-w-[min(420px,100%)] items-start gap-3 rounded-xl border border-line bg-white px-4 py-3 shadow-xl"
                 >
                   <Icon size={18} aria-hidden className={`mt-px shrink-0 ${ACCENT[t.kind]}`} />
-                  <span className="flex-1 text-[13px] font-medium leading-5 text-ink">
+                  <span className="text-[13px] font-medium leading-5 text-ink">
                     {t.text}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => dismiss(t.id)}
-                    aria-label="Dismiss notification"
-                    className="shrink-0 text-muted transition-colors hover:text-ink"
-                  >
-                    <X size={15} aria-hidden />
-                  </button>
                 </div>
               );
             })}

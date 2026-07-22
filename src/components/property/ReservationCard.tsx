@@ -119,7 +119,9 @@ export default function ReservationCard({
   }
 
   return (
-    <div className="rounded-2xl border border-line bg-white p-6 shadow-[0_8px_30px_rgba(0,0,0,0.06)]">
+    // Kept deliberately tight vertically: the card is sticky, so anything past
+    // roughly one viewport height gets cut off at the bottom — the total was.
+    <div className="rounded-2xl border border-line bg-white p-5 shadow-[0_8px_30px_rgba(0,0,0,0.06)]">
       {/* Price + rating */}
       <div className="flex items-center justify-between">
         <p className="text-[22px] font-bold text-ink">
@@ -136,7 +138,7 @@ export default function ReservationCard({
       </div>
 
       {/* Check-in / Check-out — user selectable */}
-      <div className="mt-5 grid grid-cols-2 overflow-hidden rounded-xl border border-line">
+      <div className="mt-4 grid grid-cols-2 overflow-hidden rounded-xl border border-line">
         <DateField
           label="Check - In"
           value={checkIn}
@@ -153,26 +155,26 @@ export default function ReservationCard({
         />
       </div>
       {dateError ? (
-        <p role="alert" className="mt-2 text-[12px] text-red-500">
+        <p role="alert" className="mt-1.5 text-[12px] text-red-500">
           {dateError}
         </p>
       ) : (
         // `&nbsp;` holds the line's height before the dates resolve, so the
         // card below it doesn't shift down by one line on mount.
-        <p className="mt-2 text-[12px] text-muted">
+        <p className="mt-1.5 text-[12px] text-muted">
           {datesReady ? `${nights} night${nights === 1 ? "" : "s"}` : " "}
         </p>
       )}
 
       {/* Guests dropdown */}
-      <div ref={guestsRef} className="relative mt-3">
+      <div ref={guestsRef} className="relative mt-2.5">
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
           aria-haspopup="listbox"
           aria-controls={`${uid}-guests`}
-          className="flex w-full items-center justify-between rounded-xl border border-line px-4 py-3 text-left transition-colors hover:border-primary"
+          className="flex w-full items-center justify-between rounded-xl border border-line px-4 py-2.5 text-left transition-colors hover:border-primary"
         >
           <span>
             <span className="block text-[13px] font-semibold text-ink">Guests</span>
@@ -217,7 +219,7 @@ export default function ReservationCard({
         type="button"
         onClick={onReserve}
         disabled={isOwner || !!dateError || !datesReady}
-        className={`mt-4 w-full rounded-xl py-3.5 text-[15px] font-semibold text-white transition-colors ${
+        className={`mt-3.5 w-full rounded-xl py-3 text-[15px] font-semibold text-white transition-colors ${
           isOwner || dateError || !datesReady
             ? "cursor-not-allowed bg-muted/60"
             : "bg-primary hover:bg-primary-dark"
@@ -233,7 +235,7 @@ export default function ReservationCard({
 
       {/* Price breakdown — recomputed from the dates above, not a fixed
           template, so it always matches what checkout will charge. */}
-      <div className="mt-6 space-y-3 text-[15px]">
+      <div className="mt-4 space-y-2 text-[14px]">
         <div className="flex items-center justify-between text-body">
           <span>
             {money(pricing.price)} x {nights} night{nights === 1 ? "" : "s"}
@@ -254,7 +256,7 @@ export default function ReservationCard({
         </div>
       </div>
 
-      <div className="mt-4 flex items-center justify-between border-t border-line pt-4 text-[16px] font-bold text-ink">
+      <div className="mt-3 flex items-center justify-between border-t border-line pt-3 text-[16px] font-bold text-ink">
         <span>Total</span>
         <span>{money(stay.total)}</span>
       </div>
@@ -279,7 +281,7 @@ function DateField({
 }) {
   const id = useId();
   return (
-    <div className={`px-4 py-3 transition-colors hover:bg-page ${className}`}>
+    <div className={`px-4 py-2.5 transition-colors hover:bg-page ${className}`}>
       <label htmlFor={id} className="block cursor-pointer text-[13px] font-semibold text-ink">
         {label}
       </label>

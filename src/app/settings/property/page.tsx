@@ -15,7 +15,8 @@ const PLACEHOLDER_IMG =
 
 // A row shape derived from the user's real villas.
 type Row = {
-  id: string; // enables Edit / Remove
+  id: string; // enables View / Edit / Remove
+  title: string;
   image: string;
   city: string;
   country: string;
@@ -54,6 +55,7 @@ function timeAgo(iso: string): string {
 function villaToRow(v: Villa): Row {
   return {
     id: v.id,
+    title: v.title,
     image: v.coverImage || PLACEHOLDER_IMG,
     city: v.city || v.title,
     country: v.country || "",
@@ -188,8 +190,12 @@ export default function MyPropertyPage() {
             </div>
           )}
 
-          {/* Header */}
-          <div className="flex items-center justify-between">
+          {/* Header — sticks flush against the 68px navbar, NOT at 84px: any gap
+              between the two becomes a slot the scrolling list is visible
+              through. The 16px that keeps it level with the sidebar's first
+              item is pt-4 INSIDE the bar, so its white background covers that
+              band instead of leaving it open. */}
+          <div className="sticky top-[68px] z-20 -mx-6 flex items-center justify-between rounded-t-2xl border-b border-line bg-white px-6 pb-3 pt-4 sm:-mx-8 sm:px-8">
             <h2 className="text-[16px] font-bold text-ink">Property Owned</h2>
             <Link
               href="/settings/property/add"
@@ -225,16 +231,12 @@ export default function MyPropertyPage() {
               <p className="text-[15px] font-semibold text-ink">
                 No properties yet
               </p>
+              {/* No call to action here on purpose — "Add Property" already
+                  sits in the header right above this panel. */}
               <p className="mt-1 max-w-[320px] text-[13px] text-muted">
-                You haven&apos;t listed any villa. Add your first property to
-                start hosting.
+                You haven&apos;t listed any villa. Use “Add Property” above to
+                list your first one and start hosting.
               </p>
-              <Link
-                href="/settings/property/add"
-                className="mt-5 rounded-lg bg-primary px-5 py-2.5 text-[13px] font-semibold text-white transition-colors hover:bg-primary-dark"
-              >
-                Add Property
-              </Link>
             </div>
           ) : (
           <div className="mt-6 space-y-4">
@@ -260,8 +262,11 @@ export default function MyPropertyPage() {
                 {/* Details */}
                 <div className="flex min-w-0 flex-1 flex-col">
                   <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-[14px] font-bold text-ink">
+                    <div className="min-w-0">
+                      <p className="truncate text-[14px] font-bold text-ink" title={p.title}>
+                        {p.title}
+                      </p>
+                      <p className="mt-0.5 truncate text-[13px] text-body">
                         {p.city}
                         {p.country && (
                           <>
@@ -300,6 +305,13 @@ export default function MyPropertyPage() {
                     <span className="rounded-md bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary">
                       {p.posted}
                     </span>
+                    <div className="flex shrink-0 items-center gap-3">
+                    <Link
+                      href={`/villa/${p.id}`}
+                      className="text-[13px] font-semibold text-primary underline underline-offset-2 hover:text-primary-dark"
+                    >
+                      View
+                    </Link>
                     <button
                       type="button"
                       onClick={() => handleRemove(p.id, label)}
@@ -316,6 +328,7 @@ export default function MyPropertyPage() {
                         "Remove"
                       )}
                     </button>
+                    </div>
                   </div>
                 </div>
               </div>

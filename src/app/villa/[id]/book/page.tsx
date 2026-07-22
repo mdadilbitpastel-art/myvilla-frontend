@@ -59,6 +59,36 @@ function luhnValid(digits: string): boolean {
 }
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Types as "MM/YY": the slash lands on its own after the month, a lone digit
+// that can't start a month (2-9) is padded to "0X", and an out-of-range month
+// is clamped. `deleting` keeps backspace from re-adding the slash it just ate.
+function formatExpiry(raw: string, deleting: boolean): string {
+  let d = onlyDigits(raw).slice(0, 4);
+  if (d.length === 1 && d > "1") d = "0" + d;
+  if (d.length >= 2) {
+    const n = parseInt(d.slice(0, 2), 10);
+    const mm = n === 0 ? "01" : n > 12 ? "12" : d.slice(0, 2);
+    d = mm + d.slice(2);
+  }
+  if (d.length < 2) return d;
+  if (d.length === 2) return deleting ? d : d + "/";
+  return `${d.slice(0, 2)}/${d.slice(2)}`;
+}
+
+// "" when the expiration is usable, otherwise the reason it isn't.
+function expiryError(value: string): string {
+  const m = /^(\d{2})\s*\/\s*(\d{2})$/.exec(value.trim());
+  if (!m) return "Enter the expiration as MM/YY.";
+  const month = parseInt(m[1], 10);
+  const year = 2000 + parseInt(m[2], 10);
+  if (month < 1 || month > 12) return "Month must be between 01 and 12.";
+  const now = new Date();
+  // A card is valid through the last day of its printed month.
+  if (new Date(year, month, 1) <= now) return "This card has expired.";
+  if (year > now.getFullYear() + 20) return "Enter a valid expiration year.";
+  return "";
+}
+
 // Which field a validation message belongs to, so it can be marked invalid.
 type FieldKey =
   | "cardType"
@@ -140,6 +170,9 @@ function BookVillaContent() {
   const [cardType, setCardType] = useState("Credit Card or Debit Card");
   const [cardNumber, setCardNumber] = useState("");
   const [expiration, setExpiration] = useState("");
+  // Shown under the expiration cell as soon as a complete MM/YY is bad, so the
+  // user doesn't have to reach Confirm to find out.
+  const [expError, setExpError] = useState("");
   const [cvv, setCvv] = useState("");
   const [street, setStreet] = useState("");
   const [apartment, setApartment] = useState("");
@@ -257,8 +290,8 @@ function BookVillaContent() {
     const card = onlyDigits(cardNumber);
     if (card.length < 12 || !luhnValid(card))
       return { field: "cardNumber", message: "Enter a valid card number." };
-    if (!/^\d{2}\s*\/\s*\d{2}$/.test(expiration.trim()))
-      return { field: "expiration", message: "Enter a valid expiration (MM/YY)." };
+    const expBad = expiryError(expiration);
+    if (expBad) return { field: "expiration", message: expBad };
     const c = onlyDigits(cvv);
     if (c.length < 3 || c.length > 4) return { field: "cvv", message: "Enter a valid CVV." };
     if (!street.trim()) return { field: "street", message: "Enter your billing street name." };
@@ -308,7 +341,9 @@ function BookVillaContent() {
 
   return (
     <div className="mx-auto max-w-[1120px] px-5 pb-20 pt-6">
-      <Breadcrumb items={["Home", "All Topics", "Legal Terms", "Privacy Policy"]} />
+      <Breadcrumb
+        items={["Home", "Villas", { label: v.title, href: `/villa/${id}` }, "Confirm Payment"]}
+      />
 
       <div className="flex items-start justify-between">
         <h1 className="text-[26px] font-bold text-ink">Confirm Payment</h1>
@@ -375,12 +410,23 @@ function BookVillaContent() {
                 <input
                   id={`${uid}-exp`}
                   value={expiration}
-                  onChange={(e) => setExpiration(e.target.value)}
+                  onChange={(e) => {
+                    const next = formatExpiry(e.target.value, e.target.value.length < expiration.length);
+                    setExpiration(next);
+                    // Only judge a value the user has finished typing.
+                    setExpError(next.length === 5 ? expiryError(next) : "");
+                    if (errorField === "expiration") {
+                      setErrorField("");
+                      setError("");
+                    }
+                  }}
+                  onBlur={() => setExpError(expiration ? expiryError(expiration) : "")}
                   placeholder="MM/YY"
                   inputMode="numeric"
                   autoComplete="cc-exp"
-                  maxLength={7}
-                  aria-invalid={errorField === "expiration" || undefined}
+                  maxLength={5}
+                  aria-invalid={!!expError || errorField === "expiration" || undefined}
+                  aria-describedby={expError ? `${uid}-exp-err` : undefined}
                   className="w-full bg-transparent text-[14px] text-ink outline-none placeholder:text-muted/70"
                 />
               </LabeledCell>
@@ -388,7 +434,7 @@ function BookVillaContent() {
                 <input
                   id={`${uid}-cvv`}
                   value={cvv}
-                  onChange={(e) => setCvv(e.target.value)}
+                  onChange={(e) => setCvv(onlyDigits(e.target.value).slice(0, 4))}
                   inputMode="numeric"
                   placeholder="CVV"
                   aria-label="CVV"
@@ -400,6 +446,11 @@ function BookVillaContent() {
               </div>
             </div>
           </div>
+          {expError && (
+            <p id={`${uid}-exp-err`} role="alert" className="mt-2 text-[13px] text-red-600">
+              {expError}
+            </p>
+          )}
 
           {/* Billing address */}
           <h2 className="mt-8 text-[19px] font-semibold text-ink">Billing Address</h2>
