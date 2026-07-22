@@ -1,20 +1,33 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Star, Share, Heart, Check } from "lucide-react";
+import Link from "next/link";
+import { Star, Share, Heart, Check, Pencil } from "lucide-react";
 import { useFavorites } from "@/lib/favorites";
+
+/** One round, bordered button — the shared shape of the three actions. */
+const iconBtn =
+  "flex items-center justify-center rounded-full border border-line bg-white shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:translate-y-0";
 
 export default function PropertyHeader({
   title,
   rating,
   reviewsCount,
   villaId,
+  isOwner = false,
   compact = false,
 }: {
   title: string;
   rating: number;
   reviewsCount: number;
   villaId?: string;
+  /**
+   * Whether the signed-in viewer owns this villa — as answered by the server
+   * (VillaType.isOwner), not by comparing ids in the browser. The edit page
+   * and every villa mutation re-check ownership regardless, so this only
+   * decides whether the shortcut is worth showing.
+   */
+  isOwner?: boolean;
   /** Collapsed form used while the page header is stuck to the navbar. */
   compact?: boolean;
 }) {
@@ -64,7 +77,7 @@ export default function PropertyHeader({
           }`}
         >
           <span className="flex items-center gap-1.5 font-medium text-ink">
-            <Star size={compact ? 15 : 18} className="fill-primary text-primary" />
+            <Star size={compact ? 15 : 18} className="fill-star text-star" />
             {rating}
           </span>
           <span className="text-muted">·</span>
@@ -76,38 +89,55 @@ export default function PropertyHeader({
         </div>
       </div>
 
-      <div className={`flex items-center ${compact ? "shrink-0 gap-4" : "gap-6"}`}>
+      {/* Icon-only actions: three round buttons, each labelled for screen
+          readers and with a native tooltip on hover. The words were competing
+          with the villa's own title for the eye. */}
+      <div className={`flex shrink-0 items-center ${compact ? "gap-1.5" : "gap-2"}`}>
+        {isOwner && villaId && (
+          <Link
+            href={`/settings/property/add?edit=${villaId}`}
+            aria-label="Edit this villa"
+            title="Edit this villa"
+            className={`${iconBtn} text-primary hover:border-primary hover:bg-primary/5 ${
+              compact ? "h-9 w-9" : "h-10 w-10"
+            }`}
+          >
+            <Pencil size={compact ? 16 : 18} strokeWidth={2} aria-hidden />
+          </Link>
+        )}
         <button
           type="button"
           onClick={onShare}
-          className={`flex items-center gap-2 font-medium text-ink transition-colors hover:text-primary ${
-            compact ? "text-[13px]" : "text-[15px]"
+          aria-label={copied ? "Link copied" : "Share this villa"}
+          title={copied ? "Link copied" : "Share this villa"}
+          className={`${iconBtn} text-ink hover:border-primary hover:text-primary ${
+            compact ? "h-9 w-9" : "h-10 w-10"
           }`}
         >
           {copied ? (
-            <Check size={18} strokeWidth={2} aria-hidden className="text-primary" />
+            <Check size={compact ? 16 : 18} strokeWidth={2} aria-hidden className="text-primary" />
           ) : (
-            <Share size={18} strokeWidth={2} aria-hidden />
+            <Share size={compact ? 16 : 18} strokeWidth={2} aria-hidden />
           )}
-          <span role={copied ? "status" : undefined}>
-            {copied ? "Link copied" : "Share"}
-          </span>
+          {/* Announced without taking any room in the row. */}
+          {copied && <span role="status" className="sr-only">Link copied</span>}
         </button>
         <button
           type="button"
           aria-pressed={saved}
+          aria-label={saved ? "Remove from saved" : "Save this villa"}
+          title={saved ? "Remove from saved" : "Save this villa"}
           onClick={() => villaId && toggle(villaId)}
-          className={`flex items-center gap-2 font-medium text-ink transition-colors hover:text-primary ${
-            compact ? "text-[13px]" : "text-[15px]"
+          className={`${iconBtn} text-ink hover:border-red-300 hover:text-red-500 ${
+            compact ? "h-9 w-9" : "h-10 w-10"
           }`}
         >
           <Heart
-            size={18}
+            size={compact ? 16 : 18}
             strokeWidth={2}
             aria-hidden
             className={saved ? "fill-red-500 text-red-500" : ""}
           />
-          {saved ? "Saved" : "Save"}
         </button>
       </div>
     </div>

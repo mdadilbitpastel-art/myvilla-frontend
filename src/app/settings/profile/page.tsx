@@ -123,8 +123,13 @@ export default function ProfileSettingsPage() {
     !!saved &&
     (Object.keys(EMPTY) as (keyof ProfileInput)[]).some((key) => values[key] !== saved[key]);
 
+  // True until the first fetch settles, so the card arrives filled in rather
+  // than painting cached values and correcting itself a moment later.
+  const [loading, setLoading] = useState(true);
+
   // Pull fresh data from the backend once we know a user is signed in.
   useEffect(() => {
+    // Signed out never reaches the form — that branch returns its own page.
     if (!ready || !user) return;
     let alive = true;
     fetchMe()
@@ -133,6 +138,9 @@ export default function ProfileSettingsPage() {
       })
       .catch((e) => {
         if (alive) setError(e instanceof Error ? e.message : "Could not load your profile.");
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
       });
     return () => {
       alive = false;
@@ -158,7 +166,7 @@ export default function ProfileSettingsPage() {
     setValues(fromUser(user));
   }
 
-  if (!ready) return <div className="min-h-[60vh]" />;
+  if (!ready) return <ProfileSkeleton />;
 
   if (!user) {
     return (
@@ -176,7 +184,7 @@ export default function ProfileSettingsPage() {
   }
 
   // Placeholders shaped like the real card so it resolves instead of popping.
-  if (!values) return <ProfileSkeleton />;
+  if (!values || loading) return <ProfileSkeleton />;
 
   const v = values;
   const set = (key: keyof ProfileInput, next: string) => {
@@ -271,8 +279,8 @@ export default function ProfileSettingsPage() {
   const id = (key: string) => `${fieldId}-${key}`;
 
   return (
-    <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-10 lg:px-7">
-      <div className="grid grid-cols-1 gap-10 lg:grid-cols-[190px_1fr]">
+    <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-9 lg:px-7">
+      <div className="grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
         <aside>
           <SettingsSidebar />
         </aside>
@@ -281,7 +289,7 @@ export default function ProfileSettingsPage() {
           {/* Static on purpose: anything that changes with `editing` would
               resize the card when the mode flips. */}
           <div className="mb-6 border-b border-line pb-5">
-            <h1 className="text-[18px] font-bold text-ink">Profile</h1>
+            <h2 className="text-[18px] font-bold text-ink">Profile</h2>
             <p className="mt-1 text-[13px] text-body">
               Your personal details as they appear on bookings.
             </p>
@@ -363,16 +371,17 @@ export default function ProfileSettingsPage() {
                     the full row so the whole address fits on one line; an
                     unusually long one scrolls rather than wrapping. */}
                 <Field className="sm:col-span-2" label="Email address">
-                  <div className="flex h-[43px] items-center gap-2 rounded-lg border border-[#ececf0] bg-[#fafafb] px-3.5">
-                    <span
-                      title={v.email}
-                      className="overflow-x-auto whitespace-nowrap text-[14px] text-[#9a9aa2]"
-                    >
+                  {/* The cursor says what the note used to: this row is not
+                      something you can type into. */}
+                  <div
+                    title="Email can’t be changed"
+                    className="flex h-[43px] cursor-not-allowed items-center gap-2 rounded-lg border border-[#ececf0] bg-[#fafafb] px-3.5"
+                  >
+                    <span className="overflow-x-auto whitespace-nowrap text-[14px] text-[#9a9aa2]">
                       {v.email}
                     </span>
                     <Lock size={14} aria-hidden className="ml-auto shrink-0 text-[#b9b9c0]" />
                   </div>
-                  <p className="mt-1 text-[12px] text-muted">Email can&apos;t be changed</p>
                 </Field>
 
                 <Field className="sm:col-span-2" label="Address" htmlFor={id("address")}>
@@ -407,6 +416,9 @@ export default function ProfileSettingsPage() {
                   <Avatar
                     src={user.avatar}
                     name={v.fullName || user.email}
+                    // The draft value, not the saved one: switching the gender
+                    // dropdown updates the placeholder straight away.
+                    gender={v.gender}
                     size={112}
                     className="ring-2 ring-white"
                   />
@@ -484,9 +496,6 @@ export default function ProfileSettingsPage() {
                   >
                     Cancel
                   </button>
-                  <p className="mt-2 min-h-[16px] text-[12px] text-muted">
-                    {editing && dirty ? "You have unsaved changes." : ""}
-                  </p>
                 </div>
               </div>
             </div>
@@ -550,8 +559,8 @@ function Field({
 // arrives.
 function ProfileSkeleton() {
   return (
-    <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-10 lg:px-7">
-      <div className="grid grid-cols-1 gap-10 lg:grid-cols-[190px_1fr]">
+    <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-9 lg:px-7">
+      <div className="grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
         <aside>
           <SettingsSidebar />
         </aside>

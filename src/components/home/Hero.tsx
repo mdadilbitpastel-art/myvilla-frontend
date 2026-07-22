@@ -3,10 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import { MapPin, CircleUserRound, Calendar } from "lucide-react";
+import { MapPin, CircleUserRound } from "lucide-react";
 import { heroSlides } from "@/lib/home";
+import DateField from "@/components/ui/DateField";
+// The tabs are the search page's own categories: picking one here has to mean
+// the same thing there. "Resort"/"Rent" matched no listing type at all.
+import { SEARCH_CATEGORIES, ALL_CATEGORY } from "@/lib/categories";
 
-const TABS = ["Resort", "Hotels", "Rent"];
 const GUEST_OPTIONS = [1, 2, 3, 4, 5, 6, 8, 10];
 
 // Today as a local YYYY-MM-DD string (avoids the UTC off-by-one of toISOString).
@@ -16,25 +19,13 @@ function todayStr(): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-// Open the native date calendar when the field is clicked (not just the icon).
-// Only ever called from a click: showPicker() throws NotAllowedError without a
-// user gesture, which is why focus doesn't trigger it.
-function openPicker(e: React.MouseEvent<HTMLInputElement>) {
-  const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
-  try {
-    el.showPicker?.();
-  } catch {
-    // Browser refused (no gesture / unsupported) — the native icon still works.
-  }
-}
-
 export default function Hero() {
   const router = useRouter();
   const [slide, setSlide] = useState(0);
   // The slide we just left. It keeps zooming while it fades out, so the
   // crossfade is the only thing that changes — no scale snap-back.
   const [leaving, setLeaving] = useState(-1);
-  const [tab, setTab] = useState("Resort");
+  const [tab, setTab] = useState(ALL_CATEGORY);
 
   // Search widget state
   const [location, setLocation] = useState("");
@@ -74,8 +65,9 @@ export default function Hero() {
     if (guests) sp.set("guests", String(guests));
     if (checkIn) sp.set("checkIn", checkIn);
     if (checkOut) sp.set("checkOut", checkOut);
-    // The "Hotels" tab narrows to hotel-type listings; Resort/Rent show all.
-    if (tab === "Hotels") sp.set("category", "Hotel");
+    // Every filter set here travels with the redirect, the tab included — the
+    // search page seeds itself from exactly these params.
+    if (tab !== ALL_CATEGORY) sp.set("category", tab);
     const qs = sp.toString();
     router.push(qs ? `/search?${qs}` : "/search");
   }
@@ -128,14 +120,15 @@ export default function Hero() {
         >
           {/* Tabs — rounded box centered above the bar */}
           <div className="flex justify-center">
-            <div className="flex gap-2 rounded-t-lg bg-white px-3 pt-3">
-              {TABS.map((t) => (
+            {/* Six categories don't fit one phone-width line, so they wrap. */}
+            <div className="flex max-w-full flex-wrap justify-center gap-2 rounded-t-lg bg-white px-3 pt-3">
+              {SEARCH_CATEGORIES.map((t) => (
                 <button
                   key={t}
                   type="button"
                   aria-pressed={tab === t}
                   onClick={() => setTab(t)}
-                  className={`rounded-md px-6 py-2.5 text-[15px] transition-colors ${
+                  className={`whitespace-nowrap rounded-md px-4 py-2.5 text-[14px] transition-colors sm:px-5 sm:text-[15px] ${
                     tab === t
                       ? "bg-[#d7d0ff] font-semibold text-primary"
                       : "font-medium text-muted hover:text-ink"
@@ -154,7 +147,8 @@ export default function Hero() {
                 value={location}
                 onChange={(e) => setLocation(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && onSearch()}
-                placeholder="Where are you going?"
+                placeholder="Villa name, city or country"
+                aria-label="Search by villa name, city or country"
                 className="w-full bg-transparent text-[16px] font-semibold text-[#384652] outline-none placeholder:font-normal placeholder:text-[#a1a1a2]"
               />
             </Field>
@@ -174,32 +168,27 @@ export default function Hero() {
               </select>
             </Field>
             <Divider />
-            <Field icon={<Calendar size={18} className="text-primary" />} label="Check In">
-              <input
-                type="date"
-                value={checkIn}
-                min={today || undefined}
-                onClick={openPicker}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setCheckIn(val);
-                  // If check-out is now before check-in, clear it.
-                  if (checkOut && val && checkOut < val) setCheckOut("");
-                }}
-                className="w-full cursor-pointer bg-transparent text-[15px] font-semibold text-[#384652] outline-none"
-              />
-            </Field>
+            <DateField
+              variant="hero"
+              label="Check In"
+              value={checkIn}
+              min={today || undefined}
+              onChange={(val) => {
+                setCheckIn(val);
+                // A check-out on or before the new check-in isn't a stay.
+                if (checkOut && val && checkOut <= val) setCheckOut("");
+              }}
+              className="flex-1"
+            />
             <Divider />
-            <Field icon={<Calendar size={18} className="text-primary" />} label="Check Out">
-              <input
-                type="date"
-                value={checkOut}
-                min={checkIn || today || undefined}
-                onClick={openPicker}
-                onChange={(e) => setCheckOut(e.target.value)}
-                className="w-full cursor-pointer bg-transparent text-[15px] font-semibold text-[#384652] outline-none"
-              />
-            </Field>
+            <DateField
+              variant="hero"
+              label="Check Out"
+              value={checkOut}
+              min={checkIn || today || undefined}
+              onChange={setCheckOut}
+              className="flex-1"
+            />
             <button
               type="button"
               onClick={onSearch}

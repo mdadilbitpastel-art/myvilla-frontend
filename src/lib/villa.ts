@@ -12,7 +12,9 @@ export type Facility = {
     | "wifi"
     | "pool"
     | "jacuzzi"
-    | "bbq";
+    | "bbq"
+    // Fallback for a facility the host typed in themselves.
+    | "other";
 };
 
 export type Review = {

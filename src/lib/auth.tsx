@@ -11,7 +11,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useRouter } from "next/navigation";
 import { getStoredUser, logout as clearSession, type AuthUser } from "./api";
+import { useToast } from "./toast";
 import type { AuthMode } from "@/components/auth/AuthModal";
 
 type AuthContextValue = {
@@ -29,6 +31,8 @@ type AuthContextValue = {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const router = useRouter();
+  const toast = useToast();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [ready, setReady] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode | null>(null);
@@ -66,8 +70,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   function signOut() {
     clearSession();
     setUser(null);
-    // Right after logging out, surface the sign-in popup.
+    // Home, with the sign-in popup up. Staying put would often mean sitting on
+    // a page the user can no longer see — every account page bounces a signed
+    // out visitor anyway, so send them somewhere that works.
+    router.push("/");
     setAuthMode("signin");
+    toast.success("Logged out successfully");
   }
 
   return (

@@ -99,7 +99,7 @@ function ProfileCard({ user }: { user: import("@/lib/api").AuthUser }) {
     <div>
       {/* Avatar + name */}
       <div className="flex items-center gap-4">
-        <Avatar src={user.avatar} name={name} size={74} />
+        <Avatar src={user.avatar} name={name} gender={user.gender} size={74} />
         <div>
           <p className="text-[18px] font-bold text-ink">{name}</p>
           <p className="mt-0.5 text-[14px] text-muted">{p.joined}</p>
@@ -109,7 +109,7 @@ function ProfileCard({ user }: { user: import("@/lib/api").AuthUser }) {
       {/* Reviews + identity */}
       <div className="mt-6 flex items-center gap-8">
         <div className="flex items-center gap-2">
-          <Star size={18} className="fill-primary text-primary" />
+          <Star size={18} className="fill-star text-star" />
           <span className="text-[15px] font-semibold text-ink">
             {p.reviewsCount} Reviews
           </span>
@@ -263,7 +263,7 @@ function ReviewsList() {
                 <p className="mt-0.5 text-[13px] text-muted">{r.date}</p>
                 <div className="mt-1 flex gap-0.5">
                   {Array.from({ length: 5 }).map((_, s) => (
-                    <Star key={s} size={13} className="fill-primary text-primary" />
+                    <Star key={s} size={13} className="fill-star text-star" />
                   ))}
                 </div>
               </div>
@@ -296,7 +296,7 @@ function RatingBreakdown() {
   return (
     <div>
       <div className="mb-5 flex items-center gap-2 text-[15px]">
-        <Star size={18} className="fill-primary text-primary" />
+        <Star size={18} className="fill-star text-star" />
         <span className="font-semibold text-ink">{rating} Rating</span>
         <span className="text-muted">·</span>
         <span className="text-ink">{reviewsCount} reviews</span>

@@ -17,7 +17,7 @@ export default function HostSection({ host }: { host: Villa["host"] }) {
 
       <div className="mt-5 flex flex-wrap items-center gap-x-8 gap-y-2 text-[15px]">
         <span className="flex items-center gap-2 text-ink">
-          <Star size={17} className="fill-primary text-primary" />
+          <Star size={17} className="fill-star text-star" />
           {host.reviews} Reviews
         </span>
         <span className="flex items-center gap-2 text-ink">

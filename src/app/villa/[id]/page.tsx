@@ -12,12 +12,14 @@ import Overview from "@/components/property/Overview";
 import Description from "@/components/property/Description";
 import BedroomSection from "@/components/property/BedroomSection";
 import Facilities from "@/components/property/Facilities";
+import ExtraServices from "@/components/property/ExtraServices";
 import Reviews from "@/components/property/Reviews";
 import LocationMap from "@/components/property/LocationMap";
 import HostSection from "@/components/property/HostSection";
 import HouseRules from "@/components/property/HouseRules";
 import ReservationCard from "@/components/property/ReservationCard";
 import { useCollapseOnScroll } from "@/lib/useCollapseOnScroll";
+import { splitServices } from "@/lib/services";
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
@@ -40,7 +42,8 @@ function serviceIcon(s: string): Facility["icon"] {
   if (t.includes("pool") || t.includes("swim")) return "pool";
   if (t.includes("jacuzzi") || t.includes("jaccuzzi") || t.includes("bath")) return "jacuzzi";
   if (t.includes("bbq") || t.includes("barbe") || t.includes("grill")) return "bbq";
-  return "wifi";
+  // A label the host typed in themselves — a neutral tick beats guessing wrong.
+  return "other";
 }
 
 export default function VillaDetailPage() {
@@ -152,15 +155,30 @@ export default function VillaDetailPage() {
   }, [v]);
 
   // Track the header's height for the reservation card's sticky offset.
-  // Rounded to 8px so the collapse animation doesn't re-render on every frame.
+  // Rounded to 8px, and committed only once the header has stopped resizing:
+  // following its collapse animation frame by frame made the card chase it in
+  // little steps, which reads as a shudder. One settled value, one eased move.
   useEffect(() => {
     const el = headerRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
+    let timer = 0;
+    let first = true;
     const ro = new ResizeObserver(([entry]) => {
-      setHeaderHeight(Math.ceil(entry.contentRect.height / 8) * 8);
+      const h = Math.ceil(entry.contentRect.height / 8) * 8;
+      // The first measurement is the resting height — take it straight away.
+      if (first) {
+        first = false;
+        setHeaderHeight(h);
+        return;
+      }
+      clearTimeout(timer);
+      timer = window.setTimeout(() => setHeaderHeight(h), 180);
     });
     ro.observe(el);
-    return () => ro.disconnect();
+    return () => {
+      clearTimeout(timer);
+      ro.disconnect();
+    };
   }, [v]);
 
   if (failed) {
@@ -237,19 +255,25 @@ export default function VillaDetailPage() {
   const hero = photoUrls[0];
   const thumbs = photoUrls.slice(1);
 
+  // What the host stated: capacity, room count, and how those rooms are
+  // furnished. The bed lines only appear when the host filled them in.
   const overview = [
     plural(v.guests, "guest"),
     plural(v.bedrooms, "Bedroom"),
-    plural(v.bedrooms, "Bed"),
-    plural(v.bathrooms, "Bath"),
+    ...(v.singleBedRooms ? [plural(v.singleBedRooms, "Single bed")] : []),
+    ...(v.doubleBedRooms ? [plural(v.doubleBedRooms, "Double bed")] : []),
   ];
 
   const location = [v.city, v.country].filter(Boolean).join(", ");
   const subtitle = `${v.propertyType || "Villa"}${location ? " in " + location : ""} hosted by ${dummy.host.name}`;
 
-  const facilities: Facility[] = (v.services.length ? v.services : ["Free Wifi"]).map(
-    (s) => ({ label: s, icon: serviceIcon(s) })
-  );
+  // Exactly what the owner ticked in the wizard — the facilities block and the
+  // optional extra-services block are both driven off the same saved list.
+  const { facilities: facilityLabels, extras } = splitServices(v.services);
+  const facilities: Facility[] = facilityLabels.map((s) => ({
+    label: s,
+    icon: serviceIcon(s),
+  }));
 
   const descriptionParts = [
     v.description,
@@ -286,6 +310,7 @@ export default function VillaDetailPage() {
           rating={dummy.rating}
           reviewsCount={dummy.reviewsCount}
           villaId={v.id}
+          isOwner={v.isOwner}
           compact={collapsed}
         />
         {/* The thumbnail strip only joins the pinned header once the real
@@ -330,6 +355,7 @@ export default function VillaDetailPage() {
             detail={plural(v.bedrooms, "bed")}
           />
           <Facilities facilities={facilities} />
+          <ExtraServices services={extras} />
           {/* Reviews / rating are public/demo content — kept as-is */}
           <Reviews
             reviews={dummy.reviews}
@@ -339,7 +365,8 @@ export default function VillaDetailPage() {
           />
           <LocationMap location={[v.address, v.city, v.country].filter(Boolean).join(", ")} />
           <HostSection host={dummy.host} />
-          <HouseRules rules={dummy.houseRules} additional={dummy.additionalRules} />
+          {/* The host's own rules — check-in/out times and what's allowed. */}
+          <HouseRules rules={v.houseRules} additional={v.additionalRules} />
         </div>
 
         {/* Reservation sidebar */}
@@ -351,14 +378,17 @@ export default function VillaDetailPage() {
           <div
             // The offset follows the collapsing header, so ease it there —
             // a bare `top` swap makes the card jump as the header settles.
-            className="pt-6 transition-[top] duration-300 ease-out lg:sticky lg:top-[68px]"
-            style={headerHeight ? { top: NAV_HEIGHT + headerHeight - 8 } : undefined}
+            // z-40 puts the card ABOVE that header (which is z-30): where the
+            // two meet, the card is the one that stays whole.
+            className="relative z-40 pt-6 transition-[top] duration-300 ease-out lg:sticky lg:top-[43px]"
+            style={headerHeight ? { top: NAV_HEIGHT + headerHeight - 33 } : undefined}
           >
             <ReservationCard
               pricing={pricing}
               rating={dummy.rating}
               villaId={v.id}
               ownerId={v.ownerId}
+              maxGuests={v.guests}
             />
           </div>
         </aside>

@@ -7,6 +7,7 @@ import { useAuth } from "@/lib/auth";
 import { useLiveRefresh } from "@/lib/useLiveRefresh";
 import { useToast } from "@/lib/toast";
 import SettingsSidebar from "@/components/settings/SettingsSidebar";
+import CountPill from "@/components/ui/CountPill";
 import Img from "@/components/ui/Img";
 import { fetchVillaBookings, respondBooking, type Booking } from "@/lib/api";
 
@@ -222,8 +223,8 @@ export default function RentRequestsPage() {
   const toggleHistorySort = () => setHistorySort((s) => (s === "desc" ? "asc" : "desc"));
 
   return (
-    <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-10 lg:px-7">
-      <div className="grid grid-cols-1 gap-10 lg:grid-cols-[190px_1fr]">
+    <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-9 lg:px-7">
+      <div className="grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
         {/* Left sidebar */}
         <aside>
           <SettingsSidebar />
@@ -239,12 +240,11 @@ export default function RentRequestsPage() {
 
           {/* Header */}
           <div className="flex items-center justify-between">
-            <h2 className="text-[16px] font-bold text-ink">
-              <span className="text-primary">
-                {String(active.length).padStart(2, "0")}
-              </span>{" "}
-              Active Rent
-              Requests
+            {/* Label first, count as a pill after it — "00 Active Rent
+                Requests" read as a zero-padded code rather than as a total. */}
+            <h2 className="flex items-center gap-2 text-[16px] font-bold text-ink">
+              Active Rent Requests
+              <CountPill value={active.length} />
             </h2>
             <SortDropdown sort={sort} onToggle={toggleSort} />
           </div>
@@ -296,7 +296,10 @@ export default function RentRequestsPage() {
           {/* Booking history — cancelled and finished stays stay on record here
               instead of vanishing from the owner's view. */}
           <div className="mt-9 flex items-center justify-between">
-            <h2 className="text-[16px] font-bold text-ink">Booking History</h2>
+            <h2 className="flex items-center gap-2 text-[16px] font-bold text-ink">
+              Booking History
+              <CountPill value={history.length} />
+            </h2>
             <SortDropdown sort={historySort} onToggle={toggleHistorySort} />
           </div>
 

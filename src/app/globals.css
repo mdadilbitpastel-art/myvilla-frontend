@@ -9,6 +9,9 @@
   --color-muted: #8a8a95;
   --color-page: #f7f7f8;
   --color-line: #ececee;
+  /* Rating stars. A star reads as gold everywhere else on the web, so the
+     brand purple made ratings look like links rather than scores. */
+  --color-star: #f5b301;
 
   --font-sans: var(--font-poppins), ui-sans-serif, system-ui, sans-serif;
 }
@@ -362,4 +365,20 @@ textarea:disabled {
   *::after {
     scroll-behavior: auto !important;
   }
+}
+
+/* Number fields: no spinner arrows anywhere in the app.
+   The little up/down stepper is fiddly to hit, changes the value on an
+   accidental scroll, and reads as clutter next to every other field. The input
+   stays `type="number"`, so it still accepts only numbers and still brings up
+   the numeric keypad on mobile — only the arrows go. */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
 }

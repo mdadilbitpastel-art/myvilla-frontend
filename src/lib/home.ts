@@ -10,6 +10,10 @@ export type VillaCardData = {
   distance: string;
   dates: string;
   liked?: boolean;
+  // Set when the villa can't take the stay the search asked about — the reason
+  // ("Booked until 25 Jul 2026", "Sleeps up to 4 guests"). The card is still
+  // shown and still links through; it's marked, not hidden.
+  unavailable?: string;
 };
 
 export type PlaceData = {

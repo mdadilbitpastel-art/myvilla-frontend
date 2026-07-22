@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Star, ChevronDown } from "lucide-react";
 import type { Villa } from "@/lib/villa";
+import { fetchVilla } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { computeStayPricing, money, TAX_RATE } from "@/lib/pricing";
 
@@ -12,6 +13,7 @@ export default function ReservationCard({
   rating,
   villaId,
   ownerId,
+  maxGuests = 4,
 }: {
   pricing: Villa["pricing"];
   rating: number;
@@ -19,6 +21,8 @@ export default function ReservationCard({
   villaId?: string;
   /** owner's user id — used to block booking your own villa */
   ownerId?: string;
+  /** the villa's stated guest capacity — the guest picker stops there */
+  maxGuests?: number;
 }) {
   const router = useRouter();
   const { user, openAuth } = useAuth();
@@ -45,7 +49,12 @@ export default function ReservationCard({
     };
   }, [open]);
 
-  const GUEST_OPTIONS = ["1 guest", "2 guests", "3 guests", "4 guests"];
+  // The picker offers exactly what the villa can sleep — a party it can't take
+  // shouldn't be selectable here only to be refused at checkout.
+  const GUEST_OPTIONS = Array.from(
+    { length: Math.max(1, maxGuests) },
+    (_, i) => `${i + 1} guest${i === 0 ? "" : "s"}`
+  );
 
   // Max nights per stay — must match the backend (MAX_BOOKING_NIGHTS).
   const MAX_NIGHTS = 5;
@@ -106,13 +115,39 @@ export default function ReservationCard({
         ? `You can book at most ${MAX_NIGHTS} nights per stay.`
         : "";
 
+  // Availability for the dates on screen, asked of the backend so it's the same
+  // answer checkout will give. Debounced: the dates move as the user picks.
+  const [taken, setTaken] = useState("");
+  useEffect(() => {
+    if (!villaId || !datesReady || dateError) {
+      setTaken("");
+      return;
+    }
+    let active = true;
+    const timer = setTimeout(() => {
+      fetchVilla(villaId, { checkIn, checkOut, guests: guestCount })
+        .then((v) => {
+          if (!active || !v) return;
+          setTaken(v.isAvailable ? "" : v.unavailableReason || "Not available");
+        })
+        // A failed check must not block booking: the server re-checks anyway.
+        .catch(() => active && setTaken(""));
+    }, 350);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [villaId, checkIn, checkOut, guestCount, datesReady, dateError]);
+
+  const blocked = isOwner || !!dateError || !datesReady || !!taken;
+
   function onReserve() {
     if (!villaId) return; // demo page — nothing to book
     if (!user) {
       openAuth("signin");
       return;
     }
-    if (isOwner || dateError) return;
+    if (blocked) return;
     router.push(
       `/villa/${villaId}/book?guests=${guestCount}&checkIn=${checkIn}&checkOut=${checkOut}`
     );
@@ -129,7 +164,7 @@ export default function ReservationCard({
           <span className="text-[15px] font-normal text-muted"> / {pricing.period}</span>
         </p>
         <span className="flex items-center gap-1.5 text-[14px]">
-          <Star size={15} className="fill-primary text-primary" />
+          <Star size={15} className="fill-star text-star" />
           <span className="font-medium text-ink">{rating}</span>
           <a href="#reviews" className="text-muted underline underline-offset-2">
             {pricing.ratingReviews} Reviews
@@ -218,19 +253,23 @@ export default function ReservationCard({
       <button
         type="button"
         onClick={onReserve}
-        disabled={isOwner || !!dateError || !datesReady}
+        disabled={blocked}
         className={`mt-3.5 w-full rounded-xl py-3 text-[15px] font-semibold text-white transition-colors ${
-          isOwner || dateError || !datesReady
-            ? "cursor-not-allowed bg-muted/60"
-            : "bg-primary hover:bg-primary-dark"
+          blocked ? "cursor-not-allowed bg-muted/60" : "bg-primary hover:bg-primary-dark"
         }`}
       >
-        {isOwner ? "This is your villa" : "Reserve"}
+        {isOwner ? "This is your villa" : taken ? "Not available" : "Reserve"}
       </button>
-      {isOwner && (
+      {isOwner ? (
         <p className="mt-2 text-center text-[12px] text-muted">
           You can&apos;t book your own villa.
         </p>
+      ) : (
+        taken && (
+          <p role="status" className="mt-2 text-center text-[12px] font-medium text-red-600">
+            {taken}. Try different dates.
+          </p>
+        )
       )}
 
       {/* Price breakdown — recomputed from the dates above, not a fixed

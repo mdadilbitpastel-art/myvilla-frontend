@@ -30,7 +30,7 @@ export default function Testimonials() {
                   <Star
                     key={s}
                     size={15}
-                    className={s < t.rating ? "fill-primary text-primary" : "fill-line text-line"}
+                    className={s < t.rating ? "fill-star text-star" : "fill-line text-line"}
                   />
                 ))}
               </div>

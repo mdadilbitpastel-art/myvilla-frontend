@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Star, X } from "lucide-react";
+import { Star, X, Pencil, Eye, Trash2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/lib/toast";
 import { useConfirm } from "@/lib/confirm";
@@ -24,6 +24,10 @@ type Row = {
   rating: number | null;
   reviews: number;
   posted: string;
+  // Live booking status, the same answer a guest browsing today gets: "" when
+  // the villa is free right now, otherwise why it isn't.
+  unavailable: string;
+  rooms: string;
 };
 
 // "3 weeks ago" style relative time from an ISO string.
@@ -65,6 +69,18 @@ function villaToRow(v: Villa): Row {
     rating: null,
     reviews: 0,
     posted: timeAgo(v.createdAt),
+    unavailable: v.isAvailable ? "" : v.unavailableReason || "Booked",
+    rooms: [
+      `${v.bedrooms} room${v.bedrooms === 1 ? "" : "s"}`,
+      v.singleBedRooms
+        ? `${v.singleBedRooms} single bed${v.singleBedRooms === 1 ? "" : "s"}`
+        : "",
+      v.doubleBedRooms
+        ? `${v.doubleBedRooms} double bed${v.doubleBedRooms === 1 ? "" : "s"}`
+        : "",
+    ]
+      .filter(Boolean)
+      .join(" · "),
   };
 }
 
@@ -160,8 +176,8 @@ export default function MyPropertyPage() {
   const rows: Row[] | null = villas ? villas.map(villaToRow) : null;
 
   return (
-    <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-10 lg:px-7">
-      <div className="grid grid-cols-1 gap-10 lg:grid-cols-[190px_1fr]">
+    <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-9 lg:px-7">
+      <div className="grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
         {/* Left sidebar */}
         <aside>
           <SettingsSidebar />
@@ -190,12 +206,13 @@ export default function MyPropertyPage() {
             </div>
           )}
 
-          {/* Header — sticks flush against the 68px navbar, NOT at 84px: any gap
-              between the two becomes a slot the scrolling list is visible
-              through. The 16px that keeps it level with the sidebar's first
-              item is pt-4 INSIDE the bar, so its white background covers that
-              band instead of leaving it open. */}
-          <div className="sticky top-[68px] z-20 -mx-6 flex items-center justify-between rounded-t-2xl border-b border-line bg-white px-6 pb-3 pt-4 sm:-mx-8 sm:px-8">
+          {/* Header — sticks flush against the pinned "Manage Account" bar
+              (navbar + its collapsed height), NOT lower: any gap between the
+              two becomes a slot the scrolling list is visible through. The
+              16px that keeps it level with the sidebar's first item is pt-4
+              INSIDE the bar, so its white background covers that band instead
+              of leaving it open. */}
+          <div className="sticky top-[135px] z-20 -mx-6 flex items-center justify-between rounded-t-2xl border-b border-line bg-white px-6 pb-3 pt-4 sm:-mx-8 sm:px-8">
             <h2 className="text-[16px] font-bold text-ink">Property Owned</h2>
             <Link
               href="/settings/property/add"
@@ -250,7 +267,10 @@ export default function MyPropertyPage() {
                 {/* Thumbnail — <Img> rather than next/image so uploaded villa
                     photos (served from the backend/Cloudinary) render directly,
                     without remotePatterns/dev-restart getting in the way. */}
-                <div className="img-frame relative h-[104px] w-[112px] shrink-0 overflow-hidden rounded-lg bg-page">
+                {/* Square, and stretched to the row's full height so its bottom
+                    edge lines up with the status pills and action links
+                    opposite it rather than stopping short. */}
+                <div className="img-frame relative aspect-square w-[132px] shrink-0 self-stretch overflow-hidden rounded-lg bg-page">
                   <Img
                     src={p.image}
                     alt={`${p.city}, ${p.country}`}
@@ -278,56 +298,77 @@ export default function MyPropertyPage() {
                       <p className="mt-0.5 text-[13px] text-muted">
                         ${p.price}/night
                       </p>
-                      <div className="mt-1.5 flex items-center gap-1">
-                        <Star size={12} className="fill-primary text-primary" />
-                        <span className="text-[11px] text-body">
-                          {p.rating !== null ? (
-                            <>
-                              {p.rating}{" "}
-                              <span className="text-muted">({p.reviews})</span>
-                            </>
-                          ) : (
-                            <span className="text-muted">New</span>
-                          )}
-                        </span>
-                      </div>
+                      <p className="mt-0.5 text-[12px] text-muted">{p.rooms}</p>
                     </div>
-                    <Link
-                      href={`/settings/property/add?edit=${p.id}`}
-                      className="shrink-0 text-[13px] font-semibold text-ink underline underline-offset-2 hover:text-primary"
-                    >
-                      Edit
-                    </Link>
+                    {/* Rating sits at the top of the card, opposite the title —
+                        where a listing normally carries it. */}
+                    <span className="flex shrink-0 items-center gap-1 text-[13px]">
+                      <Star size={13} className="fill-star text-star" aria-hidden />
+                      {p.rating !== null ? (
+                        <>
+                          <span className="font-semibold text-ink">{p.rating}</span>
+                          <span className="text-muted">({p.reviews})</span>
+                        </>
+                      ) : (
+                        <span className="text-muted">New</span>
+                      )}
+                    </span>
                   </div>
 
                   {/* Bottom row: posted pill + remove */}
                   <div className="mt-auto flex items-end justify-between gap-3 pt-3">
-                    <span className="rounded-md bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary">
-                      {p.posted}
-                    </span>
-                    <div className="flex shrink-0 items-center gap-3">
-                    <Link
-                      href={`/villa/${p.id}`}
-                      className="text-[13px] font-semibold text-primary underline underline-offset-2 hover:text-primary-dark"
-                    >
-                      View
-                    </Link>
-                    <button
-                      type="button"
-                      onClick={() => handleRemove(p.id, label)}
-                      disabled={removingId === p.id}
-                      aria-busy={removingId === p.id}
-                      aria-label={`Remove ${label}`}
-                      className="shrink-0 text-[13px] font-semibold text-red-400 underline underline-offset-2 transition-colors hover:text-red-500 disabled:opacity-50"
-                    >
-                      {removingId === p.id ? (
-                        <>
-                          <span className="spinner" aria-hidden /> Removing…
-                        </>
-                      ) : (
-                        "Remove"
-                      )}
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-md bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary">
+                        {p.posted}
+                      </span>
+                      {/* Booking status, so a host sees at a glance which of
+                          their villas is occupied and until when. */}
+                      <span
+                        className={`rounded-md px-2.5 py-1 text-[11px] font-semibold ${
+                          p.unavailable
+                            ? "bg-red-50 text-red-600"
+                            : "bg-green-50 text-green-700"
+                        }`}
+                      >
+                        {p.unavailable || "Available"}
+                      </span>
+                    </div>
+                    {/* Icon buttons. Three text links on every row read as a
+                        paragraph of controls; the icons are the conventional
+                        ones for these actions, and each keeps its name for
+                        screen readers and as a hover tooltip. */}
+                    <div className="flex shrink-0 items-center gap-1">
+                      <Link
+                        href={`/settings/property/add?edit=${p.id}`}
+                        aria-label={`Edit ${label}`}
+                        title="Edit"
+                        className="rounded-lg p-2 text-ink transition-colors hover:bg-page hover:text-primary"
+                      >
+                        <Pencil size={17} aria-hidden />
+                      </Link>
+                      <Link
+                        href={`/villa/${p.id}`}
+                        aria-label={`View ${label}`}
+                        title="View"
+                        className="rounded-lg p-2 text-ink transition-colors hover:bg-page hover:text-primary"
+                      >
+                        <Eye size={17} aria-hidden />
+                      </Link>
+                      <button
+                        type="button"
+                        onClick={() => handleRemove(p.id, label)}
+                        disabled={removingId === p.id}
+                        aria-busy={removingId === p.id}
+                        aria-label={`Remove ${label}`}
+                        title="Remove"
+                        className="rounded-lg p-2 text-red-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-50"
+                      >
+                        {removingId === p.id ? (
+                          <span className="spinner block" aria-hidden />
+                        ) : (
+                          <Trash2 size={17} aria-hidden />
+                        )}
+                      </button>
                     </div>
                   </div>
                 </div>

@@ -52,7 +52,7 @@ export default function Reviews({
         {/* Rating breakdown */}
         <div className="lg:border-l lg:border-line lg:pl-10">
           <div className="mb-4 flex items-center gap-2 text-[15px]">
-            <Star size={18} className="fill-primary text-primary" />
+            <Star size={18} className="fill-star text-star" />
             <span className="font-semibold text-ink">{rating} Rating</span>
             <span className="text-muted">·</span>
             <span className="text-ink">{reviewsCount} reviews</span>

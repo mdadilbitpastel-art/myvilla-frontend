@@ -4,11 +4,13 @@ import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { X, ChevronDown } from "lucide-react";
 import { loginUser, registerUser, getRememberedEmail } from "@/lib/api";
 import GoogleSignInButton from "@/components/auth/GoogleSignInButton";
 import { COUNTRIES, COUNTRIES_BY_DIAL, countryByCode } from "@/lib/countries";
 import { useAuth } from "@/lib/auth";
+import { useToast } from "@/lib/toast";
 import {
   validateEmail,
   validatePassword,
@@ -42,6 +44,17 @@ export default function AuthModal({
   const [mounted, setMounted] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
+  const router = useRouter();
+  const toast = useToast();
+
+  // Where every successful sign-in lands, however it happened — password,
+  // registration or Google. Villas are the point of the site, so a fresh
+  // session opens on them rather than on whatever page prompted the login.
+  function onAuthenticated() {
+    onClose();
+    toast.success("Logged in successfully");
+    router.push("/search");
+  }
 
   // Lock body scroll while the modal is open.
   useEffect(() => {
@@ -166,13 +179,15 @@ export default function AuthModal({
               <SigninForm
                 titleId={titleId}
                 onSwitch={() => onSwitch("register")}
-                onSuccess={onClose}
+                onClose={onClose}
+                onAuthenticated={onAuthenticated}
               />
             ) : (
               <RegisterForm
                 titleId={titleId}
                 onSwitch={() => onSwitch("signin")}
-                onSuccess={onClose}
+                onClose={onClose}
+                onAuthenticated={onAuthenticated}
               />
             )}
           </div>
@@ -191,11 +206,16 @@ export default function AuthModal({
 function SigninForm({
   titleId,
   onSwitch,
-  onSuccess,
+  onClose,
+  onAuthenticated,
 }: {
   titleId: string;
   onSwitch: () => void;
-  onSuccess: () => void;
+  /** Dismiss the modal without signing in — used by the links out of it. */
+  onClose: () => void;
+  /** A session now exists. Kept separate from `onClose`: leaving the modal and
+      being signed in are different events, and only one of them navigates. */
+  onAuthenticated: () => void;
 }) {
   const { setUser } = useAuth();
   // Pre-fill the last "remembered" email so returning users just type a password.
@@ -227,7 +247,7 @@ function SigninForm({
     try {
       const { user } = await loginUser(email.trim(), password, remember);
       setUser(user);
-      onSuccess();
+      onAuthenticated();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
@@ -260,7 +280,7 @@ function SigninForm({
           </label>
           <Link
             href="/forgot-password"
-            onClick={onSuccess}
+            onClick={onClose}
             className="text-[13px] text-ink underline underline-offset-2"
           >
             Forget Password?
@@ -270,7 +290,7 @@ function SigninForm({
         <FormError message={error} />
         <SubmitButton loading={loading}>Sign in</SubmitButton>
         <OrDivider />
-        <GoogleSignInButton onSuccess={onSuccess} />
+        <GoogleSignInButton onSuccess={onAuthenticated} />
 
         <p className="text-center text-[13px] text-body">
           New to MyVilla?{" "}
@@ -286,11 +306,16 @@ function SigninForm({
 function RegisterForm({
   titleId,
   onSwitch,
-  onSuccess,
+  onClose,
+  onAuthenticated,
 }: {
   titleId: string;
   onSwitch: () => void;
-  onSuccess: () => void;
+  /** Dismiss the modal without signing in — used by the links out of it. */
+  onClose: () => void;
+  /** A session now exists. Kept separate from `onClose`: leaving the modal and
+      being signed in are different events, and only one of them navigates. */
+  onAuthenticated: () => void;
 }) {
   const { setUser } = useAuth();
   const uid = useId();
@@ -338,7 +363,7 @@ function RegisterForm({
         country,
       });
       setUser(user);
-      onSuccess();
+      onAuthenticated();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
@@ -456,7 +481,7 @@ function RegisterForm({
           By registering you agree to the{" "}
           <Link
             href="/terms"
-            onClick={onSuccess}
+            onClick={onClose}
             className="font-semibold text-ink underline underline-offset-2 hover:text-primary"
           >
             Terms &amp; Condition
@@ -465,7 +490,7 @@ function RegisterForm({
         </p>
 
         <OrDivider />
-        <GoogleSignInButton onSuccess={onSuccess} />
+        <GoogleSignInButton onSuccess={onAuthenticated} />
 
         <p className="text-center text-[13px] text-body">
           Already have an account?{" "}

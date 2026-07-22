@@ -235,9 +235,21 @@ export type VillaInput = {
   description?: string;
   buildUpArea?: string;
   bedrooms?: number;
-  bathrooms?: number;
   guests?: number;
+  singleBedRooms?: number;
+  doubleBedRooms?: number;
+  /** How many days ahead the villa is open for booking. Default 5. */
+  availabilityDays?: number;
+  /** Nights the host closed on the calendar, "YYYY-MM-DD". */
+  blockedDates?: string[];
   services?: string[];
+  // House rules. Times are "HH:MM" (an <input type="time"> value); "" = unset.
+  checkInTime?: string;
+  checkOutTime?: string;
+  petsAllowed?: boolean;
+  smokingAllowed?: boolean;
+  eventsAllowed?: boolean;
+  additionalRules?: string;
   pricePerNight?: number;
   acceptedPayments?: string[];
   payoutMethod?: string;
@@ -258,9 +270,23 @@ export type Villa = {
   description: string;
   buildUpArea: string;
   bedrooms: number;
-  bathrooms: number;
   guests: number;
+  singleBedRooms: number;
+  doubleBedRooms: number;
+  availabilityDays: number;
+  /** Last date the host's window allows, "YYYY-MM-DD". */
+  bookableUntil: string;
+  /** Nights the host has closed by hand, from today forward. */
+  blockedDates: string[];
   services: string[];
+  checkInTime: string;
+  checkOutTime: string;
+  petsAllowed: boolean;
+  smokingAllowed: boolean;
+  eventsAllowed: boolean;
+  additionalRules: string;
+  // The same rules already worded by the backend, for the detail page.
+  houseRules: string[];
   pricePerNight: number;
   acceptedPayments: string[];
   payoutMethod: string;
@@ -269,13 +295,24 @@ export type Villa = {
   photos: VillaPhoto[];
   coverImage: string;
   createdAt: string;
+  // Whether the villa can take the stay the query asked about. With no dates
+  // in the query the backend still answers for tonight, so a plain name search
+  // can show an honest "Not available" mark.
+  isAvailable: boolean;
+  unavailableReason: string;
+  /** Decided by the server from the caller's token, not by comparing ids. */
+  isOwner: boolean;
 };
 
 const VILLA_SELECTION = `
   id ownerId title propertyType city country address description buildUpArea
-  bedrooms bathrooms guests services pricePerNight
+  bedrooms guests singleBedRooms doubleBedRooms services pricePerNight
+  availabilityDays bookableUntil blockedDates
+  checkInTime checkOutTime petsAllowed smokingAllowed eventsAllowed
+  additionalRules houseRules
   acceptedPayments payoutMethod payoutAccount
-  images photos { id url } coverImage createdAt`;
+  images photos { id url } coverImage createdAt
+  isAvailable unavailableReason isOwner`;
 
 export async function createVilla(input: VillaInput): Promise<Villa> {
   const data = await gql<{ createVilla: Villa }>(
@@ -347,6 +384,10 @@ export type VillaFilters = {
   search?: string;
   category?: string;
   guests?: number;
+  // Nights wanted, "YYYY-MM-DD". They never remove a villa from the results —
+  // they decide which ones come back marked unavailable.
+  checkIn?: string;
+  checkOut?: string;
   minPrice?: number;
   maxPrice?: number;
   limit?: number;
@@ -357,10 +398,12 @@ export async function searchVillas(f: VillaFilters = {}): Promise<Villa[]> {
   const data = await gql<{ villas: Villa[] }>(
     `query SearchVillas(
        $search: String, $category: String, $guests: Int,
+       $checkIn: String, $checkOut: String,
        $minPrice: Float, $maxPrice: Float, $limit: Int!
      ) {
        villas(
          search: $search, category: $category, guests: $guests,
+         checkIn: $checkIn, checkOut: $checkOut,
          minPrice: $minPrice, maxPrice: $maxPrice, limit: $limit
        ) { ${VILLA_SELECTION} }
      }`,
@@ -368,6 +411,8 @@ export async function searchVillas(f: VillaFilters = {}): Promise<Villa[]> {
       search: f.search?.trim() || null,
       category: f.category?.trim() || null,
       guests: f.guests ?? null,
+      checkIn: f.checkIn || null,
+      checkOut: f.checkOut || null,
       minPrice: f.minPrice ?? null,
       maxPrice: f.maxPrice ?? null,
       limit: f.limit ?? 60,
@@ -377,12 +422,75 @@ export async function searchVillas(f: VillaFilters = {}): Promise<Villa[]> {
 }
 
 // Public — a single villa by id (detail page). Returns null if not found.
-export async function fetchVilla(id: string): Promise<Villa | null> {
+// Pass the stay being considered to have `isAvailable` answered for exactly
+// those nights; without it the backend answers for tonight.
+export async function fetchVilla(
+  id: string,
+  stay: { checkIn?: string; checkOut?: string; guests?: number } = {}
+): Promise<Villa | null> {
   const data = await gql<{ villa: Villa | null }>(
-    `query Villa($id: ID!) { villa(id: $id) { ${VILLA_SELECTION} } }`,
-    { id }
+    `query Villa($id: ID!, $checkIn: String, $checkOut: String, $guests: Int) {
+       villa(id: $id, checkIn: $checkIn, checkOut: $checkOut, guests: $guests) {
+         ${VILLA_SELECTION}
+       }
+     }`,
+    {
+      id,
+      checkIn: stay.checkIn || null,
+      checkOut: stay.checkOut || null,
+      guests: stay.guests ?? null,
+    }
   );
   return data.villa;
+}
+
+/* ---- Villa availability (owner view) ---- */
+
+export type BookedRange = {
+  bookingId: string;
+  checkIn: string;
+  checkOut: string;
+  nights: number;
+  guests: number;
+  guestName: string;
+};
+
+export type VillaAvailability = {
+  villaId: string;
+  windowStart: string;
+  windowEnd: string;
+  /** The host's booking window: days ahead, and the last date it allows. */
+  availabilityDays: number;
+  bookableUntil: string;
+  isAvailableNow: boolean;
+  /** The date it frees up when occupied today; "" when it's free. */
+  freeFrom: string;
+  /** Every night already taken inside the window, "YYYY-MM-DD". */
+  bookedDates: string[];
+  /** Nights the host closed by hand — distinct from a guest's booking. */
+  blockedDates: string[];
+  upcoming: BookedRange[];
+  /** Largest party already booked in — capacity can't drop below it. */
+  maxBookedGuests: number;
+};
+
+// Owner-only: it names guests, and the backend refuses anyone else's villa.
+export async function fetchVillaAvailability(
+  villaId: string,
+  days = 120
+): Promise<VillaAvailability> {
+  const data = await gql<{ villaAvailability: VillaAvailability }>(
+    `query VillaAvailability($villaId: ID!, $days: Int!) {
+       villaAvailability(villaId: $villaId, days: $days) {
+         villaId windowStart windowEnd availabilityDays bookableUntil
+         isAvailableNow freeFrom
+         bookedDates blockedDates maxBookedGuests
+         upcoming { bookingId checkIn checkOut nights guests guestName }
+       }
+     }`,
+    { villaId, days }
+  );
+  return data.villaAvailability;
 }
 
 /* ---- Bookings ---- */

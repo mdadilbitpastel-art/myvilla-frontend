@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
+import { useStickyRelease } from "@/lib/useStickyRelease";
 import { useFavorites } from "@/lib/favorites";
 import VillaCard from "@/components/home/VillaCard";
 import { fetchMyFavorites, type Villa } from "@/lib/api";
@@ -24,12 +25,31 @@ function villaToCard(v: Villa): VillaCardData {
   };
 }
 
+// Height of the site header this page's own header sticks below (see Navbar).
+const NAV_HEIGHT = 68;
+
 export default function SavedPage() {
   const { user, ready } = useAuth();
+  // Collapse the heading once it's pinned. A ref callback rather than an
+  // effect: the sentinel only mounts once auth has resolved.
+  const [scrolled, setScrolled] = useState(false);
+  const observer = useRef<IntersectionObserver | null>(null);
+  const sentinel = useCallback((node: HTMLDivElement | null) => {
+    observer.current?.disconnect();
+    if (!node) return;
+    observer.current = new IntersectionObserver(
+      ([entry]) => setScrolled(!entry.isIntersecting),
+      { rootMargin: `-${NAV_HEIGHT}px 0px 0px 0px`, threshold: 0 }
+    );
+    observer.current.observe(node);
+  }, []);
   // Re-render when the saved set changes (e.g. user un-saves from a card here).
   const { ids, ready: favoritesReady } = useFavorites();
   const [villas, setVillas] = useState<Villa[] | null>(null);
   const [failed, setFailed] = useState(false);
+  // The heading lets go once only the last row of cards is left, so they
+  // scroll in the clear instead of sliding under it. `gap-5` = 20px.
+  const { wrapRef, gridRef, style: wrapStyle } = useStickyRelease(villas, 20);
 
   const load = useCallback(() => {
     setFailed(false);
@@ -69,9 +89,32 @@ export default function SavedPage() {
   const gridClass = "mt-8 grid grid-cols-1 gap-5 sm:grid-cols-3 lg:grid-cols-4";
 
   return (
-    <div className="mx-auto w-full max-w-[1200px] px-5 pb-16 pt-10 lg:px-7">
-      <h1 className="text-[26px] font-bold text-ink">Saved Villas</h1>
-      <p className="mt-1 text-[14px] text-muted">Villas you&apos;ve added to your wishlist.</p>
+    <div className="mx-auto w-full max-w-[1200px] px-5 pb-16 lg:px-7">
+      <div ref={wrapRef} className="relative" style={wrapStyle}>
+      {/* Watched by the observer: once it passes under the navbar the header
+          below is pinned, which is when it tightens. */}
+      <div ref={sentinel} aria-hidden className="h-px" />
+      <div
+        className={`sticky top-[68px] z-30 -mx-5 border-b bg-page px-5 transition-all duration-200 lg:-mx-7 lg:px-7 ${
+          scrolled ? "border-line py-2.5" : "border-transparent pb-4 pt-8"
+        }`}
+      >
+        <h1
+          className={`font-bold text-ink transition-all duration-200 ${
+            scrolled ? "text-[19px]" : "text-[26px]"
+          }`}
+        >
+          Saved Villas
+        </h1>
+        {/* Kept in both states — only its size gives way when the bar tightens. */}
+        <p
+          className={`text-muted transition-all duration-200 ${
+            scrolled ? "text-[12px]" : "mt-1 text-[14px]"
+          }`}
+        >
+          Villas you&apos;ve added to your wishlist.
+        </p>
+      </div>
 
       {loading ? (
         /* Placeholders sit in the real grid so nothing shifts when data lands. */
@@ -118,12 +161,13 @@ export default function SavedPage() {
           </Link>
         </div>
       ) : (
-        <div className={gridClass}>
+        <div ref={gridRef} className={gridClass}>
           {shown.map((v) => (
             <VillaCard key={v.id} data={villaToCard(v)} variant="card" />
           ))}
         </div>
       )}
+      </div>
     </div>
   );
 }

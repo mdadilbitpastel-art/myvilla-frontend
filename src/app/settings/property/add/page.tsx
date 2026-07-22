@@ -6,7 +6,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   Check,
   Plus,
-  Minus,
   X,
   Wifi,
   Car,
@@ -19,6 +18,7 @@ import {
   Tv,
   Lightbulb,
   Info,
+  Clock,
   ChevronDown,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
@@ -27,17 +27,19 @@ import {
   createVilla,
   updateVilla,
   fetchMyVillas,
-  loginUser,
-  getRememberedEmail,
   type VillaInput,
 } from "@/lib/api";
 import { fileToResizedDataUrl } from "@/lib/image";
+// Shared with the villa detail page, which splits a villa's saved `services`
+// back into facilities vs extra services off this same list.
+import { EXTRA_SERVICES } from "@/lib/services";
+import VillaAvailabilityPanel from "@/components/settings/VillaAvailability";
 
 // Height of the global navbar the sticky page header parks under.
 const NAV_HEIGHT = 68;
 
 const STEPS = [
-  "Villa Details",
+  "Property Details",
   "Add Images",
   "Pricing",
   "Payment Method",
@@ -63,26 +65,31 @@ const FACILITIES = [
   { label: "TV", Icon: Tv },
 ] as const;
 
-const EXTRA_SERVICES = [
-  "Airport Pickup",
-  "Daily Housekeeping",
-  "Private Chef",
-  "Guided Tours",
-  "Car Rental",
-  "Laundry Service",
-  "Spa & Wellness",
-  "Babysitting",
-];
-
 const PAYMENT_METHODS = ["Mastercard", "Google Pay", "PayPal", "Visa"];
 const ACCOUNT_TYPES = ["Credit Card", "Debit Card"];
 
 // Steps with no mandatory fields (always "complete").
-// Extra services now live inside "Villa Details" as an optional block, so
+// Extra services now live inside "Property Details" as an optional block, so
 // every remaining step is mandatory.
 const OPTIONAL_STEPS = new Set<number>();
 
 const digitsOf = (s: string) => s.replace(/\D/g, "");
+
+// The check-in / check-out times most listings use, pre-filled so a host who
+// keeps the industry-standard hours doesn't have to set anything. They're
+// ordinary values in the form — changing them is one click.
+const DEFAULT_CHECK_IN = "14:00"; // 2:00 pm
+const DEFAULT_CHECK_OUT = "11:00"; // 11:00 am
+
+// How far ahead a new listing is open for booking. The host moves it from the
+// calendar on the edit page; five days is only where it starts.
+const DEFAULT_AVAILABILITY_DAYS = 5;
+
+// One room per bed, and what each bed sleeps. Mirrored by GUESTS_PER_SINGLE /
+// GUESTS_PER_DOUBLE on the Villa model, which recomputes both server-side —
+// these are for showing the host the result as they type, not for trusting.
+const roomsOf = (single: number, double: number) => single + double;
+const capacityOf = (single: number, double: number) => single * 1 + double * 2;
 
 // An image in the wizard is either an already-saved photo (edit mode) or a
 // freshly picked file encoded as a base64 data-URL. `key` is assigned once, on
@@ -105,15 +112,30 @@ const imageSrc = (im: WizardImage) => (im.kind === "existing" ? im.url : im.data
 type FieldIssue = { field: string; message: string };
 
 function villaError(v: VillaForm): FieldIssue | null {
-  if (!v.title.trim()) return { field: "title", message: "Villa name is required." };
+  if (!v.title.trim()) return { field: "title", message: "Property name is required." };
   if (!v.description.trim())
-    return { field: "description", message: "A villa description is required." };
+    return { field: "description", message: "A property description is required." };
   if (!v.buildUpArea.trim())
-    return { field: "buildUpArea", message: "Villa dimensions are required." };
-  if (!v.address.trim()) return { field: "address", message: "Villa address is required." };
-  if (v.bedrooms < 1) return { field: "bedrooms", message: "Number of rooms must be at least 1." };
-  if (v.bathrooms < 1)
-    return { field: "bathrooms", message: "Number of bathrooms must be at least 1." };
+    return { field: "buildUpArea", message: "Property dimensions are required." };
+  if (!v.address.trim()) return { field: "address", message: "Property address is required." };
+  // The bed counts are what the host fills in; the room count and the guest
+  // capacity are read off them (see `roomsOf` / `capacityOf`), so these two are
+  // the only ones that can be missing.
+  if (v.singleBedRooms + v.doubleBedRooms < 1)
+    return {
+      field: "singleBedRooms",
+      message: "Add at least one room — how many have a single bed, and how many a double.",
+    };
+  // Guests plan travel around these two, so a listing can't go up without them.
+  if (!v.checkInTime)
+    return { field: "checkInTime", message: "Set a check-in time." };
+  if (!v.checkOutTime)
+    return { field: "checkOutTime", message: "Set a check-out time." };
+  if (v.availabilityDays < 1)
+    return {
+      field: "availabilityDays",
+      message: "Open your calendar for at least one day.",
+    };
   return null;
 }
 
@@ -167,7 +189,7 @@ function Wizard() {
 
   // Edit mode when the URL carries ?edit=<villaId>. Read through the router
   // hook: `window.location` doesn't exist on the server, so the page would
-  // render "Add your Villa" and then flip to "Edit your Villa" on hydration.
+  // render "Add your Property" and then flip to "Edit your Property" on hydration.
   const searchParams = useSearchParams();
   const editId = searchParams.get("edit");
   const editMode = !!editId;
@@ -212,13 +234,25 @@ function Wizard() {
     address: "",
     description: "",
     bedrooms: 1,
-    bathrooms: 1,
+    guests: 1,
+    singleBedRooms: 0,
+    doubleBedRooms: 0,
+    availabilityDays: DEFAULT_AVAILABILITY_DAYS,
+    checkInTime: DEFAULT_CHECK_IN,
+    checkOutTime: DEFAULT_CHECK_OUT,
+    petsAllowed: false,
+    smokingAllowed: false,
+    eventsAllowed: false,
+    additionalRules: "",
   });
   const [villaTypeOther, setVillaTypeOther] = useState("");
 
   // Step 2–5.
   const [images, setImages] = useState<WizardImage[]>([]);
   const [services, setServices] = useState<string[]>([]);
+  // Nights the host has closed on the calendar. Draft state like every other
+  // field: nothing reaches the server until the listing itself is saved.
+  const [blockedDates, setBlockedDates] = useState<string[]>([]);
   const [price, setPrice] = useState("");
   const [acceptedPayments, setAcceptedPayments] = useState<string[]>([...PAYMENT_METHODS]);
   const [accountType, setAccountType] = useState("");
@@ -245,10 +279,23 @@ function Wizard() {
           address: v.address,
           description: v.description,
           bedrooms: v.bedrooms || 1,
-          bathrooms: v.bathrooms || 1,
+          guests: v.guests || 1,
+          singleBedRooms: v.singleBedRooms || 0,
+          doubleBedRooms: v.doubleBedRooms || 0,
+          availabilityDays: v.availabilityDays || DEFAULT_AVAILABILITY_DAYS,
+          // Villas listed before times existed have none stored; fall back to
+          // the standard hours rather than showing the host an empty required
+          // field they never left blank.
+          checkInTime: v.checkInTime || DEFAULT_CHECK_IN,
+          checkOutTime: v.checkOutTime || DEFAULT_CHECK_OUT,
+          petsAllowed: v.petsAllowed,
+          smokingAllowed: v.smokingAllowed,
+          eventsAllowed: v.eventsAllowed,
+          additionalRules: v.additionalRules || "",
         });
         if (!knownType) setVillaTypeOther(v.propertyType);
         setServices(v.services || []);
+        setBlockedDates(v.blockedDates || []);
         setPrice(v.pricePerNight ? String(v.pricePerNight) : "");
         setAcceptedPayments(
           v.acceptedPayments?.length ? v.acceptedPayments : [...PAYMENT_METHODS]
@@ -290,6 +337,14 @@ function Wizard() {
     paymentError(acceptedPayments, accountType, cardNumber, editMode),
   ];
   const stepComplete = stepIssues.map((e) => e === null);
+  // The next section that still needs something — this one doesn't count.
+  // Whatever is missing *here* is reported in place rather than by sending the
+  // host somewhere else, so the button only steps on when the gap is elsewhere.
+  const otherIncomplete = stepComplete.findIndex((done, i) => !done && i !== step);
+  // As long as some OTHER section is missing something, this button's job is
+  // still to move on to it — whether or not this one is finished yet. It only
+  // becomes the final save when this section is the last thing left.
+  const stepsOn = otherIncomplete !== -1;
 
   function goto(target: number) {
     // Any step is freely clickable — jump around the wizard like tabs.
@@ -298,17 +353,22 @@ function Wizard() {
     setStep(target);
   }
 
-  function advance() {
-    setStep((s) => Math.min(s + 1, STEPS.length - 1));
-    setError("");
-    setInvalidField("");
-  }
+  // A new section always starts at its top — landing halfway down it, at the
+  // scroll position the last one was left at, reads as a broken page.
+  const firstStep = useRef(true);
+  useEffect(() => {
+    if (firstStep.current) {
+      firstStep.current = false;
+      return;
+    }
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [step]);
 
   async function handleNext() {
     setError("");
     setInvalidField("");
 
-    // Block leaving the current section until its mandatory fields are filled.
+    // Whatever is missing here is said here, on the field that's missing it.
     const issue = stepIssues[step];
     if (issue) {
       setError(issue.message);
@@ -316,20 +376,17 @@ function Wizard() {
       return;
     }
 
-    if (step < STEPS.length - 1) {
-      advance();
-      return;
-    }
-
-    // Final step — only publish when EVERY section is complete.
-    const firstIncomplete = stepComplete.findIndex((c) => !c);
-    if (firstIncomplete !== -1) {
-      const blocking = stepIssues[firstIncomplete]!;
-      setStep(firstIncomplete);
-      setError(`"${STEPS[firstIncomplete]}" is incomplete — ${blocking.message}`);
+    // This section is done. If another isn't, go there — in order, whether it
+    // is ahead of here or behind.
+    if (otherIncomplete !== -1) {
+      const blocking = stepIssues[otherIncomplete]!;
+      setStep(otherIncomplete);
+      setError(`"${STEPS[otherIncomplete]}" is incomplete — ${blocking.message}`);
       setInvalidField(blocking.field);
       return;
     }
+
+    // Everything is filled in, from wherever the host happens to be standing.
     await publish();
   }
 
@@ -355,9 +412,19 @@ function Wizard() {
         address: villa.address,
         description: villa.description,
         buildUpArea: villa.buildUpArea,
-        bedrooms: villa.bedrooms,
-        bathrooms: villa.bathrooms,
+        bedrooms: roomsOf(villa.singleBedRooms, villa.doubleBedRooms),
+        guests: capacityOf(villa.singleBedRooms, villa.doubleBedRooms),
+        singleBedRooms: villa.singleBedRooms,
+        doubleBedRooms: villa.doubleBedRooms,
+        availabilityDays: villa.availabilityDays,
         services,
+        blockedDates,
+        checkInTime: villa.checkInTime,
+        checkOutTime: villa.checkOutTime,
+        petsAllowed: villa.petsAllowed,
+        smokingAllowed: villa.smokingAllowed,
+        eventsAllowed: villa.eventsAllowed,
+        additionalRules: villa.additionalRules,
         pricePerNight: Number(price) || 0,
         acceptedPayments,
         payoutMethod: accountType,
@@ -379,12 +446,10 @@ function Wizard() {
     }
   }
 
-  const isLast = step === STEPS.length - 1;
-
   if (loadingVilla) return <WizardSkeleton />;
 
   // Terminal: an edit link whose villa never arrived must not quietly turn into
-  // a blank "Add your Villa" form.
+  // a blank "Add your Property" form.
   if (loadFailed) {
     return (
       <div className="mx-auto flex min-h-[60vh] w-full max-w-[1120px] flex-col items-center justify-center px-5 text-center">
@@ -420,22 +485,26 @@ function Wizard() {
       <div ref={headerSentinel} aria-hidden className="h-px" />
 
       {/* Sticky page header — breadcrumb + title + Back. Bleeds to the viewport
-          edges (-mx / px) so the blurred backdrop covers the full width while
-          the content stays on the page's grid. */}
+          edges (-mx / px) so its background covers the full width while the
+          content stays on the page's grid. */}
       <div
-        className={`sticky top-[68px] z-30 -mx-5 border-b bg-page/90 px-5 backdrop-blur transition-all duration-200 lg:-mx-7 lg:px-7 ${
+        // Fully opaque: a translucent header let the form scroll through it,
+        // and the blur was never enough to keep the heading readable over it.
+        className={`sticky top-[68px] z-30 -mx-5 border-b bg-page px-5 transition-all duration-200 lg:-mx-7 lg:px-7 ${
           scrolled ? "border-line py-3" : "border-transparent pb-5 pt-8"
         }`}
       >
       {/* Breadcrumb */}
       <nav aria-label="Breadcrumb" className="text-[13px] text-body">
+        {/* No "Settings" step: this area is "Manage Account" now, and the
+            layout's own breadcrumb already names it. */}
         <Link href="/" className="underline underline-offset-2 hover:text-primary">Home</Link>
         <span className="mx-1.5 text-muted">/</span>
-        <Link href="/settings" className="underline underline-offset-2 hover:text-primary">Settings</Link>
+        <Link href="/settings" className="underline underline-offset-2 hover:text-primary">Manage Account</Link>
         <span className="mx-1.5 text-muted">/</span>
-        <Link href="/settings/property" className="underline underline-offset-2 hover:text-primary">My Properties</Link>
+        <Link href="/settings/property" className="underline underline-offset-2 hover:text-primary">My Property</Link>
         <span className="mx-1.5 text-muted">/</span>
-        <span className="text-muted">{editMode ? "Edit your Villa" : "Add your Villa"}</span>
+        <span className="text-muted">{editMode ? "Edit your Property" : "Add your Property"}</span>
       </nav>
 
       {/* Title + Back */}
@@ -449,7 +518,7 @@ function Wizard() {
             scrolled ? "text-[20px]" : "text-[30px]"
           }`}
         >
-          {editMode ? "Edit your Villa" : "Add your Villa"}
+          {editMode ? "Edit your Property" : "Add your Property"}
         </h1>
         <Link
           href="/settings/property"
@@ -475,6 +544,15 @@ function Wizard() {
               services={services}
               setServices={setServices}
               invalidField={invalidField}
+              editVillaId={editId}
+              blockedDates={blockedDates}
+              onToggleBlocked={(date) =>
+                setBlockedDates((prev) =>
+                  prev.includes(date)
+                    ? prev.filter((d) => d !== date)
+                    : [...prev, date].sort()
+                )
+              }
             />
           )}
           {step === 1 && (
@@ -505,8 +583,9 @@ function Wizard() {
             </p>
           )}
 
-          {/* Primary action (matches each mock: right-aligned, left for the final step) */}
-          <div className={`mt-7 flex ${isLast ? "justify-start" : "justify-end"}`}>
+          {/* Primary action — right-aligned while it still steps forward, left
+              once it has become the final save. */}
+          <div className={`mt-7 flex ${stepsOn ? "justify-end" : "justify-start"}`}>
             <button
               type="button"
               onClick={handleNext}
@@ -515,13 +594,13 @@ function Wizard() {
             >
               {busy
                 ? "Please wait…"
-                : isLast
+                : stepsOn
                   ? editMode
-                    ? "Update Villa"
-                    : "Host your Villa"
-                  : editMode
                     ? "Update & Next"
-                    : "Save and Next"}
+                    : "Save and Next"
+                  : editMode
+                    ? "Update Property"
+                    : "Host your Property"}
             </button>
           </div>
         </div>
@@ -626,7 +705,7 @@ function Stepper({
 }
 
 /* ================================================================== */
-/* Step 1 — Villa Details (Screenshot_1 + _2)                         */
+/* Step 1 — Property Details (Screenshot_1 + _2)                      */
 /* ================================================================== */
 
 type VillaForm = {
@@ -636,7 +715,16 @@ type VillaForm = {
   address: string;
   description: string;
   bedrooms: number;
-  bathrooms: number;
+  guests: number;
+  singleBedRooms: number;
+  doubleBedRooms: number;
+  availabilityDays: number;
+  checkInTime: string;
+  checkOutTime: string;
+  petsAllowed: boolean;
+  smokingAllowed: boolean;
+  eventsAllowed: boolean;
+  additionalRules: string;
 };
 
 function VillaDetailsStep({
@@ -647,14 +735,21 @@ function VillaDetailsStep({
   services,
   setServices,
   invalidField,
+  editVillaId,
+  blockedDates,
+  onToggleBlocked,
 }: {
   values: VillaForm;
-  onChange: (k: keyof VillaForm, v: string | number) => void;
+  onChange: (k: keyof VillaForm, v: string | number | boolean) => void;
   villaTypeOther: string;
   setVillaTypeOther: (v: string) => void;
   services: string[];
   setServices: React.Dispatch<React.SetStateAction<string[]>>;
   invalidField: string;
+  /** Set when editing an existing villa — unlocks its live calendar. */
+  editVillaId?: string | null;
+  blockedDates: string[];
+  onToggleBlocked: (date: string) => void;
 }) {
   const uid = useId();
   // `null` = the "Add More" button is showing; a string = the inline input is.
@@ -695,7 +790,7 @@ function VillaDetailsStep({
   return (
     <div>
       {/* Villa type */}
-      <h2 className="text-[16px] font-bold text-ink">What kind of a villa are you hosting?</h2>
+      <h2 className="text-[16px] font-bold text-ink">What kind of a property are you hosting?</h2>
       <div className="mt-4 flex flex-wrap gap-3">
         {VILLA_TYPES.map((t) => {
           const on = values.propertyType === t;
@@ -728,9 +823,9 @@ function VillaDetailsStep({
       {/* Details */}
       <h3 className="mt-7 text-[16px] font-bold text-ink">Details</h3>
       <div className="mt-4 space-y-4">
-        <LabeledInput label="Name of your Villa" required placeholder="Complete Name" value={values.title} onChange={(v) => onChange("title", v)} invalid={invalidField === "title"} />
+        <LabeledInput label="Name of your Property" required placeholder="Complete Name" value={values.title} onChange={(v) => onChange("title", v)} invalid={invalidField === "title"} />
         <div>
-          <FieldLabel htmlFor={`${uid}-description`} required>Describe your Villa (Max 150 words)</FieldLabel>
+          <FieldLabel htmlFor={`${uid}-description`} required>Describe your Property (Max 150 words)</FieldLabel>
           <textarea
             id={`${uid}-description`}
             value={values.description}
@@ -744,8 +839,44 @@ function VillaDetailsStep({
         </div>
         <LabeledInput label="Villa Dimensions" required placeholder="Total Build up Area (in Square Yards)" value={values.buildUpArea} onChange={(v) => onChange("buildUpArea", v)} invalid={invalidField === "buildUpArea"} />
         <LabeledInput label="Villa Address" required placeholder="Registered Address of Villa" value={values.address} onChange={(v) => onChange("address", v)} invalid={invalidField === "address"} />
-        <NumberInput label="Number of Rooms" required value={values.bedrooms} onChange={(n) => onChange("bedrooms", n)} invalid={invalidField === "bedrooms"} />
-        <NumberInput label="Number of Bathrooms" required value={values.bathrooms} onChange={(n) => onChange("bathrooms", n)} invalid={invalidField === "bathrooms"} />
+        {/* Rooms. The host counts the beds; the room total and the guest
+            capacity follow from them, so the two can never disagree — which is
+            why the derived pair is shown as a result, not as an input. */}
+        <div>
+          <FieldLabel required>Rooms and Beds</FieldLabel>
+          <p className="mb-2 text-[12px] text-muted">
+            One room per bed. A single bed sleeps 1 guest, a double sleeps 2.
+          </p>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <NumberInput label="Rooms with a single bed" value={values.singleBedRooms} onChange={(n) => onChange("singleBedRooms", n)} invalid={invalidField === "singleBedRooms"} />
+            <NumberInput label="Rooms with a double bed" value={values.doubleBedRooms} onChange={(n) => onChange("doubleBedRooms", n)} invalid={invalidField === "doubleBedRooms"} />
+          </div>
+
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            <DerivedValue
+              label="Number of Rooms"
+              value={roomsOf(values.singleBedRooms, values.doubleBedRooms)}
+            />
+            <DerivedValue
+              label="Guest Capacity"
+              value={capacityOf(values.singleBedRooms, values.doubleBedRooms)}
+            />
+          </div>
+
+          {/* The same calendar whether the villa exists yet or not. On a new
+              listing it simply has no bookings to show — the host still sets
+              the window and closes dates before publishing. */}
+          <div className="mt-4">
+            <VillaAvailabilityPanel
+              villaId={editVillaId}
+              plannedCapacity={capacityOf(values.singleBedRooms, values.doubleBedRooms)}
+              days={values.availabilityDays}
+              onDaysChange={(n) => onChange("availabilityDays", n)}
+              blockedDates={blockedDates}
+              onToggleBlocked={onToggleBlocked}
+            />
+          </div>
+        </div>
 
         {/* Facilities */}
         <div>
@@ -841,6 +972,66 @@ function VillaDetailsStep({
                 </button>
               );
             })}
+          </div>
+        </div>
+
+        {/* House Rules — whatever the host sets here is exactly what the villa
+            detail page shows a guest. Nothing is assumed on their behalf. */}
+        <div>
+          <FieldLabel>House Rules</FieldLabel>
+          <p className="mb-3 text-[12px] text-muted">
+            Guests see these on your listing, worded as you set them.
+          </p>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <TimeInput
+              label="Check-in time"
+              required
+              value={values.checkInTime}
+              onChange={(v) => onChange("checkInTime", v)}
+              invalid={invalidField === "checkInTime"}
+              hint="Guests can arrive from this time."
+            />
+            <TimeInput
+              label="Check-out time"
+              required
+              value={values.checkOutTime}
+              onChange={(v) => onChange("checkOutTime", v)}
+              invalid={invalidField === "checkOutTime"}
+              hint="Guests must leave by this time."
+            />
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <RuleToggle
+              label="Pets allowed"
+              checked={values.petsAllowed}
+              onChange={(b) => onChange("petsAllowed", b)}
+            />
+            <RuleToggle
+              label="Smoking allowed"
+              checked={values.smokingAllowed}
+              onChange={(b) => onChange("smokingAllowed", b)}
+            />
+            <RuleToggle
+              label="Events / parties allowed"
+              checked={values.eventsAllowed}
+              onChange={(b) => onChange("eventsAllowed", b)}
+            />
+          </div>
+
+          <div className="mt-4">
+            <FieldLabel>
+              Additional Rules{" "}
+              <span className="font-normal text-muted">(Optional)</span>
+            </FieldLabel>
+            <textarea
+              rows={4}
+              value={values.additionalRules}
+              onChange={(e) => onChange("additionalRules", e.target.value)}
+              placeholder="Anything else guests should know — kitchen use, quiet hours, and so on."
+              className="w-full rounded-md border border-line px-3.5 py-2.5 text-[14px] text-ink placeholder:text-muted focus:border-primary focus:outline-none"
+            />
           </div>
         </div>
 
@@ -961,9 +1152,6 @@ function PricingStep({
   setPrice: (s: string) => void;
   invalidField: string;
 }) {
-  const n = Number(price) || 0;
-  const bump = (delta: number) => setPrice(String(Math.max(0, n + delta)));
-
   return (
     <div>
       <h2 className="text-[16px] font-bold text-ink">Set your price according to your place.</h2>
@@ -972,35 +1160,20 @@ function PricingStep({
         <div>
           <div className="flex flex-wrap items-center gap-3 text-[14px] text-body">
             <span>You are offering</span>
-            <button
-              type="button"
-              onClick={() => bump(5)}
-              className="flex h-7 w-7 items-center justify-center rounded-md text-primary transition-colors hover:bg-primary/10"
-              aria-label="Increase price"
-            >
-              <Plus size={18} />
-            </button>
+            {/* Typed, not stepped: the +/- pair only got in the way of the one
+                thing a host actually does here, which is type a price. */}
             <div className="flex items-center rounded-md border border-primary px-3 py-1.5">
               <span className="mr-0.5 text-[15px] font-semibold text-ink">$</span>
               <input
-                type="number"
-                min={0}
+                inputMode="numeric"
                 value={price}
-                onChange={(e) => setPrice(e.target.value)}
+                onChange={(e) => setPrice(e.target.value.replace(/\D/g, "").slice(0, 6))}
                 placeholder="135"
                 aria-label="Price per night in US dollars"
                 aria-invalid={invalidField === "price" || undefined}
                 className="w-16 bg-transparent text-[15px] font-semibold text-ink placeholder:font-normal placeholder:text-muted focus:outline-none"
               />
             </div>
-            <button
-              type="button"
-              onClick={() => bump(-5)}
-              className="flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-line/60"
-              aria-label="Decrease price"
-            >
-              <Minus size={18} />
-            </button>
             <span>per night for your villa!</span>
           </div>
 
@@ -1204,27 +1377,167 @@ function NumberInput({
   onChange,
   required,
   invalid,
+  hint,
 }: {
   label: string;
   value: number;
   onChange: (n: number) => void;
   required?: boolean;
   invalid?: boolean;
+  hint?: string;
 }) {
   const id = useId();
+  // While the field has focus the typed text is kept as-is, so backspacing the
+  // last digit leaves an empty box instead of a "0" that can't be deleted. The
+  // form still reads a number the whole time; on blur the box shows it again.
+  const [draft, setDraft] = useState<string | null>(null);
+  const shown = draft ?? (value ? String(value) : "");
   return (
     <div>
       <FieldLabel htmlFor={id} required={required}>{label}</FieldLabel>
+      {/* Plain text with a numeric keypad rather than `type="number"`: the
+          spinner, the scroll-wheel edits and the "e"/"+"/"-" it accepts are
+          all things this field never wanted. */}
       <input
         id={id}
-        type="number"
-        min={0}
-        value={value}
-        onChange={(e) => onChange(Math.max(0, Number(e.target.value)))}
+        inputMode="numeric"
+        value={shown}
+        onChange={(e) => {
+          const digits = e.target.value.replace(/\D/g, "").slice(0, 4);
+          setDraft(digits);
+          onChange(Number(digits) || 0);
+        }}
+        onBlur={() => setDraft(null)}
+        placeholder="0"
         aria-invalid={invalid || undefined}
-        className="w-full rounded-md border border-line px-3.5 py-2.5 text-[14px] text-ink focus:border-primary focus:outline-none"
+        className="w-full rounded-md border border-line px-3.5 py-2.5 text-[14px] text-ink placeholder:text-muted focus:border-primary focus:outline-none"
       />
+      {hint && <p className="mt-1.5 text-[12px] text-muted">{hint}</p>}
     </div>
+  );
+}
+
+/* A value the host doesn't type — it's computed from what they did type.
+   Shown, not editable, so there's one place the number can come from. */
+function DerivedValue({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-md border border-dashed border-line bg-page px-3.5 py-2.5">
+      <p className="text-[12px] text-muted">{label}</p>
+      <p className="mt-0.5 text-[15px] font-semibold text-ink">
+        {value}
+        <span className="ml-1 text-[12px] font-normal text-muted">auto</span>
+      </p>
+    </div>
+  );
+}
+
+/* "14:00" -> "2:00 pm" — how the villa page words the same time back to a
+   guest, so the host sees exactly what they're publishing. */
+function prettyTime(value: string): string {
+  const [h, m] = value.split(":").map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return "";
+  const suffix = h < 12 ? "am" : "pm";
+  const hour = h % 12 === 0 ? 12 : h % 12;
+  return `${hour}:${String(m).padStart(2, "0")} ${suffix}`;
+}
+
+/* Same idea as the search page's DateField: the native <input type="time">
+   stays — keyboard, clock picker and all — but it's laid transparently over a
+   field that shows the time the way a guest will read it, and a click anywhere
+   in the field opens the picker instead of only the little clock icon. */
+function TimeInput({
+  label,
+  value,
+  onChange,
+  required,
+  invalid,
+  hint,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  required?: boolean;
+  invalid?: boolean;
+  hint?: string;
+}) {
+  const id = useId();
+  const ref = useRef<HTMLInputElement>(null);
+
+  function openPicker() {
+    const el = ref.current as (HTMLInputElement & { showPicker?: () => void }) | null;
+    try {
+      el?.showPicker?.();
+    } catch {
+      // Refused without a gesture, or unsupported — typing still works.
+    }
+  }
+
+  return (
+    <div>
+      <FieldLabel htmlFor={id} required={required}>{label}</FieldLabel>
+      <div
+        onClick={openPicker}
+        aria-invalid={invalid || undefined}
+        className={`group relative flex cursor-pointer items-center gap-2.5 rounded-md border px-3.5 py-2.5 transition-colors focus-within:border-primary ${
+          invalid ? "border-red-400" : "border-line hover:border-primary/40"
+        }`}
+      >
+        <Clock size={17} className="shrink-0 text-primary" aria-hidden />
+        <span
+          className={`text-[14px] ${
+            value ? "font-medium text-ink" : "text-muted"
+          }`}
+        >
+          {value ? prettyTime(value) : "Select a time"}
+        </span>
+        <input
+          ref={ref}
+          id={id}
+          type="time"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+        />
+      </div>
+      {hint && <p className="mt-1.5 text-[12px] text-muted">{hint}</p>}
+    </div>
+  );
+}
+
+/* A house rule is a yes/no answer, and "no" is as much an answer as "yes" —
+   so this reads as a stated position either way, not an unticked box. */
+function RuleToggle({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (b: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className={`flex items-center justify-between gap-3 rounded-lg border px-3.5 py-2.5 text-left text-[13px] transition-colors ${
+        checked ? "border-primary bg-primary/[0.06] text-primary" : "border-line text-ink"
+      }`}
+    >
+      <span>{label}</span>
+      <span
+        className={`flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors ${
+          checked ? "bg-primary" : "bg-line"
+        }`}
+      >
+        <span
+          className={`h-4 w-4 rounded-full bg-white transition-transform ${
+            checked ? "translate-x-4" : ""
+          }`}
+        />
+      </span>
+    </button>
   );
 }
 
@@ -1264,92 +1577,24 @@ function WizardSkeleton() {
 }
 
 /* ================================================================== */
-/* Not-signed-in gate (Screenshot_11)                                 */
+/* Not-signed-in gate                                                 */
 /* ================================================================== */
 
+/**
+ * Not signed in. There is exactly one way into an account in this app — the
+ * popup — so this doesn't render a sign-in screen of its own; it sends the
+ * visitor home and opens the popup there, the same place logging out lands.
+ */
 function SignInGate() {
-  const { setUser } = useAuth();
-  const uid = useId();
-  const [email, setEmail] = useState(getRememberedEmail());
-  const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const router = useRouter();
+  const { openAuth } = useAuth();
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setError("");
-    if (!email.trim() || !password) {
-      setError("Email and password are required.");
-      return;
-    }
-    setLoading(true);
-    try {
-      const { user } = await loginUser(email.trim(), password, true);
-      setUser(user);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
-    } finally {
-      setLoading(false);
-    }
-  }
+  useEffect(() => {
+    router.replace("/");
+    openAuth("signin");
+    // Once, on arrival — re-running would re-open a popup the user dismissed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  return (
-    <div className="mx-auto w-full max-w-[1120px] px-5 py-12 lg:px-7">
-      <div className="mx-auto w-full max-w-[820px] rounded-2xl bg-white px-6 py-16 sm:px-10">
-        <div className="mx-auto w-full max-w-[340px]">
-          <h1 className="text-center text-[22px] font-bold text-ink">
-            To add your villa you must be signed in first.
-          </h1>
-          <p className="mt-1.5 text-center text-[14px] text-body">
-            Login to your account to start hosting right now!
-          </p>
-
-          <form onSubmit={submit} noValidate className="mt-8 space-y-4">
-            <div>
-              <label htmlFor={`${uid}-email`} className="mb-1.5 block text-[14px] font-semibold text-ink">Email</label>
-              <input
-                id={`${uid}-email`}
-                type="email"
-                autoComplete="email"
-                value={email}
-                onChange={(e) => { setEmail(e.target.value); setError(""); }}
-                placeholder="someone@example.com"
-                className="w-full rounded-lg border border-line bg-white px-3.5 py-2.5 text-[14px] text-ink placeholder:text-muted focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/15"
-              />
-            </div>
-            <div>
-              <label htmlFor={`${uid}-password`} className="mb-1.5 block text-[14px] font-semibold text-ink">Password</label>
-              <input
-                id={`${uid}-password`}
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => { setPassword(e.target.value); setError(""); }}
-                className="w-full rounded-lg border border-line bg-white px-3.5 py-2.5 text-[14px] text-ink placeholder:text-muted focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/15"
-              />
-            </div>
-
-            {error && (
-              <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-[13px] text-red-600">{error}</p>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full rounded-lg bg-primary py-3 text-[14px] font-semibold text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              {loading ? "Please wait…" : "Sign in"}
-            </button>
-
-            <p className="text-center text-[13px] text-body">
-              Don&apos;t have an Account?{" "}
-              <Link href="/?auth=register" className="text-primary underline underline-offset-2">
-                Sign up
-              </Link>
-            </p>
-          </form>
-        </div>
-      </div>
-    </div>
-  );
+  return <div className="min-h-[60vh]" />;
 }

@@ -8,6 +8,7 @@ import { useLiveRefresh } from "@/lib/useLiveRefresh";
 import { useToast } from "@/lib/toast";
 import { useConfirm } from "@/lib/confirm";
 import SettingsSidebar from "@/components/settings/SettingsSidebar";
+import CountPill from "@/components/ui/CountPill";
 import { fetchMyBookings, cancelBooking, type Booking } from "@/lib/api";
 
 const COLUMNS = [
@@ -238,8 +239,8 @@ export default function MyBookingsPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-10 lg:px-7">
-      <div className="grid grid-cols-1 gap-10 lg:grid-cols-[190px_1fr]">
+    <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-9 lg:px-7">
+      <div className="grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
         {/* Left sidebar */}
         <aside>
           <SettingsSidebar />
@@ -259,11 +260,11 @@ export default function MyBookingsPage() {
 
           {/* Active bookings header */}
           <div className="flex items-center justify-between">
-            <h2 className="text-[16px] font-bold text-ink">
-              <span className="text-primary">
-                {String(active.length).padStart(2, "0")}
-              </span>{" "}
+            {/* Label first, count as a pill after it — "00 Active Bookings"
+                read as a zero-padded code rather than as a total. */}
+            <h2 className="flex items-center gap-2 text-[16px] font-bold text-ink">
               Active Bookings
+              <CountPill value={active.length} />
             </h2>
             <SortDropdown sort={activeSort} onToggle={toggleActiveSort} />
           </div>
@@ -294,7 +295,10 @@ export default function MyBookingsPage() {
 
           {/* Booking history header */}
           <div className="mt-9 flex items-center justify-between">
-            <h2 className="text-[16px] font-bold text-ink">Booking History</h2>
+            <h2 className="flex items-center gap-2 text-[16px] font-bold text-ink">
+              Booking History
+              <CountPill value={history.length} />
+            </h2>
             <SortDropdown sort={historySort} onToggle={toggleHistorySort} />
           </div>
 

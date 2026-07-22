@@ -11,6 +11,7 @@ import {
   Waves,
   Bath,
   Flame,
+  CircleCheck,
   ChevronDown,
 } from "lucide-react";
 import type { Facility } from "@/lib/villa";
@@ -25,19 +26,22 @@ const ICONS = {
   pool: Waves,
   jacuzzi: Bath,
   bbq: Flame,
+  // Anything the host typed in themselves via "Add More".
+  other: CircleCheck,
 } as const;
 
-// Extra facilities revealed by "See all facilities"
-const EXTRA: Facility[] = [
-  { label: "Kitchen", icon: "tv" },
-  { label: "Free parking", icon: "parking" },
-  { label: "Heating", icon: "ac" },
-  { label: "Washer", icon: "wifi" },
-];
+// How many are shown before "See all facilities" is offered.
+const PREVIEW = 6;
 
 export default function Facilities({ facilities }: { facilities: Facility[] }) {
   const [showAll, setShowAll] = useState(false);
-  const list = showAll ? [...facilities, ...EXTRA] : facilities;
+
+  // Only ever the facilities this host actually selected — nothing is padded
+  // in, so the page can't promise a guest something the villa doesn't have.
+  if (!facilities.length) return null;
+
+  const hasMore = facilities.length > PREVIEW;
+  const list = showAll || !hasMore ? facilities : facilities.slice(0, PREVIEW);
 
   return (
     <section className="border-b border-line py-6">
@@ -45,7 +49,7 @@ export default function Facilities({ facilities }: { facilities: Facility[] }) {
 
       <div className="grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-2">
         {list.map((f, i) => {
-          const Icon = ICONS[f.icon];
+          const Icon = ICONS[f.icon] ?? CircleCheck;
           return (
             <div key={`${f.label}-${i}`} className="flex items-center gap-4">
               <Icon size={26} aria-hidden className="shrink-0 text-primary" strokeWidth={1.6} />
@@ -55,18 +59,20 @@ export default function Facilities({ facilities }: { facilities: Facility[] }) {
         })}
       </div>
 
-      <button
-        type="button"
-        aria-expanded={showAll}
-        onClick={() => setShowAll((v) => !v)}
-        className="mt-6 flex items-center gap-2 text-[15px] font-semibold text-ink transition-colors hover:text-primary"
-      >
-        {showAll ? "Show less" : "See all facilities"}
-        <ChevronDown
-          size={18}
-          className={`text-primary transition-transform ${showAll ? "rotate-180" : ""}`}
-        />
-      </button>
+      {hasMore && (
+        <button
+          type="button"
+          aria-expanded={showAll}
+          onClick={() => setShowAll((v) => !v)}
+          className="mt-6 flex items-center gap-2 text-[15px] font-semibold text-ink transition-colors hover:text-primary"
+        >
+          {showAll ? "Show less" : `See all ${facilities.length} facilities`}
+          <ChevronDown
+            size={18}
+            className={`text-primary transition-transform ${showAll ? "rotate-180" : ""}`}
+          />
+        </button>
+      )}
     </section>
   );
 }
