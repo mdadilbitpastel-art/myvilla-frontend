@@ -887,6 +887,7 @@ function VillaDetailsStep({
               onDaysChange={(n) => onChange("availabilityDays", n)}
               blockedDates={blockedDates}
               onToggleBlocked={onToggleBlocked}
+              checkInTime={values.checkInTime}
             />
           </div>
         </div>

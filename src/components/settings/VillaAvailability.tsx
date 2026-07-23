@@ -37,6 +37,18 @@ function prettyDate(value: string): string {
   });
 }
 
+/**
+ * `freeFrom` is a check-out date, and a check-out day isn't a night of the stay
+ * — the villa is free that morning. The last night actually taken is the day
+ * before: a stay of the 24th, checking out on the 25th, is booked until the
+ * 24th.
+ */
+function lastBookedNight(freeFrom: string): string {
+  const [y, m, d] = freeFrom.split("-").map(Number);
+  if (!y) return freeFrom;
+  return iso(new Date(y, m - 1, d - 1));
+}
+
 /** Whole days from today to `value` — what the window is measured in. */
 function daysFromToday(value: string): number {
   const [y, m, d] = value.split("-").map(Number);
@@ -84,6 +96,7 @@ export default function VillaAvailabilityPanel({
   onDaysChange,
   blockedDates,
   onToggleBlocked,
+  checkInTime = "",
 }: {
   /** Omitted while the villa is being created — there's nothing to fetch. */
   villaId?: string | null;
@@ -92,6 +105,8 @@ export default function VillaAvailabilityPanel({
   onDaysChange: (days: number) => void;
   blockedDates: string[];
   onToggleBlocked: (date: string) => void;
+  /** The villa's check-in time, "HH:MM" — once it passes, tonight is gone. */
+  checkInTime?: string;
 }) {
   const [data, setData] = useState<VillaAvailability | null>(null);
   const [error, setError] = useState("");
@@ -142,6 +157,18 @@ export default function VillaAvailabilityPanel({
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const todayIso = iso(today);
 
+  // Once the villa's check-in time has gone by, nobody can still arrive today —
+  // so tonight is as unreachable as yesterday, and the calendar says so rather
+  // than offering the host a date no guest could take. The same cutoff the
+  // guest's reservation card uses, kept on the same side of the clock.
+  const [h, m] = checkInTime.split(":");
+  const checkInPassed =
+    !!checkInTime && today.getHours() * 60 + today.getMinutes() >= Number(h) * 60 + Number(m);
+  // First date still open to a guest — every date before it is drawn as past.
+  const firstOpenIso = checkInPassed
+    ? iso(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1))
+    : todayIso;
+
   if (error) {
     return (
       <div className="rounded-xl border border-line bg-white p-4 text-[13px] text-muted">
@@ -181,7 +208,7 @@ export default function VillaAvailabilityPanel({
         >
           {data.isAvailableNow
             ? "Free right now"
-            : `Booked until ${prettyDate(data.freeFrom)}`}
+            : `Booked until ${prettyDate(lastBookedNight(data.freeFrom))}`}
         </span>
       </div>
 
@@ -274,7 +301,10 @@ export default function VillaAvailabilityPanel({
           const day = i + 1;
           const date = iso(new Date(year, month, day));
           const isBooked = booked.has(date);
-          const isPast = date < todayIso;
+          const isPast = date < firstOpenIso;
+          // Today, but already out of reach — worth saying why, since the date
+          // is not in the past and the host may have just closed it themselves.
+          const missedToday = isPast && date === todayIso;
           const isToday = date === todayIso;
           const isBlocked = blocked.has(date);
           const inWindow = !isPast && date <= windowEndIso;
@@ -297,15 +327,17 @@ export default function VillaAvailabilityPanel({
               disabled={isPast || isBooked}
               onClick={() => onToggleBlocked(date)}
               title={
-                isPast
-                  ? prettyDate(date)
-                  : isBooked
-                    ? `${prettyDate(date)} — booked by a guest`
-                    : isBlocked
-                      ? `${prettyDate(date)} — closed by you. Tap to re-open.`
-                      : inWindow
-                        ? `Close ${prettyDate(date)} to guests`
-                        : `Close ${prettyDate(date)} now — it's beyond your window, but the block will hold`
+                missedToday
+                  ? `${prettyDate(date)} — check-in time (${checkInTime}) has passed, so tonight can no longer be booked`
+                  : isPast
+                    ? prettyDate(date)
+                    : isBooked
+                      ? `${prettyDate(date)} — booked by a guest`
+                      : isBlocked
+                        ? `${prettyDate(date)} — closed by you. Tap to re-open.`
+                        : inWindow
+                          ? `Close ${prettyDate(date)} to guests`
+                          : `Close ${prettyDate(date)} now — it's beyond your window, but the block will hold`
               }
               className={`flex h-8 items-center justify-center rounded-md text-[12px] transition-colors disabled:cursor-default ${tone} ${
                 isToday ? "ring-1 ring-primary" : ""
