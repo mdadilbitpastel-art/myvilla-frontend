@@ -355,7 +355,7 @@ function BookVillaContent() {
         </Link>
       </div>
 
-      <div className="mt-8 grid grid-cols-1 gap-10 lg:grid-cols-[1fr_380px]">
+      <div className="mt-5 grid grid-cols-1 gap-10 lg:grid-cols-[1fr_380px]">
         {/* ---------- Left: payment form ---------- */}
         <div>
           {/* Trip details */}
@@ -374,7 +374,7 @@ function BookVillaContent() {
           {/* Pay using */}
           <div className="mt-8 flex items-center justify-between">
             <h2 className="text-[19px] font-semibold text-ink">Pay using</h2>
-            <CardBrands />
+            <CardBrands accepted={v.acceptedPayments} />
           </div>
 
           {/* Card type select */}
@@ -767,7 +767,7 @@ function BookSkeleton() {
     <div className="mx-auto max-w-[1120px] px-5 pb-20 pt-6">
       <div className="skeleton h-4 w-64" />
       <div className="skeleton mt-6 h-7 w-56" />
-      <div className="mt-8 grid grid-cols-1 gap-10 lg:grid-cols-[1fr_380px]">
+      <div className="mt-5 grid grid-cols-1 gap-10 lg:grid-cols-[1fr_380px]">
         <div>
           <div className="skeleton h-4 w-40" />
           <div className="skeleton mt-4 h-12 w-full" />
@@ -802,30 +802,51 @@ function BookSkeleton() {
 }
 
 /* Self-contained card-brand marks (lucide dropped brand icons). */
-function CardBrands() {
+const CARD_BRANDS: Record<string, React.ReactNode> = {
+  Mastercard: (
+    <span className="relative inline-flex h-5 w-8 items-center">
+      <span className="absolute left-0 h-5 w-5 rounded-full bg-[#eb001b]" />
+      <span className="absolute left-3 h-5 w-5 rounded-full bg-[#f79e1b] opacity-90 mix-blend-multiply" />
+    </span>
+  ),
+  "Google Pay": (
+    <span className="text-[13px] font-semibold">
+      <span className="text-[#4285f4]">G</span>
+      <span className="text-[#ea4335]">P</span>
+      <span className="text-[#fbbc04]">a</span>
+      <span className="text-[#34a853]">y</span>
+    </span>
+  ),
+  PayPal: (
+    <span className="text-[13px] font-bold italic">
+      <span className="text-[#003087]">Pay</span>
+      <span className="text-[#009cde]">Pal</span>
+    </span>
+  ),
+  Visa: (
+    <span className="text-[14px] font-bold italic tracking-tight text-[#1a1f71]">
+      VISA
+    </span>
+  ),
+};
+
+/**
+ * The methods this villa's owner ticked when they listed it — not a fixed row
+ * of logos. A guest should only be shown what the host will actually take.
+ * A villa saved before the field existed lists nothing, so it falls back to
+ * every brand rather than showing an empty gap.
+ */
+function CardBrands({ accepted = [] }: { accepted?: string[] }) {
+  const names = Object.keys(CARD_BRANDS);
+  const chosen = accepted.filter((a) => names.includes(a));
+  const show = chosen.length ? chosen : names;
   return (
     <div className="flex items-center gap-2.5">
-      {/* Mastercard */}
-      <span className="relative inline-flex h-5 w-8 items-center">
-        <span className="absolute left-0 h-5 w-5 rounded-full bg-[#eb001b]" />
-        <span className="absolute left-3 h-5 w-5 rounded-full bg-[#f79e1b] opacity-90 mix-blend-multiply" />
-      </span>
-      {/* Google Pay */}
-      <span className="text-[13px] font-semibold">
-        <span className="text-[#4285f4]">G</span>
-        <span className="text-[#ea4335]">P</span>
-        <span className="text-[#fbbc04]">a</span>
-        <span className="text-[#34a853]">y</span>
-      </span>
-      {/* PayPal */}
-      <span className="text-[13px] font-bold italic">
-        <span className="text-[#003087]">Pay</span>
-        <span className="text-[#009cde]">Pal</span>
-      </span>
-      {/* Visa */}
-      <span className="text-[14px] font-bold italic tracking-tight text-[#1a1f71]">
-        VISA
-      </span>
+      {show.map((name) => (
+        <span key={name} title={name} className="inline-flex items-center">
+          {CARD_BRANDS[name]}
+        </span>
+      ))}
     </div>
   );
 }

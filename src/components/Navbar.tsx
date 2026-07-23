@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Menu, X, ChevronDown, UserCog, LogOut, Heart } from "lucide-react";
 import AuthModal from "@/components/auth/AuthModal";
+import Avatar from "@/components/ui/Avatar";
 import { useAuth } from "@/lib/auth";
 
 const NAV_LINKS = [
@@ -171,7 +172,7 @@ export default function Navbar() {
               {menuOpen && (
                 <div
                   role="menu"
-                  className="animate-fade-in absolute right-0 top-[calc(100%+8px)] z-50 w-52 rounded-xl bg-white shadow-[0_14px_36px_rgba(20,20,40,0.18)]"
+                  className="animate-fade-in absolute right-0 top-[calc(100%+8px)] z-50 w-60 rounded-xl bg-white shadow-[0_14px_36px_rgba(20,20,40,0.18)]"
                 >
                   {/* No outline — the tie to the button is a bar in its colour
                       across the top, and a notch of the same colour pointing
@@ -185,11 +186,34 @@ export default function Navbar() {
                   <div className="relative overflow-hidden rounded-xl">
                   <span aria-hidden className="block h-[3px] bg-primary" />
                   <div className="py-1.5">
+                  {/* Who you're signed in as, at the head of the menu the way
+                      an account menu usually states it: avatar, name, email.
+                      The name only shows once there is one — a profile nobody
+                      has filled in shouldn't leave a blank line where a name
+                      would be. */}
+                  <div className="flex items-center gap-2.5 border-b border-line px-4 pb-3 pt-1.5">
+                    <Avatar
+                      src={user?.avatar}
+                      name={user?.fullName}
+                      gender={user?.gender}
+                      size={34}
+                    />
+                    <span className="min-w-0">
+                      {user?.fullName?.trim() && (
+                        <span className="block truncate text-[13px] font-semibold leading-tight text-ink">
+                          {user.fullName.trim()}
+                        </span>
+                      )}
+                      <span className="mt-0.5 block truncate text-[12px] leading-tight text-muted">
+                        {user?.email}
+                      </span>
+                    </span>
+                  </div>
                   <Link
                     href="/settings"
                     role="menuitem"
                     onClick={() => setMenuOpen(false)}
-                    className="flex items-center gap-3 px-4 py-2.5 text-[14px] text-body transition-colors hover:bg-page hover:text-ink"
+                    className="mt-1.5 flex items-center gap-3 px-4 py-2.5 text-[14px] text-body transition-colors hover:bg-page hover:text-ink"
                   >
                     <UserCog size={17} aria-hidden className="text-muted" />
                     Manage Account

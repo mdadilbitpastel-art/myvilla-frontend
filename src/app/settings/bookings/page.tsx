@@ -9,6 +9,7 @@ import { useToast } from "@/lib/toast";
 import { useConfirm } from "@/lib/confirm";
 import SettingsSidebar from "@/components/settings/SettingsSidebar";
 import CountPill from "@/components/ui/CountPill";
+import Img from "@/components/ui/Img";
 import { fetchMyBookings, cancelBooking, type Booking } from "@/lib/api";
 
 const COLUMNS = [
@@ -41,6 +42,88 @@ function relativeTime(iso: string): string {
   if (days < 30) return `${Math.floor(days / 7)} weeks ago`;
   if (days < 60) return "1 month ago";
   return `${Math.floor(days / 30)} months ago`;
+}
+
+const money = (n: number) => `$${n.toFixed(2)}`;
+
+function fmtFull(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+/**
+ * The greeting a guest sends themselves on WhatsApp after paying — booking
+ * details, the villa's photo and a link back to the listing. The photo URL
+ * leads so WhatsApp previews the picture rather than the page.
+ */
+function greetingText(b: Booking): string {
+  const site = typeof window !== "undefined" ? window.location.origin : "";
+  const where = [b.villaCity, b.villaCountry].filter(Boolean).join(", ");
+  return [
+    `Hi ${b.guestName || "there"}! 🎉`,
+    `Your MyVilla booking is confirmed.`,
+    ``,
+    `🏡 ${b.villaTitle}`,
+    where ? `📍 ${where}` : "",
+    `📅 ${fmtFull(b.checkIn)} → ${fmtFull(b.checkOut)} (${b.nights} night${b.nights === 1 ? "" : "s"})`,
+    `👥 ${b.guests} guest${b.guests === 1 ? "" : "s"}`,
+    `💳 Total paid: ${money(b.total)}`,
+    ``,
+    b.villaCover ? `📸 ${b.villaCover}` : "",
+    site ? `🔗 ${site}/villa/${b.villaId}` : "",
+    ``,
+    `See you soon — MyVilla.com`,
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
+}
+
+function WhatsAppGreeting({
+  booking,
+  onDismiss,
+}: {
+  booking: Booking;
+  onDismiss: () => void;
+}) {
+  // wa.me with no number opens WhatsApp's own chat picker, so the guest chooses
+  // who it goes to — themselves, family, whoever is travelling with them.
+  const href = `https://wa.me/?text=${encodeURIComponent(greetingText(booking))}`;
+  return (
+    <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/25 bg-primary/[0.04] px-4 py-3.5">
+      <div className="flex items-center gap-3">
+        <Img
+          src={booking.villaCover}
+          alt={booking.villaTitle}
+          className="h-11 w-11 shrink-0 rounded-lg object-cover"
+        />
+        <div className="min-w-0">
+          <p className="text-[13.5px] font-semibold text-ink">
+            Booking confirmed — {booking.villaTitle}
+          </p>
+          <p className="mt-0.5 text-[12.5px] text-body">
+            Send the details and photo to WhatsApp.
+          </p>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <a
+          href={href}
+          target="_blank"
+          rel="noreferrer"
+          className="rounded-lg bg-[#25d366] px-4 py-2 text-[13px] font-semibold text-white transition-opacity hover:opacity-90"
+        >
+          Share on WhatsApp
+        </a>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="text-[12.5px] text-muted underline underline-offset-2 hover:text-ink"
+        >
+          Dismiss
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function SortDropdown({ sort, onToggle }: { sort: "desc" | "asc"; onToggle: () => void }) {
@@ -135,11 +218,16 @@ export default function MyBookingsPage() {
   const [historySort, setHistorySort] = useState<"desc" | "asc">("desc");
   const errorRef = useRef<HTMLDivElement>(null);
 
+  // Set by ?booked=1: the greeting card below only belongs on the trip the
+  // user has just paid for, not on every visit to this page.
+  const [justBooked, setJustBooked] = useState(false);
+
   // One-time toast after a successful checkout (?booked=1).
   useEffect(() => {
     const sp = new URLSearchParams(window.location.search);
     if (sp.get("booked") === "1") {
       toast.success("Payment successful — your booking is confirmed!");
+      setJustBooked(true);
       window.history.replaceState(null, "", window.location.pathname);
     }
     // Runs once on mount — `toast` is stable, and re-running would double-fire.
@@ -187,6 +275,16 @@ export default function MyBookingsPage() {
     history.sort(byCreated(historySort));
     return { active, history };
   }, [bookings, activeSort, historySort]);
+
+  // The stay just paid for: newest by creation, whichever way the table is
+  // sorted — the greeting card must not follow the sort dropdown around.
+  const newest = useMemo(() => {
+    let best: Booking | null = null;
+    for (const b of active) {
+      if (!best || new Date(b.createdAt) > new Date(best.createdAt)) best = b;
+    }
+    return best;
+  }, [active]);
 
   const toggleActiveSort = () => setActiveSort((s) => (s === "desc" ? "asc" : "desc"));
   const toggleHistorySort = () => setHistorySort((s) => (s === "desc" ? "asc" : "desc"));
@@ -239,7 +337,7 @@ export default function MyBookingsPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-9 lg:px-7">
+    <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-4 lg:px-7">
       <div className="grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
         {/* Left sidebar */}
         <aside>
@@ -258,8 +356,16 @@ export default function MyBookingsPage() {
             </div>
           )}
 
-          {/* Active bookings header */}
-          <div className="flex items-center justify-between">
+          {/* Active bookings header — sits in its own band across the top of
+              the card, cancelling the card's top padding and carrying an even
+              py-4 of its own, so the title is centred in it rather than pushed
+              down by two paddings stacked. Matches the other account tabs. */}
+          <div
+            className={`-mx-6 flex items-center justify-between border-b border-line px-6 py-4 sm:-mx-8 sm:px-8 ${
+              // Only reach up into the card's padding when nothing is above it.
+              loadError ? "" : "-mt-6 sm:-mt-8"
+            }`}
+          >
             {/* Label first, count as a pill after it — "00 Active Bookings"
                 read as a zero-padded code rather than as a total. */}
             <h2 className="flex items-center gap-2 text-[16px] font-bold text-ink">
@@ -268,6 +374,10 @@ export default function MyBookingsPage() {
             </h2>
             <SortDropdown sort={activeSort} onToggle={toggleActiveSort} />
           </div>
+
+          {justBooked && newest && (
+            <WhatsAppGreeting booking={newest} onDismiss={() => setJustBooked(false)} />
+          )}
 
           {/* Active table (scrolls horizontally on small screens) */}
           <div className="overflow-x-auto">

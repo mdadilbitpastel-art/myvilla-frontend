@@ -223,7 +223,7 @@ export default function RentRequestsPage() {
   const toggleHistorySort = () => setHistorySort((s) => (s === "desc" ? "asc" : "desc"));
 
   return (
-    <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-9 lg:px-7">
+    <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-4 lg:px-7">
       <div className="grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
         {/* Left sidebar */}
         <aside>
@@ -238,8 +238,15 @@ export default function RentRequestsPage() {
             </div>
           )}
 
-          {/* Header */}
-          <div className="flex items-center justify-between">
+          {/* Header — its own band across the top of the card: the card's top
+              padding is cancelled and an even py-4 takes its place, so the
+              title sits centred in the band like the other account tabs. */}
+          <div
+            className={`-mx-6 flex items-center justify-between border-b border-line px-6 py-4 sm:-mx-8 sm:px-8 ${
+              // Only reach up into the card's padding when nothing is above it.
+              error ? "" : "-mt-6 sm:-mt-8"
+            }`}
+          >
             {/* Label first, count as a pill after it — "00 Active Rent
                 Requests" read as a zero-padded code rather than as a total. */}
             <h2 className="flex items-center gap-2 text-[16px] font-bold text-ink">

@@ -176,7 +176,7 @@ export default function MyPropertyPage() {
   const rows: Row[] | null = villas ? villas.map(villaToRow) : null;
 
   return (
-    <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-9 lg:px-7">
+    <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-4 lg:px-7">
       <div className="grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
         {/* Left sidebar */}
         <aside>
@@ -208,11 +208,17 @@ export default function MyPropertyPage() {
 
           {/* Header — sticks flush against the pinned "Manage Account" bar
               (navbar + its collapsed height), NOT lower: any gap between the
-              two becomes a slot the scrolling list is visible through. The
-              16px that keeps it level with the sidebar's first item is pt-4
-              INSIDE the bar, so its white background covers that band instead
-              of leaving it open. */}
-          <div className="sticky top-[135px] z-20 -mx-6 flex items-center justify-between rounded-t-2xl border-b border-line bg-white px-6 pb-3 pt-4 sm:-mx-8 sm:px-8">
+              two becomes a slot the scrolling list is visible through. It
+              cancels the card's own top padding (-mt) and carries its own
+              even py-4 instead, so the title and button sit centred in the
+              band rather than pushed down by two paddings stacked. */}
+          <div
+            className={`sticky top-[135px] z-20 -mx-6 flex items-center justify-between rounded-t-2xl border-b border-line bg-white px-6 py-4 sm:-mx-8 sm:px-8 ${
+              // Only reach up into the card's padding when nothing is above it —
+              // with a banner showing, that pull would ride over it.
+              banner ? "" : "-mt-6 sm:-mt-8"
+            }`}
+          >
             <h2 className="text-[16px] font-bold text-ink">Property Owned</h2>
             <Link
               href="/settings/property/add"

@@ -32,7 +32,7 @@ import {
 import { fileToResizedDataUrl } from "@/lib/image";
 // Shared with the villa detail page, which splits a villa's saved `services`
 // back into facilities vs extra services off this same list.
-import { EXTRA_SERVICES } from "@/lib/services";
+import { EXTRA_SERVICES, isExtraService } from "@/lib/services";
 import VillaAvailabilityPanel from "@/components/settings/VillaAvailability";
 
 // Height of the global navbar the sticky page header parks under.
@@ -529,7 +529,7 @@ function Wizard() {
       </div>
       </div>
 
-      <div className="mt-8 grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
+      <div className="mt-3 grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
         {/* Stepper */}
         <Stepper step={step} complete={stepComplete} onSelect={goto} />
 
@@ -783,9 +783,22 @@ function VillaDetailsStep({
 
   function commitCustomFacility() {
     const label = customFacility?.trim();
-    if (label && !services.includes(label)) setServices((prev) => [...prev, label]);
+    // Case-insensitive, so typing "wifi" turns the Wifi chip on instead of
+    // sitting next to it as a second, near-identical facility.
+    if (label && !services.some((s) => s.toLowerCase() === label.toLowerCase()))
+      setServices((prev) => [...prev, label]);
     setCustomFacility(null);
   }
+
+  // Facilities the host typed in themselves: everything saved that neither the
+  // fixed list above nor the extra-services block below accounts for. They get
+  // chips of their own — without them a typed facility is stored but invisible,
+  // so "Add More" looks like it did nothing.
+  const customFacilities = services.filter(
+    (s) =>
+      !FACILITIES.some((f) => f.label.toLowerCase() === s.toLowerCase()) &&
+      !isExtraService(s)
+  );
 
   return (
     <div>
@@ -900,6 +913,23 @@ function VillaDetailsStep({
                 </button>
               );
             })}
+            {customFacilities.map((label) => (
+              <span
+                key={label}
+                className="flex items-center gap-1.5 rounded-full border border-primary bg-primary/10 px-3.5 py-1.5 text-[13px] text-primary"
+              >
+                <Lightbulb size={15} strokeWidth={1.7} />
+                {label}
+                <button
+                  type="button"
+                  onClick={() => toggleFacility(label)}
+                  aria-label={`Remove ${label}`}
+                  className="ml-0.5 rounded-full p-0.5 transition-colors hover:bg-primary/20"
+                >
+                  <X size={13} />
+                </button>
+              </span>
+            ))}
             {customFacility === null ? (
               <button
                 type="button"

@@ -389,6 +389,7 @@ export default function VillaDetailPage() {
               villaId={v.id}
               ownerId={v.ownerId}
               maxGuests={v.guests}
+              checkInTime={v.checkInTime}
             />
           </div>
         </aside>

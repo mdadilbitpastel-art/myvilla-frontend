@@ -279,7 +279,7 @@ export default function ProfileSettingsPage() {
   const id = (key: string) => `${fieldId}-${key}`;
 
   return (
-    <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-9 lg:px-7">
+    <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-4 lg:px-7">
       <div className="grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
         <aside>
           <SettingsSidebar />
@@ -288,7 +288,10 @@ export default function ProfileSettingsPage() {
         <div className="w-full rounded-2xl border border-line bg-white p-6 sm:p-8">
           {/* Static on purpose: anything that changes with `editing` would
               resize the card when the mode flips. */}
-          <div className="mb-6 border-b border-line pb-5">
+          {/* Own band across the top of the card, with the card's top padding
+              cancelled and an even py-4 in its place — same rhythm as the
+              other account tabs. */}
+          <div className="-mx-6 -mt-6 mb-6 border-b border-line px-6 py-4 sm:-mx-8 sm:-mt-8 sm:px-8">
             <h2 className="text-[18px] font-bold text-ink">Profile</h2>
             <p className="mt-1 text-[13px] text-body">
               Your personal details as they appear on bookings.
@@ -559,7 +562,7 @@ function Field({
 // arrives.
 function ProfileSkeleton() {
   return (
-    <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-9 lg:px-7">
+    <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-4 lg:px-7">
       <div className="grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
         <aside>
           <SettingsSidebar />

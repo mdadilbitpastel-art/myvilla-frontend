@@ -4,7 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { X, ChevronDown } from "lucide-react";
 import { loginUser, registerUser, getRememberedEmail } from "@/lib/api";
 import GoogleSignInButton from "@/components/auth/GoogleSignInButton";
@@ -45,15 +45,17 @@ export default function AuthModal({
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const router = useRouter();
+  const pathname = usePathname();
   const toast = useToast();
 
   // Where every successful sign-in lands, however it happened — password,
-  // registration or Google. Villas are the point of the site, so a fresh
-  // session opens on them rather than on whatever page prompted the login.
+  // registration or Google. Signing in from a real page keeps the user there,
+  // so they can carry on with whatever prompted the login. Only the landing
+  // page moves them on, to the villas the site is actually about.
   function onAuthenticated() {
     onClose();
     toast.success("Logged in successfully");
-    router.push("/search");
+    if (pathname === "/") router.push("/search");
   }
 
   // Lock body scroll while the modal is open.

@@ -41,12 +41,17 @@ export default function PropertyHeader({
 
   async function onShare() {
     const url = typeof window !== "undefined" ? window.location.href : "";
+    // The link goes INSIDE the text, not in `url`. Chat apps — WhatsApp above
+    // all — read only the text a share hands them and drop `title`/`url`, so a
+    // share built from those two fields arrived as an empty message. Carrying
+    // the link in the text is the one form every target passes through.
+    const text = `${title}\n${url}`;
     try {
       if (typeof navigator !== "undefined" && navigator.share) {
-        await navigator.share({ title, url });
+        await navigator.share({ title, text });
         return;
       }
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(text);
       setCopied(true);
       clearTimeout(copyTimer.current);
       copyTimer.current = setTimeout(() => setCopied(false), 1800);

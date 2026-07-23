@@ -14,6 +14,7 @@ export default function ReservationCard({
   villaId,
   ownerId,
   maxGuests = 4,
+  checkInTime = "",
 }: {
   pricing: Villa["pricing"];
   rating: number;
@@ -23,6 +24,8 @@ export default function ReservationCard({
   ownerId?: string;
   /** the villa's stated guest capacity — the guest picker stops there */
   maxGuests?: number;
+  /** the villa's check-in time, "HH:MM" — decides whether today is still bookable */
+  checkInTime?: string;
 }) {
   const router = useRouter();
   const { user, openAuth } = useAuth();
@@ -72,18 +75,29 @@ export default function ReservationCard({
   // the browser in local time, so the two disagree across the date boundary and
   // React throws a hydration mismatch (dates and total price visibly flip).
   // Resolve it after mount instead, exactly like the hero search widget does.
-  const [today, setToday] = useState("");
+  const [earliest, setEarliest] = useState("");
   const [checkIn, setCheckIn] = useState("");
   const [checkOut, setCheckOut] = useState("");
 
   useEffect(() => {
-    const t = iso(new Date());
-    setToday(t);
-    setCheckIn(t);
-    setCheckOut(addDays(t, 3));
-    // Runs once on mount; iso/addDays are pure local helpers.
+    const now = new Date();
+    // Today only counts while the villa's check-in time is still ahead of us —
+    // once it has passed, tonight can no longer be taken, so the calendar opens
+    // on tomorrow instead. A villa with no stated time keeps today open.
+    const [h, m] = checkInTime.split(":");
+    const cutoff = checkInTime
+      ? Number(h) * 60 + Number(m)
+      : Number.POSITIVE_INFINITY;
+    const past = now.getHours() * 60 + now.getMinutes() >= cutoff;
+    const first = past ? addDays(iso(now), 1) : iso(now);
+    setEarliest(first);
+    setCheckIn(first);
+    // One night by default — the shortest valid stay. Anything longer is the
+    // user's choice to make, not a total we quote them before they ask.
+    setCheckOut(addDays(first, 1));
+    // iso/addDays are pure local helpers, so only the villa's time matters here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [checkInTime]);
 
   const guestCount = parseInt(guests, 10) || 1;
   const isOwner = !!user && !!ownerId && String(user.id) === String(ownerId);
@@ -177,7 +191,7 @@ export default function ReservationCard({
         <DateField
           label="Check - In"
           value={checkIn}
-          min={today}
+          min={earliest}
           onChange={onCheckInChange}
           className="border-r border-line"
         />

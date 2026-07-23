@@ -71,7 +71,7 @@ export default function AccountPage() {
       <h1 className="mt-5 text-[30px] font-bold text-ink">My Account</h1>
 
       {/* Top: profile (left) + My Villas (right) */}
-      <div className="mt-8 grid grid-cols-1 gap-x-12 gap-y-12 lg:grid-cols-[360px_1fr]">
+      <div className="mt-5 grid grid-cols-1 gap-x-12 gap-y-12 lg:grid-cols-[360px_1fr]">
         <ProfileCard user={user} />
         <MyVillas />
       </div>
