@@ -9,8 +9,8 @@ import DateField from "@/components/ui/DateField";
 // The tabs are the search page's own categories: picking one here has to mean
 // the same thing there. "Resort"/"Rent" matched no listing type at all.
 import { SEARCH_CATEGORIES, ALL_CATEGORY } from "@/lib/categories";
+import GuestSelect from "@/components/ui/GuestSelect";
 
-const GUEST_OPTIONS = [1, 2, 3, 4, 5, 6, 8, 10];
 
 // Today as a local YYYY-MM-DD string (avoids the UTC off-by-one of toISOString).
 function todayStr(): string {
@@ -153,20 +153,22 @@ export default function Hero() {
               />
             </Field>
             <Divider />
-            <Field icon={<CircleUserRound size={18} className="text-primary" />} label="Guest">
-              <select
+            {/* Its own field rather than <Field>: the control is a button, so
+                a <label> around it would forward clicks and toggle the list
+                twice — and the picker needs to own the whole row for its list
+                to line up with it. */}
+            <div className="flex flex-1 flex-col justify-center rounded-lg px-4 py-2.5 text-left transition-colors hover:bg-page">
+              <span className="mb-1 text-[15px] text-[#a1a1a2]">Guest</span>
+              <GuestSelect
                 value={guests}
-                onChange={(e) => setGuests(parseInt(e.target.value, 10))}
-                className="w-full appearance-none bg-transparent text-[16px] font-semibold text-[#384652] outline-none"
-              >
-                <option value={0}>Any guests</option>
-                {GUEST_OPTIONS.map((g) => (
-                  <option key={g} value={g}>
-                    {g}+ guests
-                  </option>
-                ))}
-              </select>
-            </Field>
+                onChange={setGuests}
+                icon={<CircleUserRound size={18} className="shrink-0 text-primary" />}
+                // The hero clips its overflow (the background zoom needs it),
+                // so a list dropping down is cut off at the section's edge.
+                placement="up"
+                triggerClass="text-[16px] font-semibold text-[#384652]"
+              />
+            </div>
             <Divider />
             <DateField
               variant="hero"

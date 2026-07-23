@@ -9,8 +9,9 @@ export const PROPERTY_TYPES = [
   "Combinative Villa",
 ] as const;
 
-/** The two exclusive entries: neither combines with anything else. */
+/** "All" is the only exclusive entry — it means "no filter at all". */
 export const ALL_CATEGORY = "All";
+/** Everything a host named themselves. Combines with the types like any chip. */
 export const OTHERS_CATEGORY = "Others";
 
 export const SEARCH_CATEGORIES: string[] = [

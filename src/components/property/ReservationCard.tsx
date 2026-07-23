@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Star, ChevronDown } from "lucide-react";
+import { Star, Users } from "lucide-react";
 import type { Villa } from "@/lib/villa";
 import { fetchVilla } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -29,35 +29,11 @@ export default function ReservationCard({
 }) {
   const router = useRouter();
   const { user, openAuth } = useAuth();
-  const [guests, setGuests] = useState(pricing.guests);
-  const [open, setOpen] = useState(false);
-  const guestsRef = useRef<HTMLDivElement>(null);
-  const uid = useId();
 
-  // Close the guests dropdown on outside click / Escape — without this it
-  // stays open and floats over whatever the user scrolls to next.
-  useEffect(() => {
-    if (!open) return;
-    function onPointerDown(e: PointerEvent) {
-      if (!guestsRef.current?.contains(e.target as Node)) setOpen(false);
-    }
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open]);
-
-  // The picker offers exactly what the villa can sleep — a party it can't take
-  // shouldn't be selectable here only to be refused at checkout.
-  const GUEST_OPTIONS = Array.from(
-    { length: Math.max(1, maxGuests) },
-    (_, i) => `${i + 1} guest${i === 0 ? "" : "s"}`
-  );
+  // A booking takes the whole villa, so the party size changes nothing about
+  // the price — there is nothing here for a guest to choose. The capacity is
+  // stated instead, and the booking is made for it.
+  const guestCount = Math.max(1, maxGuests);
 
   // Max nights per stay — must match the backend (MAX_BOOKING_NIGHTS).
   const MAX_NIGHTS = 5;
@@ -99,7 +75,6 @@ export default function ReservationCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [checkInTime]);
 
-  const guestCount = parseInt(guests, 10) || 1;
   const isOwner = !!user && !!ownerId && String(user.id) === String(ownerId);
   // False until the mount effect above has resolved the local date.
   const datesReady = !!checkIn && !!checkOut;
@@ -215,52 +190,20 @@ export default function ReservationCard({
         </p>
       )}
 
-      {/* Guests dropdown */}
-      <div ref={guestsRef} className="relative mt-2.5">
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-          aria-haspopup="listbox"
-          aria-controls={`${uid}-guests`}
-          className="flex w-full items-center justify-between rounded-xl border border-line px-4 py-2.5 text-left transition-colors hover:border-primary"
-        >
-          <span>
-            <span className="block text-[13px] font-semibold text-ink">Guests</span>
-            <span className="block text-[14px] text-body">{guests}</span>
+      {/* Capacity — stated, not chosen: the whole villa is booked either way,
+          so a picker here would only look like it changed the price. */}
+      <div className="mt-2.5 flex items-center gap-3 rounded-xl bg-page px-4 py-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-primary shadow-sm">
+          <Users size={17} strokeWidth={1.8} aria-hidden />
+        </span>
+        <span className="min-w-0">
+          <span className="block text-[14px] font-semibold text-ink">
+            Sleeps up to {guestCount} guest{guestCount === 1 ? "" : "s"}
           </span>
-          <ChevronDown
-            size={20}
-            className={`text-ink transition-transform ${open ? "rotate-180" : ""}`}
-          />
-        </button>
-
-        {open && (
-          <ul
-            id={`${uid}-guests`}
-            role="listbox"
-            className="animate-fade-in absolute z-10 mt-1 w-full overflow-hidden rounded-xl border border-line bg-white shadow-lg"
-          >
-            {GUEST_OPTIONS.map((opt) => (
-              <li key={opt}>
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={guests === opt}
-                  onClick={() => {
-                    setGuests(opt);
-                    setOpen(false);
-                  }}
-                  className={`block w-full px-4 py-2.5 text-left text-[14px] hover:bg-page ${
-                    guests === opt ? "font-medium text-primary" : "text-body"
-                  }`}
-                >
-                  {opt}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+          <span className="block text-[12.5px] text-muted">
+            The whole villa is yours for the stay.
+          </span>
+        </span>
       </div>
 
       {/* Reserve button */}

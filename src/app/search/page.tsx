@@ -10,24 +10,15 @@ import { useStickyRelease } from "@/lib/useStickyRelease";
 import {
   SEARCH_CATEGORIES,
   ALL_CATEGORY,
-  OTHERS_CATEGORY,
   PROPERTY_TYPES,
   matchesCategories,
 } from "@/lib/categories";
 import { searchVillas, type Villa, type VillaFilters } from "@/lib/api";
 import type { VillaCardData } from "@/lib/home";
+import GuestSelect from "@/components/ui/GuestSelect";
 
 /** Tailwind `gap-6` between result rows, needed to measure one row's height. */
 const GRID_GAP = 24;
-
-const GUEST_OPTIONS = [
-  { label: "Any guests", value: 0 },
-  { label: "1+ guests", value: 1 },
-  { label: "2+ guests", value: 2 },
-  { label: "4+ guests", value: 4 },
-  { label: "6+ guests", value: 6 },
-  { label: "8+ guests", value: 8 },
-];
 
 const FALLBACK_IMG =
   "https://images.unsplash.com/photo-1571896349842-33c89424de2d?auto=format&fit=crop&w=600&q=80";
@@ -54,8 +45,7 @@ function parseCategories(raw: string | null): string[] {
     .map((c) => c.trim())
     .filter((c) => SEARCH_CATEGORIES.includes(c) && c !== ALL_CATEGORY);
   if (!picked.length) return [ALL_CATEGORY];
-  // The exclusive chip wins if a hand-written URL mixes it with types.
-  return picked.includes(OTHERS_CATEGORY) ? [OTHERS_CATEGORY] : picked;
+  return picked;
 }
 
 // Today as a local YYYY-MM-DD (toISOString would shift it a day in some zones).
@@ -69,9 +59,9 @@ type State = {
   q: string;
   guests: number;
   /**
-   * Any mix of the property-type chips, or exactly one of the two exclusive
-   * ones ("All" / "Others"). Never empty — clearing the last type falls back
-   * to "All".
+   * Any mix of the chips — the property types and "Others" combine freely —
+   * or just "All", which stands alone. Never empty: clearing the last chip
+   * falls back to "All".
    */
   categories: string[];
   // The nights being asked about. They don't remove villas from the results —
@@ -213,19 +203,20 @@ function SearchPageContent() {
     run(next);
   }
 
-  // "All" and "Others" stand alone; the property types combine freely, and
-  // picking one of them drops whichever exclusive chip was on.
+  // Only "All" stands alone. Everything else — the property types and
+  // "Others" — combines freely: "Hotel or something the host named himself"
+  // is a search worth being able to make.
   function pickCategory(cat: string) {
     const cur = state.categories;
     let picked: string[];
     if (cat === ALL_CATEGORY) {
       picked = [ALL_CATEGORY];
-    } else if (cat === OTHERS_CATEGORY) {
-      picked = cur.includes(OTHERS_CATEGORY) ? [ALL_CATEGORY] : [OTHERS_CATEGORY];
     } else {
-      const types = cur.filter((c) => c !== ALL_CATEGORY && c !== OTHERS_CATEGORY);
-      picked = types.includes(cat) ? types.filter((c) => c !== cat) : [...types, cat];
-      // Turning the last type off means "no filter", not "nothing matches".
+      const chosen = cur.filter((c) => c !== ALL_CATEGORY);
+      picked = chosen.includes(cat)
+        ? chosen.filter((c) => c !== cat)
+        : [...chosen, cat];
+      // Turning the last one off means "no filter", not "nothing matches".
       if (!picked.length) picked = [ALL_CATEGORY];
     }
     const next = { ...state, categories: picked };
@@ -317,24 +308,15 @@ function SearchPageContent() {
               />
             </div>
 
-            <div
-              className={`relative items-center gap-2 rounded-xl border border-line px-4 py-2.5 sm:w-[170px] ${
-                collapsed ? "hidden sm:flex" : "flex"
-              }`}
-            >
-              <CircleUserRound size={18} className="shrink-0 text-primary" />
-              <select
+            {/* The picker is the whole field — border and padding included —
+                so its list is exactly as wide as the box and flush with it. */}
+            <div className={`sm:w-[170px] ${collapsed ? "hidden sm:block" : "block"}`}>
+              <GuestSelect
                 value={state.guests}
-                onChange={(e) => pickGuests(parseInt(e.target.value, 10))}
-                aria-label="Number of guests"
-                className="w-full appearance-none bg-transparent text-[14px] text-ink outline-none"
-              >
-                {GUEST_OPTIONS.map((g) => (
-                  <option key={g.value} value={g.value}>
-                    {g.label}
-                  </option>
-                ))}
-              </select>
+                onChange={pickGuests}
+                icon={<CircleUserRound size={18} className="shrink-0 text-primary" />}
+                triggerClass="rounded-xl border border-line px-4 py-2.5 text-[14px] text-ink transition-colors hover:border-primary/40"
+              />
             </div>
 
             {/* Dates. Optional — leave them off and availability is answered
