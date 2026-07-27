@@ -2,7 +2,10 @@ import type { Metadata } from "next";
 import { Poppins } from "next/font/google";
 import "./globals.css";
 import Navbar from "@/components/Navbar";
+import OfferBar from "@/components/OfferBar";
 import Footer from "@/components/Footer";
+import PageScrollbar from "@/components/ui/PageScrollbar";
+import CheckInReminder from "@/components/CheckInReminder";
 import { AuthProvider } from "@/lib/auth";
 import { FavoritesProvider } from "@/lib/favorites";
 import { ToastProvider } from "@/lib/toast";
@@ -37,9 +40,14 @@ export default function RootLayout({
           <ConfirmProvider>
             <AuthProvider>
               <FavoritesProvider>
+                {/* Above the header and in the flow, so it scrolls away and
+                    leaves the sticky nav pinned at the top on its own. */}
+                <OfferBar />
                 <Navbar />
+                <CheckInReminder />
                 <main className="flex-1">{children}</main>
                 <Footer />
+                <PageScrollbar />
               </FavoritesProvider>
             </AuthProvider>
           </ConfirmProvider>

@@ -14,7 +14,7 @@ import {
   matchesCategories,
 } from "@/lib/categories";
 import { searchVillas, type Villa, type VillaFilters } from "@/lib/api";
-import type { VillaCardData } from "@/lib/home";
+import { villaGallery, type VillaCardData } from "@/lib/home";
 import GuestSelect from "@/components/ui/GuestSelect";
 
 /** Tailwind `gap-6` between result rows, needed to measure one row's height. */
@@ -24,10 +24,12 @@ const FALLBACK_IMG =
   "https://images.unsplash.com/photo-1571896349842-33c89424de2d?auto=format&fit=crop&w=600&q=80";
 
 function toCard(v: Villa): VillaCardData {
+  const image = v.photos[0]?.url || v.coverImage || FALLBACK_IMG;
   return {
     id: v.id,
     title: v.title, // show the villa's main title as the card heading
-    image: v.photos[0]?.url || v.coverImage || FALLBACK_IMG,
+    image,
+    images: villaGallery(v, image),
     city: v.city,
     country: v.country,
     price: v.pricePerNight,
@@ -257,7 +259,7 @@ function SearchPageContent() {
   const count = shown?.length ?? 0;
 
   return (
-    <div className="mx-auto max-w-[1200px] px-5 pb-20 pt-8">
+    <div className="mx-auto max-w-[1320px] px-5 pb-20 pt-8">
       <div
         ref={stickyWrapRef}
         className="relative"

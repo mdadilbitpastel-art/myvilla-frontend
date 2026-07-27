@@ -102,7 +102,7 @@ export default function Hero() {
       <div className="absolute inset-0 bg-black/30" />
 
       {/* Content */}
-      <div className="relative z-10 mx-auto flex h-full max-w-[1200px] flex-col items-center px-5 pt-24 text-center sm:pt-28">
+      <div className="relative z-10 mx-auto flex h-full max-w-[1320px] flex-col items-center px-5 pt-24 text-center sm:pt-28">
         <h1 className="animate-fade-up text-[34px] font-extrabold leading-tight text-white drop-shadow-sm sm:text-[46px]">
           Vacation feels like home
         </h1>
@@ -115,7 +115,7 @@ export default function Hero() {
 
         {/* Search widget */}
         <div
-          className="animate-fade-up mt-9 w-full max-w-[1120px]"
+          className="animate-fade-up mt-9 w-full max-w-[1320px]"
           style={{ animationDelay: "240ms" }}
         >
           {/* Tabs — rounded box centered above the bar */}
@@ -202,17 +202,14 @@ export default function Hero() {
         </div>
       </div>
 
-      {/* Carousel dots — pinned to the bottom-center of the hero image */}
-      <div className="absolute bottom-5 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2">
+      {/* Carousel dots — pure indicators of the current slide, not clickable */}
+      <div className="pointer-events-none absolute bottom-5 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2">
         {heroSlides.map((_, i) => (
-          <button
+          <span
             key={i}
-            type="button"
-            aria-label={`Go to slide ${i + 1}`}
-            aria-current={i === slide}
-            onClick={() => setSlide(i)}
+            aria-hidden="true"
             className={`h-2 rounded-full transition-all duration-300 ${
-              i === slide ? "w-6 bg-primary" : "w-2 bg-white/70 hover:bg-white"
+              i === slide ? "w-6 bg-primary" : "w-2 bg-white/70"
             }`}
           />
         ))}

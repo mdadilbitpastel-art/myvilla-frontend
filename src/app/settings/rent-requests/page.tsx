@@ -1,22 +1,30 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ChevronDown } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { useVillaCount } from "@/lib/useProperty";
 import { useLiveRefresh } from "@/lib/useLiveRefresh";
 import { useToast } from "@/lib/toast";
 import SettingsSidebar from "@/components/settings/SettingsSidebar";
+import BookingDetails, { StayActionButton } from "@/components/settings/BookingDetails";
 import CountPill from "@/components/ui/CountPill";
+import StarRating from "@/components/ui/StarRating";
 import Img from "@/components/ui/Img";
-import { fetchVillaBookings, respondBooking, type Booking } from "@/lib/api";
+import { fetchVillaBookings, checkInBooking, checkOutBooking, type Booking } from "@/lib/api";
+import { bookingStatus, lifecycleOf, STATUS_TONE_CLASS } from "@/lib/booking";
 
 // A broken avatar URL falls back to this transparent pixel, which reveals the
 // initial-letter tile rendered behind it.
 const TRANSPARENT_PX =
   "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
 
-const COLUMNS = ["Tenant", "Property", "Stay Duration", "No. of Guests", "Status"];
+const COLUMNS = ["Tenant", "Property", "Stay Duration", "Guests", "Status", ""];
+
+// One grid template shared by the header and every row so the columns line up.
+const ROW_GRID = "grid-cols-[1.3fr_1.2fr_1fr_0.7fr_0.9fr_1.5fr]";
+const ROW_MINW = "min-w-[860px]";
 
 const MONTHS = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -62,78 +70,152 @@ function TenantAvatar({ name, avatar }: { name: string; avatar: string }) {
 
 function RequestRow({
   req,
-  kind,
-  onRespond,
-  responding,
+  expanded,
+  onToggle,
+  onCheckIn,
+  onCheckOut,
+  working,
 }: {
   req: Booking;
-  kind: "active" | "history";
-  onRespond: (id: string) => void;
-  responding: boolean;
+  expanded: boolean;
+  onToggle: (id: string) => void;
+  onCheckIn: (id: string) => void;
+  onCheckOut: (id: string) => void;
+  working: boolean;
 }) {
-  const cancelled = req.status === "cancelled";
+  const status = bookingStatus(req);
+  const rowRef = useRef<HTMLDivElement>(null);
+
+  // On expand, bring the newly revealed details into view — after the open
+  // animation so the scroll targets the row's final, taller height.
+  useEffect(() => {
+    if (!expanded) return;
+    const t = setTimeout(() => {
+      rowRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }, 320);
+    return () => clearTimeout(t);
+  }, [expanded]);
+
   return (
-    <div className="grid min-w-[620px] grid-cols-[1.4fr_1.2fr_1.1fr_1fr_0.8fr] items-center rounded-lg border border-line px-4 py-3 text-[13px]">
-      {/* Tenant */}
-      <div className="flex items-center gap-2.5">
-        <TenantAvatar name={req.guestName} avatar={req.guestAvatar} />
-        <span className="truncate text-ink" title={req.guestName}>
-          {req.guestName}
-        </span>
+    <div
+      ref={rowRef}
+      className={`${ROW_MINW} overflow-hidden rounded-lg border transition-colors ${
+        expanded ? "border-primary/40 bg-primary/[0.015]" : "border-line"
+      }`}
+    >
+      {/* Collapsed: the compact table row. It collapses away as the detail
+          opens, so the guest, property and status never show in both at once. */}
+      <div
+        className={`grid transition-all duration-300 ease-out ${
+          expanded ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr] opacity-100"
+        }`}
+      >
+        <div className="overflow-hidden">
+          <div className={`grid ${ROW_GRID} items-center px-4 py-3 text-[13px]`}>
+            {/* Tenant */}
+            <div className="flex items-center gap-2.5">
+              <TenantAvatar name={req.guestName} avatar={req.guestAvatar} />
+              <span className="truncate text-ink" title={req.guestName}>
+                {req.guestName}
+              </span>
+            </div>
+
+            <Link
+              href={`/villa/${req.villaId}`}
+              title={req.villaTitle}
+              className="group flex min-w-0 items-center gap-2.5 pr-2"
+            >
+              <Img
+                src={req.villaCover}
+                alt={req.villaTitle}
+                className="h-9 w-9 shrink-0 rounded-lg object-cover"
+              />
+              <span className="truncate text-body group-hover:text-primary">
+                {req.villaTitle}
+              </span>
+            </Link>
+            <span className="text-body">{fmtStay(req.checkIn, req.checkOut)}</span>
+            <span className="text-body">
+              {req.guests} {req.guests === 1 ? "guest" : "guests"}
+            </span>
+
+            {/* Status — the real stay state, plus the guest's rating once they
+                leave one (so it shows right in the row, not only on expand). */}
+            <span className="flex flex-col items-start gap-1">
+              <span className={`text-[13px] font-semibold ${STATUS_TONE_CLASS[status.tone]}`}>
+                {status.label}
+              </span>
+              {req.reviewRating > 0 && (
+                <span title={`Guest rated ${req.reviewRating}/5`}>
+                  <StarRating value={req.reviewRating} size={12} />
+                </span>
+              )}
+            </span>
+
+            {/* Actions — expand for full details, and the single stay action. */}
+            <div className="flex items-center justify-end gap-2">
+              <StayActionButton
+                booking={req}
+                onCheckIn={onCheckIn}
+                onCheckOut={onCheckOut}
+                busy={working}
+              />
+              <button
+                type="button"
+                onClick={() => onToggle(req.id)}
+                aria-expanded={expanded}
+                aria-label={`View ${req.guestName}'s booking details`}
+                // py-[5px] + the 1px border = the same height as the filled
+                // Check in / Check out button next to it.
+                className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-[5px] text-[12.5px] font-medium text-body transition-colors hover:border-primary hover:bg-primary/5 hover:text-primary"
+              >
+                <span className="w-[30px] text-center">View</span>
+                <ChevronDown size={15} className="shrink-0" aria-hidden />
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
-      <Link
-        href={`/villa/${req.villaId}`}
-        title={req.villaTitle}
-        className="truncate pr-2 text-body hover:text-primary"
+      {/* Expanded: the redesigned full detail, which carries its own property
+          header, status, stay action and Hide control — so the compact row
+          above can hide entirely and nothing is shown twice. */}
+      <div
+        className={`grid transition-all duration-300 ease-out ${
+          expanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+        }`}
       >
-        {req.villaTitle}
-      </Link>
-      <span className="text-body">{fmtStay(req.checkIn, req.checkOut)}</span>
-      <span className="text-body">
-        {req.guests} {req.guests === 1 ? "guest" : "guests"}
-      </span>
-
-      {/* History rows are read-only: a cancelled or finished stay can't be
-          responded to any more, it's just a record for the owner. */}
-      <span className="text-right">
-        {kind === "history" ? (
-          cancelled ? (
-            <span className="text-[13px] font-semibold text-red-400">Cancelled</span>
-          ) : req.hostResponded ? (
-            <span className="text-[13px] font-semibold text-primary">Responded</span>
-          ) : (
-            <span className="text-[13px] font-semibold text-body">Completed</span>
-          )
-        ) : req.hostResponded ? (
-          <span className="text-[13px] font-semibold text-primary">Responded</span>
-        ) : (
-          <button
-            type="button"
-            onClick={() => onRespond(req.id)}
-            disabled={responding}
-            aria-busy={responding}
-            aria-label={
-              responding
-                ? `Responding to ${req.guestName}'s request`
-                : `Respond to ${req.guestName}'s request`
-            }
-            className="text-[13px] font-medium text-primary underline underline-offset-2 transition-colors hover:text-primary-dark disabled:opacity-50"
-          >
-            {responding ? <span className="spinner" aria-hidden /> : "Respond"}
-          </button>
-        )}
-      </span>
+        <div className="overflow-hidden">
+          <div className="px-4 py-4 sm:px-5">
+            <BookingDetails
+              booking={req}
+              onCollapse={() => onToggle(req.id)}
+              onCheckIn={onCheckIn}
+              onCheckOut={onCheckOut}
+              working={working}
+            />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
 
 export default function RentRequestsPage() {
   const { user, ready } = useAuth();
+  const { count, hasProperty } = useVillaCount();
   const toast = useToast();
   const [requests, setRequests] = useState<Booking[] | null>(null);
   const [error, setError] = useState("");
-  const [respondingId, setRespondingId] = useState<string | null>(null);
+  // Which booking's detail popup is open, and which booking has a check-in/out
+  // Which row is expanded (its details shown inline), and which booking has a
+  // check-in/out request in flight.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [workingId, setWorkingId] = useState<string | null>(null);
+  const toggleExpand = useCallback(
+    (id: string) => setExpandedId((cur) => (cur === id ? null : id)),
+    []
+  );
   // Each table sorts on its own — sorting the history shouldn't silently
   // re-order the active requests above it.
   const [sort, setSort] = useState<"desc" | "asc">("desc");
@@ -156,20 +238,59 @@ export default function RentRequestsPage() {
     load();
   }, [ready, user, load]);
 
-  // Surfaces guest cancellations without a manual reload. Paused mid-respond so
-  // an in-flight poll can't land stale rows over the new state.
-  useLiveRefresh(() => load(true), ready && !!user && !respondingId);
+  // Surfaces new bookings and guest cancellations without a manual reload.
+  // Paused mid check-in/out so an in-flight poll can't land stale rows over it.
+  useLiveRefresh(() => load(true), ready && !!user && !workingId);
 
-  // Active = live booking whose stay hasn't ended; History = cancelled or past.
+
+  // Apply a mutation's returned booking into the list (the popup, derived by
+  // id, updates with it).
+  const applyUpdate = useCallback((updated: Booking) => {
+    setRequests((prev) => (prev ?? []).map((r) => (r.id === updated.id ? updated : r)));
+  }, []);
+
+  const doCheckIn = useCallback(
+    async (id: string) => {
+      setWorkingId(id);
+      try {
+        applyUpdate(await checkInBooking(id));
+        toast.success("Guest checked in.");
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Could not check the guest in.");
+      } finally {
+        setWorkingId(null);
+      }
+    },
+    [applyUpdate, toast]
+  );
+
+  const doCheckOut = useCallback(
+    async (id: string) => {
+      setWorkingId(id);
+      try {
+        applyUpdate(await checkOutBooking(id));
+        toast.success("Guest checked out.");
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Could not check the guest out.");
+      } finally {
+        setWorkingId(null);
+      }
+    },
+    [applyUpdate, toast]
+  );
+
+  // Active = a live stay (upcoming, awaiting check-in, or under way); History =
+  // settled — checked out, no-show, or cancelled (it belongs to the record).
   const { active, history } = useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
     const active: Booking[] = [];
     const history: Booking[] = [];
     for (const r of requests ?? []) {
-      const upcoming = new Date(r.checkOut) >= today;
-      if (r.status === "active" && upcoming) active.push(r);
-      else history.push(r);
+      const life = lifecycleOf(r);
+      if (life === "upcoming" || life === "awaiting_checkin" || life === "staying") {
+        active.push(r);
+      } else {
+        history.push(r);
+      }
     }
     const byCreated = (order: "desc" | "asc") => (a: Booking, b: Booking) => {
       const diff = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
@@ -186,25 +307,12 @@ export default function RentRequestsPage() {
     load();
   }
 
-  async function onRespond(id: string) {
-    setRespondingId(id);
-    try {
-      const updated = await respondBooking(id);
-      setRequests((prev) => (prev ?? []).map((r) => (r.id === id ? updated : r)));
-      toast.success("Response sent — the guest can see it now.");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not respond to request.");
-    } finally {
-      setRespondingId(null);
-    }
-  }
-
   // Guard: only signed-in users can view their rent requests.
   if (!ready) return <div className="min-h-[60vh]" />;
 
   if (!user) {
     return (
-      <div className="mx-auto flex min-h-[60vh] w-full max-w-[1000px] flex-col items-center justify-center px-5 text-center">
+      <div className="mx-auto flex min-h-[60vh] w-full max-w-[1320px] flex-col items-center justify-center px-5 text-center">
         <h1 className="text-[22px] font-bold text-ink">You&apos;re signed out</h1>
         <p className="mt-2 text-[14px] text-body">
           Please sign in to view your rent requests.
@@ -219,11 +327,30 @@ export default function RentRequestsPage() {
     );
   }
 
+  // Guard: rent requests only exist once you host a property. (The sidebar
+  // hides this section too, but a direct link could still land here.)
+  if (count !== null && !hasProperty) {
+    return (
+      <div className="mx-auto flex min-h-[60vh] w-full max-w-[1320px] flex-col items-center justify-center px-5 text-center">
+        <h1 className="text-[22px] font-bold text-ink">List a property first</h1>
+        <p className="mt-2 text-[14px] text-body">
+          Rent requests come from guests booking your villas — add a property to start.
+        </p>
+        <Link
+          href="/settings/property/add"
+          className="mt-5 rounded-lg bg-primary px-5 py-2.5 text-[14px] font-medium text-white transition-colors hover:bg-primary-dark"
+        >
+          Add Property
+        </Link>
+      </div>
+    );
+  }
+
   const toggleSort = () => setSort((s) => (s === "desc" ? "asc" : "desc"));
   const toggleHistorySort = () => setHistorySort((s) => (s === "desc" ? "asc" : "desc"));
 
   return (
-    <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-4 lg:px-7">
+    <div className="mx-auto w-full max-w-[1320px] px-5 pb-16 pt-4 lg:px-7">
       <div className="grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
         {/* Left sidebar */}
         <aside>
@@ -247,10 +374,10 @@ export default function RentRequestsPage() {
               error ? "" : "-mt-6 sm:-mt-8"
             }`}
           >
-            {/* Label first, count as a pill after it — "00 Active Rent
-                Requests" read as a zero-padded code rather than as a total. */}
+            {/* A booking is confirmed the moment it's made, so these are simply
+                the upcoming stays on the owner's villas — nothing to action. */}
             <h2 className="flex items-center gap-2 text-[16px] font-bold text-ink">
-              Active Rent Requests
+              Upcoming Bookings
               <CountPill value={active.length} />
             </h2>
             <SortDropdown sort={sort} onToggle={toggleSort} />
@@ -278,22 +405,24 @@ export default function RentRequestsPage() {
             ) : requests === null ? (
               <>
                 {Array.from({ length: 3 }, (_, i) => (
-                  <div key={i} className="skeleton h-[48px] min-w-[620px]" />
+                  <div key={i} className="skeleton h-[48px] min-w-[860px]" />
                 ))}
               </>
             ) : active.length === 0 ? (
               <div className="rounded-lg border border-dashed border-line px-4 py-6 text-center text-[13px] text-muted">
-                No rent requests yet. When someone books one of your villas, it&apos;ll
-                show up here.
+                No upcoming bookings yet. When someone books one of your villas,
+                it&apos;ll show up here.
               </div>
             ) : (
               active.map((req) => (
                 <RequestRow
                   key={req.id}
                   req={req}
-                  kind="active"
-                  onRespond={onRespond}
-                  responding={respondingId === req.id}
+                  expanded={expandedId === req.id}
+                  onToggle={toggleExpand}
+                  onCheckIn={doCheckIn}
+                  onCheckOut={doCheckOut}
+                  working={workingId === req.id}
                 />
               ))
             )}
@@ -318,7 +447,7 @@ export default function RentRequestsPage() {
                 error ? null : (
                   <>
                     {Array.from({ length: 2 }, (_, i) => (
-                      <div key={i} className="skeleton h-[48px] min-w-[620px]" />
+                      <div key={i} className="skeleton h-[48px] min-w-[860px]" />
                     ))}
                   </>
                 )
@@ -331,9 +460,11 @@ export default function RentRequestsPage() {
                   <RequestRow
                     key={req.id}
                     req={req}
-                    kind="history"
-                    onRespond={onRespond}
-                    responding={false}
+                    expanded={expandedId === req.id}
+                    onToggle={toggleExpand}
+                    onCheckIn={doCheckIn}
+                    onCheckOut={doCheckOut}
+                    working={workingId === req.id}
                   />
                 ))
               )}
@@ -347,10 +478,10 @@ export default function RentRequestsPage() {
 
 function ColumnHeadings() {
   return (
-    <div className="mt-6 grid min-w-[620px] grid-cols-[1.4fr_1.2fr_1.1fr_1fr_0.8fr] px-4 text-[13px] text-muted">
-      {COLUMNS.map((c) => (
-        <span key={c} className={c === "Status" ? "text-right" : ""}>
-          {c}
+    <div className={`mt-6 grid ${ROW_MINW} ${ROW_GRID} px-4 text-[13px] text-muted`}>
+      {COLUMNS.map((c, i) => (
+        <span key={c || `col-${i}`} className={c === "" ? "text-right" : ""}>
+          {c || "Actions"}
         </span>
       ))}
     </div>

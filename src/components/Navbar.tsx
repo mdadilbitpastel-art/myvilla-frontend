@@ -11,10 +11,8 @@ import { useAuth } from "@/lib/auth";
 const NAV_LINKS = [
   { label: "Home", href: "/" },
   { label: "Villas", href: "/search" },
-  { label: "Packages", href: "#" },
-  { label: "Promotions", href: "#" },
-  { label: "Help", href: "#" },
-  { label: "Blog", href: "#" },
+  { label: "Privacy Policy", href: "/privacy" },
+  { label: "Terms of Service", href: "/terms" },
   { label: "Signin", href: "#" },
 ];
 

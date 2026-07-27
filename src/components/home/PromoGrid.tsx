@@ -1,7 +1,12 @@
 import Image from "next/image";
+import Link from "next/link";
+import { BadgePercent } from "lucide-react";
 import { promo } from "@/lib/home";
+import type { Offer } from "@/lib/api";
+import Img from "@/components/ui/Img";
 import Reveal from "@/components/ui/Reveal";
 
+// A static marketing card (used when there are no live offers to show).
 function PromoCard({
   image,
   title,
@@ -14,9 +19,7 @@ function PromoCard({
   big?: boolean;
 }) {
   return (
-    <div
-      className={`group relative overflow-hidden rounded-2xl ${className}`}
-    >
+    <div className={`group relative overflow-hidden rounded-2xl ${className}`}>
       <Image
         src={image}
         alt={title}
@@ -36,30 +39,87 @@ function PromoCard({
   );
 }
 
-export default function PromoGrid() {
+// A real villa on offer: its photo, the discount, and its coupon code. Links
+// through to the villa carrying the code, so it's already applied at checkout.
+function OfferCard({
+  offer,
+  className = "",
+  big = false,
+}: {
+  offer: Offer;
+  className?: string;
+  big?: boolean;
+}) {
+  const place = [offer.city, offer.country].filter(Boolean).join(", ");
   return (
-    <Reveal className="mx-auto max-w-[1120px] px-6 py-10">
+    <Link
+      href={`/villa/${offer.villaId}?coupon=${encodeURIComponent(offer.code)}`}
+      className={`group relative block overflow-hidden rounded-2xl ${className}`}
+    >
+      <Img
+        src={offer.coverImage}
+        alt={offer.title}
+        className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+      />
+      <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/15 to-transparent" />
+
+      {/* Discount pill */}
+      <span className="absolute left-4 top-4 flex items-center gap-1.5 rounded-full bg-[#ff2d2d] px-3 py-1.5 text-[13px] font-bold text-white shadow-lg">
+        <BadgePercent size={15} aria-hidden />
+        {offer.label}
+      </span>
+
+      <div className="absolute inset-x-0 bottom-0 p-5 text-white">
+        <h3 className={`font-bold leading-snug ${big ? "text-[22px]" : "text-[17px]"}`}>
+          {offer.title}
+        </h3>
+        {place && <p className="mt-0.5 text-[12px] opacity-90">{place}</p>}
+        <span className="mt-2 inline-flex items-center gap-2 rounded-lg bg-white/15 px-2.5 py-1 text-[12px] font-semibold backdrop-blur-sm">
+          Code: <span className="font-mono tracking-wide">{offer.code}</span>
+        </span>
+      </div>
+    </Link>
+  );
+}
+
+export default function PromoGrid({ offers = [] }: { offers?: Offer[] }) {
+  const [a, b, c] = offers;
+
+  return (
+    <Reveal className="mx-auto max-w-[1320px] px-6 py-10">
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {/* Big left card */}
-        <PromoCard
-          image={promo.main}
-          title="Explore best resorts in your area"
-          className="min-h-[300px] lg:min-h-[340px]"
-          big
-        />
+        {/* Big left card — first real offer, else the static resorts promo. */}
+        {a ? (
+          <OfferCard offer={a} className="min-h-[300px] lg:min-h-[340px]" big />
+        ) : (
+          <PromoCard
+            image={promo.main}
+            title="Explore best resorts in your area"
+            className="min-h-[300px] lg:min-h-[340px]"
+            big
+          />
+        )}
 
         {/* Right stacked cards */}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-rows-2">
-          <PromoCard
-            image={promo.offer}
-            title="Upto 25% off on your first purchase"
-            className="min-h-[150px] sm:col-span-2"
-          />
-          <PromoCard
-            image={promo.invite}
-            title="Invite your friends to get discounts"
-            className="min-h-[150px] sm:col-span-2"
-          />
+          {b ? (
+            <OfferCard offer={b} className="min-h-[150px] sm:col-span-2" />
+          ) : (
+            <PromoCard
+              image={promo.offer}
+              title="Upto 25% off on your first purchase"
+              className="min-h-[150px] sm:col-span-2"
+            />
+          )}
+          {c ? (
+            <OfferCard offer={c} className="min-h-[150px] sm:col-span-2" />
+          ) : (
+            <PromoCard
+              image={promo.invite}
+              title="Invite your friends to get discounts"
+              className="min-h-[150px] sm:col-span-2"
+            />
+          )}
         </div>
       </div>
     </Reveal>

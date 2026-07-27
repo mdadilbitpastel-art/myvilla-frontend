@@ -23,15 +23,27 @@
 
 html {
   scroll-behavior: smooth;
-  /* Always reserve the scrollbar gutter so the page width never jumps
-     when the scrollbar appears/disappears (e.g. opening a modal).
-     The background has to live here, not only on <body>: the reserved
-     gutter is painted by the root box, so without it that strip rendered
-     as a bright white channel down the side of the page. */
+  /* The background has to live here, not only on <body>, so short pages and
+     any overscroll still paint the page colour rather than white. */
   background-color: var(--color-page);
-  scrollbar-gutter: stable;
   /* Kill the grey flash mobile browsers paint over every tapped control. */
   -webkit-tap-highlight-color: transparent;
+}
+
+/* The page's own scrollbar is hidden and drawn instead by <PageScrollbar>.
+   A native one is part of the layout: it cut a strip off the right of every
+   full-bleed section, and the gutter that stopped the page jumping when a
+   modal locks scrolling left that strip showing permanently. The replacement
+   floats over the page, so nothing is reserved and nothing shifts.
+   Touch devices keep theirs — it already floats and auto-hides. */
+@media (pointer: fine) {
+  html {
+    scrollbar-width: none;
+  }
+  html::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
 }
 
 body {
@@ -327,12 +339,37 @@ textarea:disabled {
   animation: kenBurns 12s ease-in-out infinite alternate;
 }
 
+/* Hero carousel zoom. A single continuous zoom wraps ALL slides at once, so
+   every slide is always at the same scale — a slide swap is a pure crossfade
+   with no scale change to perceive. It is strictly one-directional (scale only
+   grows) and `forwards`, so it never loops or alternates: the user can never
+   see it zoom out. It holds its final scale once done. */
 /* Hero carousel zoom. One-directional and `forwards`, so a slide that is
    fading out holds its final scale instead of snapping back to the start —
    the reset only happens later, while the slide is fully transparent.
    Duration must outlast one slide turn (6s) plus the crossfade. */
 .hero-zoom {
   animation: kenBurns 8.5s linear forwards;
+}
+
+/* Continuous, seamless horizontal scroll for the testimonials marquee. The
+   track holds the list TWICE, so translating it exactly -50% lands the second
+   copy where the first began — an unbroken loop with no jump. Speed is set per
+   instance via --marquee-duration; it pauses while hovered. */
+@keyframes marqueeX {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+.animate-marquee {
+  animation: marqueeX var(--marquee-duration, 40s) linear infinite;
+  will-change: transform;
+}
+.marquee-mask:hover .animate-marquee {
+  animation-play-state: paused;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -346,6 +383,7 @@ textarea:disabled {
   .animate-toast-in,
   .ken-burns,
   .hero-zoom,
+  .animate-marquee,
   .img-fade {
     animation: none !important;
     transition: none !important;

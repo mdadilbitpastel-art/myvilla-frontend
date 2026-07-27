@@ -2,11 +2,29 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { UserCircle, Building2, CalendarDays, Inbox, type LucideIcon } from "lucide-react";
+import {
+  UserCircle,
+  Building2,
+  CalendarDays,
+  Inbox,
+  BadgePercent,
+  type LucideIcon,
+} from "lucide-react";
+import { useVillaCount } from "@/lib/useProperty";
+
+type Item = {
+  label: string;
+  href: string;
+  icon: LucideIcon;
+  desc: string;
+  // Host-only sections only make sense once the user has listed a property, so
+  // they're hidden until then and hide again if the last property is removed.
+  hostOnly?: boolean;
+};
 
 // "Manage Account" itself is the page heading, not one of these — the hub has
 // nothing of its own to show, so it is never a selectable item.
-const ITEMS: { label: string; href: string; icon: LucideIcon; desc: string }[] = [
+const ITEMS: Item[] = [
   {
     label: "Profile Settings",
     href: "/settings/profile",
@@ -30,6 +48,14 @@ const ITEMS: { label: string; href: string; icon: LucideIcon; desc: string }[] =
     href: "/settings/rent-requests",
     icon: Inbox,
     desc: "Requests from guests on your villas",
+    hostOnly: true,
+  },
+  {
+    label: "Coupons",
+    href: "/settings/coupons",
+    icon: BadgePercent,
+    desc: "Discount codes for your villas",
+    hostOnly: true,
   },
 ];
 
@@ -49,6 +75,11 @@ function activeFromPath(pathname: string): string | null {
 export default function SettingsSidebar({ active }: { active?: string }) {
   const pathname = usePathname();
   const current = active ?? activeFromPath(pathname ?? "");
+  const { hasProperty } = useVillaCount();
+
+  // Host-only sections appear only once the user owns a property. Until then
+  // (and after the last one is removed) they're kept out of the nav entirely.
+  const items = ITEMS.filter((item) => !item.hostOnly || hasProperty);
 
   return (
     // Sticky below the 68px header so only the settings panel on the right
@@ -57,7 +88,7 @@ export default function SettingsSidebar({ active }: { active?: string }) {
     // Parks below the pinned "Manage Account" header (navbar + its collapsed
     // height), so the section list never slides underneath it.
     <nav className="flex flex-col gap-6 lg:sticky lg:top-[151px]">
-      {ITEMS.map(({ label, href, icon: Icon }) => {
+      {items.map(({ label, href, icon: Icon }) => {
         const isActive = current === label;
         return (
           <Link key={label} href={href} aria-current={isActive ? "page" : undefined} className="flex items-center gap-4">

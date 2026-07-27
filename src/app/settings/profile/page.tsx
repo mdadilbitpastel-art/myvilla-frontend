@@ -8,6 +8,9 @@ import { useToast } from "@/lib/toast";
 import { useConfirm } from "@/lib/confirm";
 import SettingsSidebar from "@/components/settings/SettingsSidebar";
 import Avatar from "@/components/ui/Avatar";
+import Select from "@/components/ui/Select";
+import DateField from "@/components/ui/DateField";
+import { DIAL_CODES, splitContact, joinContact } from "@/lib/phone";
 import { fileToResizedDataUrl } from "@/lib/image";
 import {
   fetchMe,
@@ -64,16 +67,6 @@ function normalizeGender(value: string): string {
 
 function digitsOnly(value: string): string {
   return value.replace(/\D/g, "").slice(0, 15);
-}
-
-// Open the native calendar from anywhere in the field, not just the icon.
-function openPicker(e: React.MouseEvent<HTMLInputElement>) {
-  const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
-  try {
-    el.showPicker?.();
-  } catch {
-    // No user gesture / unsupported — the built-in icon still works.
-  }
 }
 
 // The stored user → an editable draft, normalising the two fields whose old
@@ -170,7 +163,7 @@ export default function ProfileSettingsPage() {
 
   if (!user) {
     return (
-      <div className="mx-auto flex min-h-[60vh] w-full max-w-[1000px] flex-col items-center justify-center px-5 text-center">
+      <div className="mx-auto flex min-h-[60vh] w-full max-w-[1320px] flex-col items-center justify-center px-5 text-center">
         <h1 className="text-[22px] font-bold text-ink">You&apos;re signed out</h1>
         <p className="mt-2 text-[14px] text-body">Please sign in to view your profile settings.</p>
         <Link
@@ -205,8 +198,15 @@ export default function ProfileSettingsPage() {
     if (!values.fullName.trim()) return fail("fullName", "Please enter your full name.");
     if (values.dateOfBirth && today && values.dateOfBirth > today)
       return fail("dateOfBirth", "Date of birth cannot be in the future.");
-    if (values.emergencyContact && values.emergencyContact.length < 7)
-      return fail("emergencyContact", "Enter a valid contact number.");
+    // A contact number is optional, but if one is given the country code is
+    // mandatory and the number itself must look real.
+    {
+      const { code, number } = splitContact(values.emergencyContact);
+      if (number && !code)
+        return fail("emergencyContact", "Select a country code for your contact number.");
+      if (number && number.length < 7)
+        return fail("emergencyContact", "Enter a valid contact number.");
+    }
 
     setInvalidField(null);
     setError("");
@@ -279,7 +279,7 @@ export default function ProfileSettingsPage() {
   const id = (key: string) => `${fieldId}-${key}`;
 
   return (
-    <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-4 lg:px-7">
+    <div className="mx-auto w-full max-w-[1320px] px-5 pb-16 pt-4 lg:px-7">
       <div className="grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
         <aside>
           <SettingsSidebar />
@@ -315,58 +315,89 @@ export default function ProfileSettingsPage() {
                 </Field>
 
                 <Field label="Contact number" htmlFor={id("contact")}>
-                  <input
-                    id={id("contact")}
-                    type="tel"
-                    inputMode="numeric"
-                    autoComplete="tel"
-                    value={v.emergencyContact}
-                    disabled={!editing}
-                    onChange={(e) => set("emergencyContact", digitsOnly(e.target.value))}
-                    onKeyDown={(e) => {
-                      // Block the characters `type="tel"` still lets through.
-                      if (["e", "E", "+", "-", ".", ","].includes(e.key)) e.preventDefault();
-                    }}
-                    placeholder={editing ? "Numbers only" : "Not provided"}
-                    aria-invalid={invalidField === "emergencyContact" || undefined}
-                    className={inputCls(editing, invalidField === "emergencyContact")}
-                  />
+                  {/* A country code (mandatory) + the number. Both are stored as
+                      one string ("+91 9876543210"), so checkout can auto-fill
+                      it later. */}
+                  {(() => {
+                    const { code, number } = splitContact(v.emergencyContact);
+                    const invalid = invalidField === "emergencyContact";
+                    return (
+                      <div className="flex gap-2">
+                        <div className="w-[116px] shrink-0">
+                          <Select
+                            ariaLabel="Country code"
+                            value={code}
+                            disabled={!editing}
+                            onChange={(next) =>
+                              set("emergencyContact", joinContact(next, number))
+                            }
+                            placeholder="Code"
+                            menu="fit"
+                            triggerClass={`rounded-lg border px-3 py-2.5 text-[14px] text-ink transition-colors focus:outline-none ${
+                              editing ? "cursor-pointer" : "cursor-default"
+                            } ${
+                              !editing
+                                ? "border-transparent bg-page"
+                                : invalid
+                                  ? "border-red-400 bg-white focus:border-red-500"
+                                  : "border-line bg-white focus:border-primary"
+                            }`}
+                            options={DIAL_CODES.map((d) => ({
+                              value: d.code,
+                              triggerLabel: d.code,
+                              label: `${d.code} · ${d.country}`,
+                            }))}
+                          />
+                        </div>
+                        <input
+                          id={id("contact")}
+                          type="tel"
+                          inputMode="numeric"
+                          autoComplete="tel"
+                          value={number}
+                          disabled={!editing}
+                          onChange={(e) =>
+                            set("emergencyContact", joinContact(code, digitsOnly(e.target.value)))
+                          }
+                          onKeyDown={(e) => {
+                            if (["e", "E", "+", "-", ".", ","].includes(e.key)) e.preventDefault();
+                          }}
+                          placeholder={editing ? "Mobile number" : "Not provided"}
+                          aria-invalid={invalid || undefined}
+                          className={`${inputCls(editing, invalid)} flex-1`}
+                        />
+                      </div>
+                    );
+                  })()}
                 </Field>
 
                 <Field label="Gender" htmlFor={id("gender")}>
-                  <select
+                  <Select
                     id={id("gender")}
+                    ariaLabel="Gender"
                     value={GENDERS.includes(v.gender) ? v.gender : ""}
                     disabled={!editing}
-                    onChange={(e) => set("gender", e.target.value)}
-                    className={`${inputCls(editing, false)} appearance-none bg-[length:16px] pr-9 ${
-                      editing ? "cursor-pointer" : ""
+                    onChange={(next) => set("gender", next)}
+                    placeholder={editing ? "Select gender" : "Not provided"}
+                    triggerClass={`${inputCls(editing, false)} ${
+                      editing ? "cursor-pointer" : "cursor-default"
                     }`}
-                    style={editing ? caret : undefined}
-                  >
-                    <option value="">{editing ? "Select gender" : "Not provided"}</option>
-                    {GENDERS.map((g) => (
-                      <option key={g} value={g}>
-                        {g}
-                      </option>
-                    ))}
-                  </select>
+                    options={GENDERS.map((g) => ({ value: g, label: g }))}
+                  />
                 </Field>
 
-                <Field label="Date of birth" htmlFor={id("dob")}>
-                  <input
-                    id={id("dob")}
-                    type="date"
+                <Field label="Date of birth">
+                  {/* The app's themed calendar (same as the landing search) — the
+                      max is today, so a future date can't be picked at all. */}
+                  <DateField
+                    label="Date of birth"
+                    variant="field"
                     value={v.dateOfBirth}
                     min={MIN_DOB}
                     max={today || undefined}
                     disabled={!editing}
-                    onClick={openPicker}
-                    onChange={(e) => set("dateOfBirth", e.target.value)}
-                    aria-invalid={invalidField === "dateOfBirth" || undefined}
-                    className={`${inputCls(editing, invalidField === "dateOfBirth")} ${
-                      editing ? "cursor-pointer" : ""
-                    }`}
+                    onChange={(next) => set("dateOfBirth", next)}
+                    placeholder={editing ? "Select date" : "Not provided"}
                   />
                 </Field>
 
@@ -511,14 +542,6 @@ export default function ProfileSettingsPage() {
 
 /* ---------- field primitives ---------- */
 
-// Native select arrow varies per platform; this keeps one caret everywhere.
-const caret: React.CSSProperties = {
-  backgroundImage:
-    "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E\")",
-  backgroundRepeat: "no-repeat",
-  backgroundPosition: "right 12px center",
-};
-
 // One element per field in both modes — locked fields are the same control,
 // just disabled and restyled. Anything that swapped elements would change the
 // card's height the moment "Edit profile" is pressed.
@@ -562,7 +585,7 @@ function Field({
 // arrives.
 function ProfileSkeleton() {
   return (
-    <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-4 lg:px-7">
+    <div className="mx-auto w-full max-w-[1320px] px-5 pb-16 pt-4 lg:px-7">
       <div className="grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
         <aside>
           <SettingsSidebar />

@@ -1,9 +1,13 @@
 // Mock data for the landing page. Later served from the Django backend.
 
+import type { Villa } from "./api";
+
 export type VillaCardData = {
   id?: string; // real villa id → links to its detail page
   title?: string; // villa's main title (shown as the card heading when present)
   image: string;
+  /** Every photo of this villa, cover first — the card plays them on hover. */
+  images?: string[];
   city: string;
   country: string;
   price: number;
@@ -14,7 +18,26 @@ export type VillaCardData = {
   // ("Booked until 25 Jul 2026", "Sleeps up to 4 guests"). The card is still
   // shown and still links through; it's marked, not hidden.
   unavailable?: string;
+  // An active coupon on this villa — shows an offer badge on the card.
+  offer?: { code: string; label: string };
 };
+
+/**
+ * Every photo a villa has, in the order a card should play them: the cover the
+ * page already picked first, then the gallery. The two photo fields overlap
+ * (the cover is usually also a gallery entry), so duplicates are dropped —
+ * otherwise the same picture would "change" to itself mid-slideshow.
+ */
+export function villaGallery(
+  v: Pick<Villa, "coverImage" | "photos" | "images">,
+  cover: string
+): string[] {
+  const out = [cover];
+  for (const url of [v.coverImage, ...v.photos.map((p) => p.url), ...(v.images || [])]) {
+    if (url && !out.includes(url)) out.push(url);
+  }
+  return out;
+}
 
 export type PlaceData = {
   image: string;

@@ -61,17 +61,19 @@ export default function PropertyHeader({
   }
 
   return (
+    // Title row of the page header: the same 30→20px extrabold heading, and the
+    // same distance below the breadcrumb, as every other page (see PageHeader).
     <div
       className={`flex transition-all duration-200 ${
         compact
-          ? "mb-0 flex-row items-center justify-between gap-4"
-          : "mb-6 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"
+          ? "mt-0.5 flex-row items-center justify-between gap-4"
+          : "mt-2 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"
       }`}
     >
       <div className={compact ? "flex min-w-0 items-center gap-3" : ""}>
         <h1
-          className={`font-bold leading-tight text-ink transition-all duration-200 ${
-            compact ? "truncate text-[18px]" : "text-[26px] sm:text-[28px]"
+          className={`font-extrabold leading-tight text-ink transition-all duration-200 ${
+            compact ? "truncate text-[20px]" : "text-[30px]"
           }`}
         >
           {title}

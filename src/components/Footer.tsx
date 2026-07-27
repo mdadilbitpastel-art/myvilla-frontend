@@ -43,7 +43,7 @@ const COLUMNS = [
 export default function Footer() {
   return (
     <footer className="bg-white">
-      <div className="mx-auto max-w-[1120px] px-6 pt-14 pb-8">
+      <div className="mx-auto max-w-[1320px] px-6 pt-14 pb-8">
         <div className="grid grid-cols-2 gap-x-8 gap-y-10 md:grid-cols-[1.4fr_repeat(4,1fr)]">
           {/* Brand */}
           <div className="col-span-2 md:col-span-1">
@@ -71,9 +71,11 @@ export default function Footer() {
                     ) : (
                       // No page behind these yet. As <Link href="#"> every
                       // click jumped the reader back to the top of the page.
+                      // Nothing happens on hover either, so the colour stays
+                      // put rather than promising a link that isn't there.
                       <span
                         aria-disabled="true"
-                        className="cursor-default text-[14px] text-muted transition-colors hover:text-primary"
+                        className="cursor-default text-[14px] text-muted"
                       >
                         {link}
                       </span>

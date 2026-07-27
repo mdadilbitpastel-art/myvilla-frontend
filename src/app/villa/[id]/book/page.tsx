@@ -1,14 +1,22 @@
 "use client";
 
-import { Suspense, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { ChevronDown } from "lucide-react";
-import Breadcrumb from "@/components/property/Breadcrumb";
+import { ChevronDown, Check } from "lucide-react";
 import Img from "@/components/ui/Img";
 import { useAuth } from "@/lib/auth";
-import { fetchVilla, createBooking, type Villa } from "@/lib/api";
+import {
+  fetchVilla,
+  fetchBookingWindow,
+  createBooking,
+  validateCoupon,
+  type Villa,
+} from "@/lib/api";
+import { slideWindow, stayProblem, type BookingWindow } from "@/lib/bookingWindow";
 import { computeStayPricing, TAX_RATE } from "@/lib/pricing";
+import { DIAL_CODES, splitContact, joinContact } from "@/lib/phone";
+import PageHeader, { pageHeaderAction } from "@/components/ui/PageHeader";
 
 const PLACEHOLDER_IMG =
   "https://images.unsplash.com/photo-1571896349842-33c89424de2d?auto=format&fit=crop&w=600&q=80";
@@ -91,14 +99,38 @@ function expiryError(value: string): string {
 
 // Which field a validation message belongs to, so it can be marked invalid.
 type FieldKey =
+  | "method"
   | "cardType"
   | "cardNumber"
   | "expiration"
   | "cvv"
+  | "paypalEmail"
+  | "paypalPass"
+  | "gpayId"
   | "street"
   | "city"
   | "country"
   | "email";
+
+// The four methods a host can offer, and which of them are card-based (so the
+// checkout knows to show card fields vs. a PayPal / Google Pay flow instead).
+const KNOWN_METHODS = ["Visa", "Mastercard", "Google Pay", "PayPal"];
+const CARD_METHODS = new Set(["Visa", "Mastercard"]);
+const isCardMethod = (m: string) => CARD_METHODS.has(m);
+
+// A guest's Google Pay handle: either a UPI id ("name@bank") or a Google
+// account e-mail. Both are "something@something", so one shape check covers it.
+const isGpayId = (s: string) => /^[^\s@]+@[^\s@]+$/.test(s.trim());
+
+// The selected card brand must match the number the guest typed — Visa starts
+// with 4, Mastercard with 51-55 or 2221-2720. Returns "" when it fits.
+function cardBrandError(method: string, digits: string): string {
+  if (method === "Visa" && digits[0] !== "4")
+    return "A Visa card number starts with 4.";
+  if (method === "Mastercard" && !/^(5[1-5]|2[2-7])/.test(digits))
+    return "Enter a valid Mastercard number.";
+  return "";
+}
 
 // `useSearchParams` makes this subtree client-rendered, so it needs a boundary.
 export default function BookVillaPage() {
@@ -167,6 +199,9 @@ function BookVillaContent() {
   const loadError = failure?.id === id ? failure.message : "";
 
   // Payment form state
+  // Which of the host's offered methods the guest is paying with. Set to the
+  // first accepted method once the villa loads (see the effect below).
+  const [method, setMethod] = useState("");
   const [cardType, setCardType] = useState("Credit Card or Debit Card");
   const [cardNumber, setCardNumber] = useState("");
   const [expiration, setExpiration] = useState("");
@@ -182,10 +217,58 @@ function BookVillaContent() {
   const [country, setCountry] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  // The dialling code for the phone, auto-filled from the saved profile contact.
+  const [phoneCode, setPhoneCode] = useState("");
+
+  // PayPal / Google Pay credentials — only one set is used, depending on the
+  // method the guest picks. Kept separate from the card fields so switching
+  // methods never carries stale card digits into a PayPal booking.
+  const [paypalEmail, setPaypalEmail] = useState("");
+  const [paypalPass, setPaypalPass] = useState("");
+  const [gpayId, setGpayId] = useState("");
+
+  // Coupon: what the guest typed, and the applied discount once it validates.
+  // `applied` holds the server-confirmed code + amount off for these nights.
+  // Extra services the guest ticked (by name). Priced per night from the villa;
+  // the total updates live as these change.
+  const [selectedExtras, setSelectedExtras] = useState<string[]>([]);
+  const [couponInput, setCouponInput] = useState(searchParams.get("coupon") || "");
+  const [applied, setApplied] = useState<{ code: string; discount: number; label: string } | null>(null);
+  const [couponMsg, setCouponMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [applying, setApplying] = useState(false);
 
   const [error, setError] = useState("");
   const [errorField, setErrorField] = useState<FieldKey | "">("");
   const [submitting, setSubmitting] = useState(false);
+
+  // The host's booking window, and a clock to judge it against. Filling in a
+  // payment form takes minutes: the villa's check-in time can go by, or another
+  // guest can take these very nights, while this page sits open. Both are
+  // refused by `createBooking` — this is so the page says it first, before the
+  // guest types a card number they were never going to be able to use.
+  const [bookingWindow, setBookingWindow] = useState<BookingWindow | null>(null);
+  const [nowTick, setNowTick] = useState<Date | null>(null);
+  useEffect(() => {
+    setNowTick(new Date());
+    const timer = setInterval(() => setNowTick(new Date()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    let active = true;
+    fetchBookingWindow(id)
+      .then((w) => active && setBookingWindow(w))
+      // The server checks all of this again at Confirm, so a failed fetch only
+      // costs the early warning — never lets a bad stay through.
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [id, reloadKey]);
+  // Judged on the SERVER's clock, not the browser's — see slideWindow.
+  const win = useMemo(
+    () => (bookingWindow && nowTick ? slideWindow(bookingWindow, nowTick.getTime()) : null),
+    [bookingWindow, nowTick]
+  );
   const errorRef = useRef<HTMLParagraphElement>(null);
 
   useEffect(() => {
@@ -199,7 +282,7 @@ function BookVillaContent() {
         if (!cancelled)
           setFailure({
             id,
-            message: e instanceof Error ? e.message : "Could not load this villa.",
+            message: e instanceof Error ? e.message : "Could not load this property.",
           });
       });
     return () => {
@@ -207,9 +290,18 @@ function BookVillaContent() {
     };
   }, [id, reloadKey]);
 
-  // Prefill the e-mail from the signed-in user.
+  // Prefill the e-mail and phone from the signed-in user's saved profile. The
+  // contact number is stored with its country code ("+91 9876543210"), so it's
+  // split back into the code picker and the number box here.
   useEffect(() => {
     if (user?.email) setEmail((e) => e || user.email);
+    if (user?.emergencyContact) {
+      const { code, number } = splitContact(user.emergencyContact);
+      if (number) {
+        setPhone((p) => p || number);
+        if (code) setPhoneCode((c) => c || code);
+      }
+    }
   }, [user]);
 
   // Not signed in → surface the sign-in modal (Reserve normally guards this).
@@ -232,10 +324,71 @@ function BookVillaContent() {
     if (error) errorRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [error]);
 
+  // Validate + apply a coupon against this villa and stay. The server decides
+  // whether it applies and the exact amount off — the same figure the booking
+  // will freeze, so the summary never quotes a discount the payment won't honour.
+  const applyCoupon = useCallback(
+    async (rawCode: string) => {
+      const code = rawCode.trim();
+      if (!code) {
+        setApplied(null);
+        setCouponMsg(null);
+        return;
+      }
+      setApplying(true);
+      setCouponMsg(null);
+      try {
+        const res = await validateCoupon(code, id, Math.max(1, trip.nights));
+        if (res.valid) {
+          setApplied({ code: res.code, discount: res.discount, label: res.label });
+          setCouponInput(res.code);
+          setCouponMsg({ ok: true, text: res.message });
+        } else {
+          setApplied(null);
+          setCouponMsg({ ok: false, text: res.message });
+        }
+      } catch (e) {
+        setApplied(null);
+        setCouponMsg({ ok: false, text: e instanceof Error ? e.message : "Couldn't check that coupon." });
+      } finally {
+        setApplying(false);
+      }
+    },
+    [id, trip.nights]
+  );
+
+  // A coupon carried in the URL (?coupon=CODE, e.g. from the home-page offer
+  // popup) is applied automatically once the villa and nights are known — once.
+  const autoApplied = useRef(false);
+  useEffect(() => {
+    if (autoApplied.current) return;
+    if (!v || !dates) return;
+    const code = searchParams.get("coupon");
+    if (!code) return;
+    autoApplied.current = true;
+    applyCoupon(code);
+  }, [v, dates, searchParams, applyCoupon]);
+
+  // The payment methods THIS host accepts, in a stable known order. A villa
+  // saved before the field existed lists nothing, so it falls back to offering
+  // all four rather than leaving the guest with nothing to pay with.
+  const acceptedMethods = useMemo(() => {
+    const accepted = v?.acceptedPayments ?? [];
+    const chosen = KNOWN_METHODS.filter((m) => accepted.includes(m));
+    return chosen.length ? chosen : KNOWN_METHODS;
+  }, [v?.acceptedPayments]);
+
+  // Default to the host's first accepted method, and re-home the selection if
+  // the guest's current pick isn't offered here (e.g. once the villa loads and
+  // narrows the list from the fallback).
+  useEffect(() => {
+    setMethod((m) => (m && acceptedMethods.includes(m) ? m : acceptedMethods[0] ?? ""));
+  }, [acceptedMethods]);
+
   if (loadError) {
     return (
       <Centered
-        title="Couldn't load this villa"
+        title="Couldn't load this property"
         note={loadError}
         onRetry={() => {
           setFailure(null);
@@ -274,34 +427,79 @@ function BookVillaContent() {
     );
   }
 
+  // --- Extra services ---
+  const offeredExtras = v.extraServices || [];
+  const chosenExtras = offeredExtras.filter((s) => selectedExtras.includes(s.name));
+  const extrasPerNight = chosenExtras.reduce((sum, s) => sum + (s.price || 0), 0);
+  function toggleExtra(name: string) {
+    setSelectedExtras((prev) =>
+      prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]
+    );
+  }
+
   // --- Price details ---
   const price = v.pricePerNight || 0;
-  const { subtotal, serviceFee, tax, total } = computeStayPricing(price, trip.nights);
+  const { subtotal, discount, serviceFee, tax, extras, total } = computeStayPricing(
+    price,
+    trip.nights,
+    applied?.discount ?? 0,
+    extrasPerNight
+  );
   const cover = v.photos[0]?.url || v.coverImage || "";
   // Narrowed once here — closures below can't see the `!dates` guard above.
   const stay = dates;
+  // Why these nights can no longer be taken, or "" while they still can. Same
+  // checks the server runs at Confirm, worded the same way.
+  const windowProblem = stayProblem(isoDate(stay.start), isoDate(stay.end), win);
   // Free cancellation until noon the day before arrival; partial refund until
   // noon on the arrival day itself.
   const freeUntil = fmtShort(addDays(stay.start, -1));
   const partialUntil = fmtShort(stay.start);
 
   function validate(): { field: FieldKey; message: string } | null {
-    if (!cardType.trim()) return { field: "cardType", message: "Please choose a card type." };
-    const card = onlyDigits(cardNumber);
-    if (card.length < 12 || !luhnValid(card))
-      return { field: "cardNumber", message: "Enter a valid card number." };
-    const expBad = expiryError(expiration);
-    if (expBad) return { field: "expiration", message: expBad };
-    const c = onlyDigits(cvv);
-    if (c.length < 3 || c.length > 4) return { field: "cvv", message: "Enter a valid CVV." };
-    if (!street.trim()) return { field: "street", message: "Enter your billing street name." };
-    if (!city.trim()) return { field: "city", message: "Enter your billing city." };
-    if (!country.trim())
-      return { field: "country", message: "Select your billing country or region." };
+    if (!method) return { field: "method", message: "Please choose a payment method." };
+
+    // Each method validates only its own inputs — card fields for the card
+    // brands, account credentials for PayPal / Google Pay.
+    if (isCardMethod(method)) {
+      if (!cardType.trim()) return { field: "cardType", message: "Please choose a card type." };
+      const card = onlyDigits(cardNumber);
+      if (card.length < 12 || !luhnValid(card))
+        return { field: "cardNumber", message: "Enter a valid card number." };
+      const brandBad = cardBrandError(method, card);
+      if (brandBad) return { field: "cardNumber", message: brandBad };
+      const expBad = expiryError(expiration);
+      if (expBad) return { field: "expiration", message: expBad };
+      const c = onlyDigits(cvv);
+      if (c.length < 3 || c.length > 4) return { field: "cvv", message: "Enter a valid CVV." };
+      // Billing address is only collected for card payments.
+      if (!street.trim()) return { field: "street", message: "Enter your billing street name." };
+      if (!city.trim()) return { field: "city", message: "Enter your billing city." };
+      if (!country.trim())
+        return { field: "country", message: "Select your billing country or region." };
+    } else if (method === "PayPal") {
+      if (!EMAIL_RE.test(paypalEmail.trim()))
+        return { field: "paypalEmail", message: "Enter the e-mail for your PayPal account." };
+      if (paypalPass.length < 6)
+        return { field: "paypalPass", message: "Enter your PayPal password." };
+    } else if (method === "Google Pay") {
+      if (!isGpayId(gpayId))
+        return { field: "gpayId", message: "Enter your UPI ID (name@bank) or Google account e-mail." };
+    }
+
     if (!EMAIL_RE.test(email.trim()))
       return { field: "email", message: "Enter a valid e-mail address." };
     return null;
   }
+
+  // What identifies the payment on the receipt: the card number for a card, or
+  // the PayPal / Google Pay account for those. The server masks it before it's
+  // ever stored — nothing sensitive is kept in full.
+  const paymentDetail = isCardMethod(method)
+    ? ""
+    : method === "PayPal"
+      ? paypalEmail.trim()
+      : gpayId.trim();
 
   async function onConfirm() {
     const bad = validate();
@@ -314,23 +512,30 @@ function BookVillaContent() {
     setErrorField("");
     setSubmitting(true);
     try {
+      const card = isCardMethod(method);
       await createBooking({
         villaId: id,
         checkIn: isoDate(stay.start),
         checkOut: isoDate(stay.end),
         guests: trip.guests,
-        paymentMethod: cardType,
-        cardNumber,
-        expiration,
-        cvv,
-        billingStreet: street,
-        billingApartment: apartment,
-        billingCity: city,
-        billingState: state,
-        billingZip: zip,
-        billingCountry: country,
+        // The actual method the guest chose (e.g. "PayPal"), not the card type.
+        paymentMethod: method,
+        // Card fields only for a card payment; the PayPal / Google Pay account
+        // travels in paymentDetail instead.
+        cardNumber: card ? cardNumber : "",
+        expiration: card ? expiration : "",
+        cvv: card ? cvv : "",
+        paymentDetail,
+        billingStreet: card ? street : "",
+        billingApartment: card ? apartment : "",
+        billingCity: card ? city : "",
+        billingState: card ? state : "",
+        billingZip: card ? zip : "",
+        billingCountry: card ? country : "",
         contactEmail: email,
-        contactPhone: phone,
+        contactPhone: joinContact(phoneCode, phone),
+        couponCode: applied?.code || "",
+        extraServices: selectedExtras,
       });
       router.push("/settings/bookings?booked=1");
     } catch (e) {
@@ -340,22 +545,31 @@ function BookVillaContent() {
   }
 
   return (
-    <div className="mx-auto max-w-[1120px] px-5 pb-20 pt-6">
-      <Breadcrumb
-        items={["Home", "Villas", { label: v.title, href: `/villa/${id}` }, "Confirm Payment"]}
+    <div className="pb-20">
+      {/* The site-wide page header — outside the content container so its
+          background covers the full viewport width. */}
+      <PageHeader
+        crumbs={[
+          { label: "Home", href: "/" },
+          { label: "Villas", href: "/search" },
+          { label: v.title, href: `/villa/${id}`, truncate: true },
+          { label: "Confirm Payment" },
+        ]}
+        title="Confirm Payment"
+        subtitle={
+          <>
+            Fields marked <span className="text-red-500">*</span> are required.
+          </>
+        }
+        action={
+          <Link href={`/villa/${id}`} className={pageHeaderAction}>
+            Cancel
+          </Link>
+        }
       />
 
-      <div className="flex items-start justify-between">
-        <h1 className="text-[26px] font-bold text-ink">Confirm Payment</h1>
-        <Link
-          href={`/villa/${id}`}
-          className="text-[14px] text-ink underline underline-offset-2 hover:text-primary"
-        >
-          Cancel
-        </Link>
-      </div>
-
-      <div className="mt-5 grid grid-cols-1 gap-10 lg:grid-cols-[1fr_380px]">
+      <div className="mx-auto max-w-[1320px] px-5 lg:px-7">
+      <div className="mt-5 grid grid-cols-1 gap-10 lg:grid-cols-[1fr_440px]">
         {/* ---------- Left: payment form ---------- */}
         <div>
           {/* Trip details */}
@@ -371,18 +585,95 @@ function BookVillaContent() {
             editHref={`/villa/${id}`}
           />
 
-          {/* Pay using */}
-          <div className="mt-8 flex items-center justify-between">
+          {/* Extra services — chosen here in the roomy left column so the sticky
+              summary on the right stays compact; the price there updates live. */}
+          {offeredExtras.length > 0 && (
+            <div className="mt-8">
+              <h2 className="text-[19px] font-semibold text-ink">Extra services</h2>
+              <p className="mt-1 text-[13px] text-muted">
+                Optional add-ons, charged per night. Pick any you&apos;d like — your
+                total updates as you go.
+              </p>
+              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {offeredExtras.map((svc) => {
+                  const on = selectedExtras.includes(svc.name);
+                  return (
+                    <button
+                      key={svc.name}
+                      type="button"
+                      aria-pressed={on}
+                      onClick={() => toggleExtra(svc.name)}
+                      className={`flex items-center gap-3 rounded-xl border px-3.5 py-3 text-left transition-colors ${
+                        on ? "border-primary bg-primary/[0.05]" : "border-line hover:border-primary/40"
+                      }`}
+                    >
+                      <span
+                        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${
+                          on ? "border-primary bg-primary text-white" : "border-line"
+                        }`}
+                      >
+                        {on && <Check size={13} />}
+                      </span>
+                      <span className="flex-1 text-[14px] text-ink">{svc.name}</span>
+                      <span className="shrink-0 text-[13px] font-semibold text-ink">
+                        {money(svc.price)}
+                        <span className="font-normal text-muted"> / night</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Pay using — the guest picks ONE of the methods this host offers,
+              and the form below adapts to whichever is selected. These are the
+              villa's own accepted methods, not a fixed row of logos. */}
+          <div className="mt-8">
             <h2 className="text-[19px] font-semibold text-ink">Pay using</h2>
-            <CardBrands accepted={v.acceptedPayments} />
+            <div role="radiogroup" aria-label="Payment method" className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {acceptedMethods.map((m) => {
+                const on = method === m;
+                return (
+                  <button
+                    key={m}
+                    type="button"
+                    role="radio"
+                    aria-checked={on}
+                    onClick={() => {
+                      setMethod(m);
+                      if (error) {
+                        setError("");
+                        setErrorField("");
+                      }
+                    }}
+                    className={`flex flex-col items-center justify-center gap-2 rounded-xl border px-3 py-4 transition-colors ${
+                      on ? "border-primary bg-primary/[0.05]" : "border-line hover:border-primary/40"
+                    }`}
+                  >
+                    <span className="flex h-6 items-center">{CARD_BRANDS[m]}</span>
+                    <span className={`text-[13px] ${on ? "font-semibold text-ink" : "text-body"}`}>
+                      {m}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            {errorField === "method" && (
+              <p className="mt-2 text-[13px] text-red-600">Please choose a payment method.</p>
+            )}
           </div>
 
+          {/* ---------- Card payment (Visa / Mastercard) ---------- */}
+          {isCardMethod(method) && (
+          <>
           {/* Card type select */}
           <div className="mt-4">
             <SelectBox
               value={cardType}
               onChange={setCardType}
               label="Card type"
+              required
               invalid={errorField === "cardType"}
             >
               <option>Credit Card or Debit Card</option>
@@ -393,7 +684,7 @@ function BookVillaContent() {
 
           {/* Card number + expiration + cvv (connected group) */}
           <div className="mt-3 overflow-hidden rounded-xl border border-line">
-            <LabeledCell label="Card Number" htmlFor={`${uid}-card`}>
+            <LabeledCell label="Card Number" htmlFor={`${uid}-card`} required>
               <input
                 id={`${uid}-card`}
                 value={cardNumber}
@@ -406,7 +697,7 @@ function BookVillaContent() {
               />
             </LabeledCell>
             <div className="grid grid-cols-2 border-t border-line">
-              <LabeledCell label="Expiration" htmlFor={`${uid}-exp`} className="border-r border-line">
+              <LabeledCell label="Expiration" htmlFor={`${uid}-exp`} required className="border-r border-line">
                 <input
                   id={`${uid}-exp`}
                   value={expiration}
@@ -436,7 +727,7 @@ function BookVillaContent() {
                   value={cvv}
                   onChange={(e) => setCvv(onlyDigits(e.target.value).slice(0, 4))}
                   inputMode="numeric"
-                  placeholder="CVV"
+                  placeholder="CVV *"
                   aria-label="CVV"
                   autoComplete="cc-csc"
                   maxLength={4}
@@ -456,13 +747,13 @@ function BookVillaContent() {
           <h2 className="mt-8 text-[19px] font-semibold text-ink">Billing Address</h2>
           <div className="mt-4 overflow-hidden rounded-xl border border-line">
             <PlainCell>
-              <input value={street} onChange={(e) => setStreet(e.target.value)} placeholder="Street Name" aria-label="Street Name" autoComplete="address-line1" aria-invalid={errorField === "street" || undefined} className={inputCls} />
+              <input value={street} onChange={(e) => setStreet(e.target.value)} placeholder="Street Name *" aria-label="Street Name" autoComplete="address-line1" aria-invalid={errorField === "street" || undefined} className={inputCls} />
             </PlainCell>
             <PlainCell className="border-t border-line">
               <input value={apartment} onChange={(e) => setApartment(e.target.value)} placeholder="Apartment Number" aria-label="Apartment Number" autoComplete="address-line2" className={inputCls} />
             </PlainCell>
             <PlainCell className="border-t border-line">
-              <input value={city} onChange={(e) => setCity(e.target.value)} placeholder="City" aria-label="City" autoComplete="address-level2" aria-invalid={errorField === "city" || undefined} className={inputCls} />
+              <input value={city} onChange={(e) => setCity(e.target.value)} placeholder="City *" aria-label="City" autoComplete="address-level2" aria-invalid={errorField === "city" || undefined} className={inputCls} />
             </PlainCell>
             <div className="grid grid-cols-2 border-t border-line">
               <PlainCell className="border-r border-line">
@@ -483,7 +774,7 @@ function BookVillaContent() {
               invalid={errorField === "country"}
             >
               <option value="" disabled>
-                Country or Region
+                Country or Region *
               </option>
               {COUNTRIES.map((c) => (
                 <option key={c} value={c}>
@@ -492,19 +783,76 @@ function BookVillaContent() {
               ))}
             </SelectBox>
           </div>
+          </>
+          )}
+
+          {/* ---------- PayPal ---------- */}
+          {method === "PayPal" && (
+            <PayPalPanel
+              email={paypalEmail}
+              setEmail={(val) => {
+                setPaypalEmail(val);
+                if (errorField === "paypalEmail") {
+                  setErrorField("");
+                  setError("");
+                }
+              }}
+              password={paypalPass}
+              setPassword={(val) => {
+                setPaypalPass(val);
+                if (errorField === "paypalPass") {
+                  setErrorField("");
+                  setError("");
+                }
+              }}
+              amount={money(total)}
+              emailInvalid={errorField === "paypalEmail"}
+              passInvalid={errorField === "paypalPass"}
+              uid={uid}
+            />
+          )}
+
+          {/* ---------- Google Pay ---------- */}
+          {method === "Google Pay" && (
+            <GooglePayPanel
+              value={gpayId}
+              setValue={(val) => {
+                setGpayId(val);
+                if (errorField === "gpayId") {
+                  setErrorField("");
+                  setError("");
+                }
+              }}
+              amount={money(total)}
+              invalid={errorField === "gpayId"}
+              uid={uid}
+            />
+          )}
 
           {/* Additional information */}
           <h2 className="mt-8 text-[19px] font-semibold text-ink">Additional Information</h2>
           <div className="mt-4 overflow-hidden rounded-xl border border-line">
             <PlainCell>
-              <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="E-mail Address" aria-label="E-mail Address" autoComplete="email" aria-invalid={errorField === "email" || undefined} className={inputCls} />
+              <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="E-mail Address *" aria-label="E-mail Address" autoComplete="email" aria-invalid={errorField === "email" || undefined} className={inputCls} />
             </PlainCell>
-            <div className="grid grid-cols-[64px_1fr] border-t border-line">
-              <div className="flex items-center justify-center border-r border-line text-[14px] text-muted">
-                +00
+            <div className="grid grid-cols-[104px_1fr] border-t border-line">
+              <div className="border-r border-line">
+                <select
+                  value={phoneCode}
+                  onChange={(e) => setPhoneCode(e.target.value)}
+                  aria-label="Country code"
+                  className="h-full w-full bg-transparent px-3 text-[14px] text-ink outline-none"
+                >
+                  <option value="">Code</option>
+                  {DIAL_CODES.map((d) => (
+                    <option key={`${d.code}-${d.country}`} value={d.code}>
+                      {d.code}
+                    </option>
+                  ))}
+                </select>
               </div>
               <PlainCell>
-                <input value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel" placeholder="Phone Number" aria-label="Phone Number" autoComplete="tel" className={inputCls} />
+                <input value={phone} onChange={(e) => setPhone(e.target.value.replace(/[^\d]/g, ""))} inputMode="tel" placeholder="Phone Number" aria-label="Phone Number" autoComplete="tel" className={inputCls} />
               </PlainCell>
             </div>
           </div>
@@ -548,6 +896,22 @@ function BookVillaContent() {
             .
           </p>
 
+          {/* The stay stopped being bookable while this page was open — the
+              check-in time went by, or somebody else took the nights. Said
+              here rather than only after the guest presses Confirm. */}
+          {windowProblem && (
+            <div role="alert" className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-[13px] text-red-600">
+              <p className="font-semibold">These dates are no longer available</p>
+              <p className="mt-0.5">{windowProblem}</p>
+              <Link
+                href={`/villa/${id}`}
+                className="mt-1.5 inline-block font-medium underline underline-offset-2"
+              >
+                Pick new dates
+              </Link>
+            </div>
+          )}
+
           {error && (
             <p ref={errorRef} role="alert" className="mt-4 rounded-lg bg-red-50 px-4 py-2.5 text-[13px] text-red-600">
               {error}
@@ -556,7 +920,7 @@ function BookVillaContent() {
 
           <button
             onClick={onConfirm}
-            disabled={submitting}
+            disabled={submitting || !!windowProblem}
             className="mt-5 rounded-xl bg-primary px-6 py-3 text-[14px] font-semibold text-white transition-colors hover:bg-primary-dark disabled:opacity-60"
           >
             {submitting ? "Processing…" : "Confirm and Pay"}
@@ -565,7 +929,9 @@ function BookVillaContent() {
 
         {/* ---------- Right: summary card ---------- */}
         <aside>
-          <div className="lg:sticky lg:top-[88px]">
+          {/* Above the collapsed heading (z-30): the two sticky boxes overlap by
+              a few pixels once the header shrinks, and the summary should win. */}
+          <div className="lg:-mt-[30px] lg:sticky lg:top-[150px] lg:z-40">
             <div className="rounded-2xl border border-line bg-white p-5 shadow-[0_8px_30px_rgba(0,0,0,0.06)]">
               <div className="flex gap-4">
                 <div className="img-frame h-[74px] w-[92px] flex-shrink-0 overflow-hidden rounded-xl">
@@ -590,6 +956,31 @@ function BookVillaContent() {
 
               <hr className="my-5 border-line" />
 
+              {/* Coupon */}
+              <CouponBox
+                value={couponInput}
+                onChange={(val) => {
+                  setCouponInput(val);
+                  // Editing away from an applied code drops the discount until
+                  // it's re-applied, so the total can't show a stale reduction.
+                  if (applied && val.trim().toUpperCase() !== applied.code) {
+                    setApplied(null);
+                    setCouponMsg(null);
+                  }
+                }}
+                onApply={() => applyCoupon(couponInput)}
+                onRemove={() => {
+                  setApplied(null);
+                  setCouponInput("");
+                  setCouponMsg(null);
+                }}
+                applied={applied}
+                applying={applying}
+                message={couponMsg}
+              />
+
+              <hr className="my-5 border-line" />
+
               <h3 className="text-[15px] font-bold text-ink">Price Details</h3>
               <div className="mt-4 space-y-3 text-[14px]">
                 <div className="flex items-center justify-between text-body">
@@ -599,8 +990,10 @@ function BookVillaContent() {
                   <span className="text-ink">{money(subtotal)}</span>
                 </div>
                 <div className="flex items-center justify-between text-body">
-                  <span>Discount</span>
-                  <span className="text-ink">{money(0)}</span>
+                  <span>Discount{applied ? ` (${applied.code})` : ""}</span>
+                  <span className={discount > 0 ? "font-medium text-green-600" : "text-ink"}>
+                    {discount > 0 ? `-${money(discount)}` : money(0)}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between text-body">
                   <span className="underline underline-offset-2">Service fee</span>
@@ -610,6 +1003,19 @@ function BookVillaContent() {
                   <span>Tax ({Math.round(TAX_RATE * 100)}%)</span>
                   <span className="text-ink">{money(tax)}</span>
                 </div>
+                {/* One constant line — the per-service breakdown lives in the
+                    left column, so selecting more never grows this box. */}
+                {extras > 0 && (
+                  <div className="flex items-center justify-between text-body">
+                    <span
+                      className="min-w-0 truncate pr-2"
+                      title={chosenExtras.map((s) => s.name).join(", ")}
+                    >
+                      Extra services{chosenExtras.length ? ` (${chosenExtras.length})` : ""}
+                    </span>
+                    <span className="shrink-0 text-ink">{money(extras)}</span>
+                  </div>
+                )}
               </div>
 
               <hr className="my-4 border-line" />
@@ -622,6 +1028,7 @@ function BookVillaContent() {
           </div>
         </aside>
       </div>
+      </div>
     </div>
   );
 }
@@ -630,6 +1037,84 @@ function BookVillaContent() {
 
 const inputCls =
   "w-full bg-transparent text-[14px] text-ink outline-none placeholder:text-muted/70";
+
+function CouponBox({
+  value,
+  onChange,
+  onApply,
+  onRemove,
+  applied,
+  applying,
+  message,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onApply: () => void;
+  onRemove: () => void;
+  applied: { code: string; discount: number; label: string } | null;
+  applying: boolean;
+  message: { ok: boolean; text: string } | null;
+}) {
+  if (applied) {
+    return (
+      <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3">
+        <div className="flex items-center justify-between">
+          <div className="min-w-0">
+            <p className="flex items-center gap-2 text-[13px] font-semibold text-green-700">
+              <span className="font-mono tracking-wide">{applied.code}</span>
+              <span className="rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-bold uppercase text-white">
+                {applied.label}
+              </span>
+            </p>
+            <p className="mt-0.5 text-[12px] text-green-700/80">Coupon applied to your stay.</p>
+          </div>
+          <button
+            type="button"
+            onClick={onRemove}
+            className="shrink-0 text-[12px] font-medium text-green-700 underline underline-offset-2 hover:text-green-800"
+          >
+            Remove
+          </button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <label className="text-[13px] font-semibold text-ink">Have a coupon?</label>
+      <div className="mt-2 flex gap-2">
+        <input
+          value={value}
+          onChange={(e) => onChange(e.target.value.toUpperCase())}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              onApply();
+            }
+          }}
+          placeholder="Enter code"
+          aria-label="Coupon code"
+          autoCapitalize="characters"
+          maxLength={32}
+          className="w-full rounded-lg border border-line bg-white px-3 py-2.5 font-mono text-[13px] tracking-wide text-ink outline-none focus:border-primary placeholder:font-sans placeholder:tracking-normal placeholder:text-muted/70"
+        />
+        <button
+          type="button"
+          onClick={onApply}
+          disabled={applying || !value.trim()}
+          className="shrink-0 rounded-lg border border-primary px-4 py-2.5 text-[13px] font-semibold text-primary transition-colors hover:bg-primary/5 disabled:opacity-50"
+        >
+          {applying ? "…" : "Apply"}
+        </button>
+      </div>
+      {message && (
+        <p className={`mt-2 text-[12px] ${message.ok ? "text-green-600" : "text-red-600"}`}>
+          {message.text}
+        </p>
+      )}
+    </div>
+  );
+}
 
 function PlainCell({
   children,
@@ -641,21 +1126,29 @@ function PlainCell({
   return <div className={`px-4 py-3.5 ${className}`}>{children}</div>;
 }
 
+// A red asterisk marking a required field.
+function Req() {
+  return <span className="text-red-500"> *</span>;
+}
+
 function LabeledCell({
   label,
   htmlFor,
   children,
   className = "",
+  required = false,
 }: {
   label: string;
   htmlFor: string;
   children: React.ReactNode;
   className?: string;
+  required?: boolean;
 }) {
   return (
     <div className={`px-4 py-2.5 ${className}`}>
       <label htmlFor={htmlFor} className="block text-[11px] text-muted">
         {label}
+        {required && <Req />}
       </label>
       <div className="mt-0.5">{children}</div>
     </div>
@@ -670,6 +1163,7 @@ function SelectBox({
   label,
   autoComplete,
   invalid,
+  required = false,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -678,9 +1172,17 @@ function SelectBox({
   label?: string;
   autoComplete?: string;
   invalid?: boolean;
+  required?: boolean;
 }) {
   return (
-    <div className="relative">
+    <div>
+      {label && (
+        <label className="mb-1 block text-[11px] text-muted">
+          {label}
+          {required && <Req />}
+        </label>
+      )}
+      <div className="relative">
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -697,6 +1199,7 @@ function SelectBox({
         size={18}
         className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-muted"
       />
+      </div>
     </div>
   );
 }
@@ -738,7 +1241,7 @@ function Centered({
   onRetry?: () => void;
 }) {
   return (
-    <div className="mx-auto flex min-h-[60vh] max-w-[1200px] flex-col items-center justify-center px-5 text-center">
+    <div className="mx-auto flex min-h-[60vh] max-w-[1320px] flex-col items-center justify-center px-5 text-center">
       <h1 className="text-[22px] font-bold text-ink">{title}</h1>
       <p className="mt-2 text-[14px] text-body">{note}</p>
       {onRetry ? (
@@ -764,10 +1267,11 @@ function Centered({
 /* Mirrors the real two-column layout so the form/summary don't snap in. */
 function BookSkeleton() {
   return (
-    <div className="mx-auto max-w-[1120px] px-5 pb-20 pt-6">
+    <div className="mx-auto max-w-[1320px] px-5 pb-20 pt-5 lg:px-7">
+      {/* Same rhythm as the real header: breadcrumb, then the 30px title. */}
       <div className="skeleton h-4 w-64" />
-      <div className="skeleton mt-6 h-7 w-56" />
-      <div className="mt-5 grid grid-cols-1 gap-10 lg:grid-cols-[1fr_380px]">
+      <div className="skeleton mt-2 h-8 w-56" />
+      <div className="mt-9 grid grid-cols-1 gap-10 lg:grid-cols-[1fr_440px]">
         <div>
           <div className="skeleton h-4 w-40" />
           <div className="skeleton mt-4 h-12 w-full" />
@@ -831,22 +1335,128 @@ const CARD_BRANDS: Record<string, React.ReactNode> = {
 };
 
 /**
- * The methods this villa's owner ticked when they listed it — not a fixed row
- * of logos. A guest should only be shown what the host will actually take.
- * A villa saved before the field existed lists nothing, so it falls back to
- * every brand rather than showing an empty gap.
+ * The PayPal flow. Instead of a card, the guest signs in to the PayPal account
+ * that will fund the stay — the same shape as PayPal's real hosted login. The
+ * account e-mail is masked server-side before it's ever stored.
  */
-function CardBrands({ accepted = [] }: { accepted?: string[] }) {
-  const names = Object.keys(CARD_BRANDS);
-  const chosen = accepted.filter((a) => names.includes(a));
-  const show = chosen.length ? chosen : names;
+function PayPalPanel({
+  email,
+  setEmail,
+  password,
+  setPassword,
+  amount,
+  emailInvalid,
+  passInvalid,
+  uid,
+}: {
+  email: string;
+  setEmail: (v: string) => void;
+  password: string;
+  setPassword: (v: string) => void;
+  amount: string;
+  emailInvalid: boolean;
+  passInvalid: boolean;
+  uid: string;
+}) {
   return (
-    <div className="flex items-center gap-2.5">
-      {show.map((name) => (
-        <span key={name} title={name} className="inline-flex items-center">
-          {CARD_BRANDS[name]}
+    <div className="mt-4 rounded-xl border border-line p-5">
+      <div className="flex items-center justify-between">
+        <span className="text-[18px] font-bold italic">
+          <span className="text-[#003087]">Pay</span>
+          <span className="text-[#009cde]">Pal</span>
         </span>
-      ))}
+        <span className="text-[13px] text-muted">
+          Paying <span className="font-semibold text-ink">{amount}</span>
+        </span>
+      </div>
+      <p className="mt-1 text-[13px] text-muted">
+        Log in to the PayPal account you&apos;d like to pay with.
+      </p>
+      <div className="mt-4 overflow-hidden rounded-xl border border-line">
+        <PlainCell>
+          <input
+            id={`${uid}-pp-email`}
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            type="email"
+            placeholder="PayPal e-mail *"
+            aria-label="PayPal e-mail"
+            autoComplete="email"
+            aria-invalid={emailInvalid || undefined}
+            className={inputCls}
+          />
+        </PlainCell>
+        <PlainCell className="border-t border-line">
+          <input
+            id={`${uid}-pp-pass`}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            type="password"
+            placeholder="PayPal password *"
+            aria-label="PayPal password"
+            autoComplete="current-password"
+            aria-invalid={passInvalid || undefined}
+            className={inputCls}
+          />
+        </PlainCell>
+      </div>
+      <p className="mt-3 text-[12.5px] text-muted">
+        Your PayPal balance or linked bank will be charged when you confirm. We
+        never see or store your PayPal password.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * The Google Pay flow. The guest gives the UPI id or Google account the payment
+ * comes from; confirming acts as approving the Google Pay prompt. Masked before
+ * it is stored, just like the card and PayPal paths.
+ */
+function GooglePayPanel({
+  value,
+  setValue,
+  amount,
+  invalid,
+  uid,
+}: {
+  value: string;
+  setValue: (v: string) => void;
+  amount: string;
+  invalid: boolean;
+  uid: string;
+}) {
+  return (
+    <div className="mt-4 rounded-xl border border-line p-5">
+      <div className="flex items-center justify-between">
+        <span className="text-[18px] font-semibold">
+          <span className="text-[#4285f4]">G</span>
+          <span className="text-[#ea4335]">P</span>
+          <span className="text-[#fbbc04]">a</span>
+          <span className="text-[#34a853]">y</span>
+        </span>
+        <span className="text-[13px] text-muted">
+          Paying <span className="font-semibold text-ink">{amount}</span>
+        </span>
+      </div>
+      <p className="mt-1 text-[13px] text-muted">
+        Enter the UPI ID or Google account to pay from. You&apos;ll approve the
+        payment when you confirm.
+      </p>
+      <div className="mt-4 overflow-hidden rounded-xl border border-line">
+        <PlainCell>
+          <input
+            id={`${uid}-gpay-id`}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="UPI ID (name@bank) or Google e-mail *"
+            aria-label="Google Pay UPI ID or e-mail"
+            autoComplete="off"
+            aria-invalid={invalid || undefined}
+            className={inputCls}
+          />
+        </PlainCell>
+      </div>
     </div>
   );
 }

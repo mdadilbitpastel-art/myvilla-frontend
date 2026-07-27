@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useId, useRef, useState } from "react";
+import { Suspense, useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -28,15 +28,14 @@ import {
   updateVilla,
   fetchMyVillas,
   type VillaInput,
+  type ExtraService,
 } from "@/lib/api";
 import { fileToResizedDataUrl } from "@/lib/image";
 // Shared with the villa detail page, which splits a villa's saved `services`
 // back into facilities vs extra services off this same list.
 import { EXTRA_SERVICES, isExtraService } from "@/lib/services";
 import VillaAvailabilityPanel from "@/components/settings/VillaAvailability";
-
-// Height of the global navbar the sticky page header parks under.
-const NAV_HEIGHT = 68;
+import PageHeader, { pageHeaderAction } from "@/components/ui/PageHeader";
 
 const STEPS = [
   "Property Details",
@@ -139,6 +138,18 @@ function villaError(v: VillaForm): FieldIssue | null {
   return null;
 }
 
+// Every extra service the host ticked must carry a price per night — an add-on
+// with no price is meaningless, so it blocks the step until priced (or removed).
+function extraServicesError(extras: ExtraService[]): FieldIssue | null {
+  const missing = extras.find((e) => !(Number(e.price) > 0));
+  if (missing)
+    return {
+      field: "extraServices",
+      message: `Set a price per night for “${missing.name}”, or uncheck it.`,
+    };
+  return null;
+}
+
 function imagesError(images: WizardImage[]): FieldIssue | null {
   return images.length ? null : { field: "images", message: "Please add at least one image." };
 }
@@ -203,26 +214,6 @@ function Wizard() {
   // a blank create form.
   const [loadFailed, setLoadFailed] = useState("");
 
-  // Collapse the sticky page header once it's actually stuck. Watched via a
-  // sentinel that sits BEFORE the header in the flow, so the header shrinking
-  // can't move it — a window.scrollY threshold fed its own height change back
-  // into the trigger and flickered open/shut.
-  //
-  // Attached through a callback ref, not an effect: in edit mode the wizard
-  // renders <WizardSkeleton /> first, so on mount the sentinel doesn't exist
-  // yet and an effect would silently observe nothing — which is why edit mode
-  // never collapsed while add mode did.
-  const [scrolled, setScrolled] = useState(false);
-  const observer = useRef<IntersectionObserver | null>(null);
-  const headerSentinel = useCallback((node: HTMLDivElement | null) => {
-    observer.current?.disconnect();
-    if (!node) return;
-    observer.current = new IntersectionObserver(
-      ([entry]) => setScrolled(!entry.isIntersecting),
-      { rootMargin: `-${NAV_HEIGHT}px 0px 0px 0px`, threshold: 0 }
-    );
-    observer.current.observe(node);
-  }, []);
   const [reloadKey, setReloadKey] = useState(0);
   const errorRef = useRef<HTMLParagraphElement>(null);
 
@@ -250,6 +241,9 @@ function Wizard() {
   // Step 2–5.
   const [images, setImages] = useState<WizardImage[]>([]);
   const [services, setServices] = useState<string[]>([]);
+  // Extra services the host offers, each with a per-night price. Kept separate
+  // from `services` (facilities) so a price can ride along with each one.
+  const [extraServices, setExtraServices] = useState<ExtraService[]>([]);
   // Nights the host has closed on the calendar. Draft state like every other
   // field: nothing reaches the server until the listing itself is saved.
   const [blockedDates, setBlockedDates] = useState<string[]>([]);
@@ -267,7 +261,7 @@ function Wizard() {
         if (cancelled) return;
         const v = list.find((x) => x.id === editId);
         if (!v) {
-          setLoadFailed("That villa could not be found.");
+          setLoadFailed("That property could not be found.");
           setLoadingVilla(false);
           return;
         }
@@ -294,7 +288,10 @@ function Wizard() {
           additionalRules: v.additionalRules || "",
         });
         if (!knownType) setVillaTypeOther(v.propertyType);
-        setServices(v.services || []);
+        // Facilities only — any known extra-service labels an older villa kept
+        // in `services` are dropped here; extras now live in their own list.
+        setServices((v.services || []).filter((s) => !isExtraService(s)));
+        setExtraServices(v.extraServices || []);
         setBlockedDates(v.blockedDates || []);
         setPrice(v.pricePerNight ? String(v.pricePerNight) : "");
         setAcceptedPayments(
@@ -314,7 +311,7 @@ function Wizard() {
       })
       .catch((e) => {
         if (!cancelled) {
-          setLoadFailed(e instanceof Error ? e.message : "Could not load the villa.");
+          setLoadFailed(e instanceof Error ? e.message : "Could not load the property.");
           setLoadingVilla(false);
         }
       });
@@ -331,7 +328,7 @@ function Wizard() {
   // Live per-section validation — recomputed every render from current state,
   // so the stepper's complete/incomplete badges stay correct from ANY step.
   const stepIssues = [
-    villaError(villa),
+    villaError(villa) ?? extraServicesError(extraServices),
     imagesError(images),
     pricingError(price),
     paymentError(acceptedPayments, accountType, cardNumber, editMode),
@@ -418,6 +415,10 @@ function Wizard() {
         doubleBedRooms: villa.doubleBedRooms,
         availabilityDays: villa.availabilityDays,
         services,
+        // Keep only entries with a real name; a blank/negative price becomes 0.
+        extraServices: extraServices
+          .filter((e) => e.name.trim())
+          .map((e) => ({ name: e.name.trim(), price: Math.max(0, Number(e.price) || 0) })),
         blockedDates,
         checkInTime: villa.checkInTime,
         checkOutTime: villa.checkOutTime,
@@ -452,8 +453,8 @@ function Wizard() {
   // a blank "Add your Property" form.
   if (loadFailed) {
     return (
-      <div className="mx-auto flex min-h-[60vh] w-full max-w-[1120px] flex-col items-center justify-center px-5 text-center">
-        <h1 className="text-[22px] font-bold text-ink">Couldn&apos;t load this villa</h1>
+      <div className="mx-auto flex min-h-[60vh] w-full max-w-[1320px] flex-col items-center justify-center px-5 text-center">
+        <h1 className="text-[22px] font-bold text-ink">Couldn&apos;t load this property</h1>
         <p className="mt-2 text-[14px] text-body">{loadFailed}</p>
         <div className="mt-5 flex items-center gap-4">
           <button
@@ -479,56 +480,27 @@ function Wizard() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1120px] px-5 pb-20 lg:px-7">
-      {/* Watched by the observer above: once it scrolls under the navbar the
-          header below is stuck, so it collapses. */}
-      <div ref={headerSentinel} aria-hidden className="h-px" />
+    <div className="pb-20">
+      {/* The site-wide page header — same breadcrumb, title and collapse as
+          "Manage Account". It sits outside the content container so its
+          background covers the full viewport width. */}
+      <PageHeader
+        crumbs={[
+          { label: "Home", href: "/" },
+          // No "Settings" step: this area is "Manage Account" now.
+          { label: "Manage Account", href: "/settings" },
+          { label: "My Property", href: "/settings/property" },
+          { label: editMode ? "Edit your Property" : "Add your Property" },
+        ]}
+        title={editMode ? "Edit your Property" : "Add your Property"}
+        action={
+          <Link href="/settings/property" className={pageHeaderAction}>
+            Back
+          </Link>
+        }
+      />
 
-      {/* Sticky page header — breadcrumb + title + Back. Bleeds to the viewport
-          edges (-mx / px) so its background covers the full width while the
-          content stays on the page's grid. */}
-      <div
-        // Fully opaque: a translucent header let the form scroll through it,
-        // and the blur was never enough to keep the heading readable over it.
-        className={`sticky top-[68px] z-30 -mx-5 border-b bg-page px-5 transition-all duration-200 lg:-mx-7 lg:px-7 ${
-          scrolled ? "border-line py-3" : "border-transparent pb-5 pt-8"
-        }`}
-      >
-      {/* Breadcrumb */}
-      <nav aria-label="Breadcrumb" className="text-[13px] text-body">
-        {/* No "Settings" step: this area is "Manage Account" now, and the
-            layout's own breadcrumb already names it. */}
-        <Link href="/" className="underline underline-offset-2 hover:text-primary">Home</Link>
-        <span className="mx-1.5 text-muted">/</span>
-        <Link href="/settings" className="underline underline-offset-2 hover:text-primary">Manage Account</Link>
-        <span className="mx-1.5 text-muted">/</span>
-        <Link href="/settings/property" className="underline underline-offset-2 hover:text-primary">My Property</Link>
-        <span className="mx-1.5 text-muted">/</span>
-        <span className="text-muted">{editMode ? "Edit your Property" : "Add your Property"}</span>
-      </nav>
-
-      {/* Title + Back */}
-      <div
-        className={`flex items-center justify-between transition-all duration-200 ${
-          scrolled ? "mt-1" : "mt-5"
-        }`}
-      >
-        <h1
-          className={`font-extrabold text-ink transition-all duration-200 ${
-            scrolled ? "text-[20px]" : "text-[30px]"
-          }`}
-        >
-          {editMode ? "Edit your Property" : "Add your Property"}
-        </h1>
-        <Link
-          href="/settings/property"
-          className="text-[16px] font-medium text-ink underline underline-offset-4 hover:text-primary"
-        >
-          Back
-        </Link>
-      </div>
-      </div>
-
+      <div className="mx-auto w-full max-w-[1320px] px-5 lg:px-7">
       <div className="mt-3 grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
         {/* Stepper */}
         <Stepper step={step} complete={stepComplete} onSelect={goto} />
@@ -543,6 +515,8 @@ function Wizard() {
               setVillaTypeOther={setVillaTypeOther}
               services={services}
               setServices={setServices}
+              extraServices={extraServices}
+              setExtraServices={setExtraServices}
               invalidField={invalidField}
               editVillaId={editId}
               blockedDates={blockedDates}
@@ -605,6 +579,7 @@ function Wizard() {
           </div>
         </div>
       </div>
+      </div>
     </div>
   );
 }
@@ -628,7 +603,7 @@ function Stepper({
     // item, and a stretched item fills its whole grid area, leaving sticky no
     // room to travel. (The settings sidebar differs — its nav sits inside an
     // <aside>, which does the stretching for it.)
-    <nav className="lg:sticky lg:top-[148px] lg:self-start lg:pt-1">
+    <nav className="lg:sticky lg:top-[150px] lg:self-start lg:pt-1">
       <ol className="relative">
         {STEPS.map((label, i) => {
           const active = i === step;
@@ -734,6 +709,8 @@ function VillaDetailsStep({
   setVillaTypeOther,
   services,
   setServices,
+  extraServices,
+  setExtraServices,
   invalidField,
   editVillaId,
   blockedDates,
@@ -745,6 +722,8 @@ function VillaDetailsStep({
   setVillaTypeOther: (v: string) => void;
   services: string[];
   setServices: React.Dispatch<React.SetStateAction<string[]>>;
+  extraServices: ExtraService[];
+  setExtraServices: React.Dispatch<React.SetStateAction<ExtraService[]>>;
   invalidField: string;
   /** Set when editing an existing villa — unlocks its live calendar. */
   editVillaId?: string | null;
@@ -778,6 +757,29 @@ function VillaDetailsStep({
   function toggleFacility(label: string) {
     setServices((prev) =>
       prev.includes(label) ? prev.filter((x) => x !== label) : [...prev, label]
+    );
+  }
+
+  // Extra services carry a per-night price, so they're their own list. Ticking
+  // one adds it at $0 (the host then types the price); unticking removes it.
+  const extraFor = (name: string) =>
+    extraServices.find((e) => e.name.toLowerCase() === name.toLowerCase());
+
+  function toggleExtra(name: string) {
+    setExtraServices((prev) =>
+      prev.some((e) => e.name.toLowerCase() === name.toLowerCase())
+        ? prev.filter((e) => e.name.toLowerCase() !== name.toLowerCase())
+        : [...prev, { name, price: 0 }]
+    );
+  }
+
+  function setExtraPrice(name: string, price: number) {
+    setExtraServices((prev) =>
+      prev.map((e) =>
+        e.name.toLowerCase() === name.toLowerCase()
+          ? { ...e, price: Math.max(0, price) }
+          : e
+      )
     );
   }
 
@@ -976,31 +978,78 @@ function VillaDetailsStep({
             <span className="font-normal text-muted">(Optional)</span>
           </FieldLabel>
           <p className="mb-2 text-[12px] text-muted">
-            Premium services guests can add to their stay.
+            Premium services guests can add to their stay. Set a price per night
+            for each one you offer — guests pick the ones they want at checkout.
           </p>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {EXTRA_SERVICES.map((service) => {
-              const on = services.includes(service);
+              const entry = extraFor(service);
+              const on = !!entry;
+              // A ticked service must have a price — flag the input until it does.
+              const needsPrice = on && !(Number(entry?.price) > 0);
               return (
-                <button
+                <div
                   key={service}
-                  type="button"
-                  onClick={() => toggleFacility(service)}
-                  className={`flex items-center gap-2 rounded-lg border px-3 py-2.5 text-left text-[13px] transition-colors ${
-                    on
-                      ? "border-primary bg-primary/[0.06] text-primary"
-                      : "border-line text-ink hover:border-primary/40"
+                  className={`flex h-[46px] items-center gap-2.5 rounded-lg border px-3 transition-colors ${
+                    on ? "border-primary bg-primary/[0.04]" : "border-line"
                   }`}
                 >
+                  {/* Only the checkbox toggles the service. */}
+                  <button
+                    type="button"
+                    role="checkbox"
+                    aria-checked={on}
+                    aria-label={service}
+                    onClick={() => toggleExtra(service)}
+                    className="shrink-0 rounded-[4px] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                  >
+                    <span
+                      className={`flex h-[18px] w-[18px] items-center justify-center rounded-[4px] border ${
+                        on
+                          ? "border-primary bg-primary text-white"
+                          : "border-[#b7bdc9] bg-white"
+                      }`}
+                    >
+                      {on && <Check size={12} />}
+                    </span>
+                  </button>
+
                   <span
-                    className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border ${
-                      on ? "border-primary bg-primary text-white" : "border-line"
+                    className={`min-w-0 flex-1 truncate text-[13px] ${
+                      on ? "font-medium text-primary" : "text-ink"
                     }`}
                   >
-                    {on && <Check size={12} />}
+                    {service}
                   </span>
-                  {service}
-                </button>
+
+                  {/* Price per night appears inline once ticked, and hides again
+                      when unticked — the row itself doesn't change shape. */}
+                  {on && (
+                    <div
+                      className={`flex h-[30px] shrink-0 items-center rounded-md border bg-white px-2 focus-within:border-primary ${
+                        needsPrice ? "border-red-400" : "border-line"
+                      }`}
+                    >
+                      <span className="text-[12px] text-muted">$</span>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        aria-label={`${service} price per night`}
+                        aria-invalid={needsPrice || undefined}
+                        value={entry.price ? String(entry.price) : ""}
+                        onChange={(e) =>
+                          setExtraPrice(
+                            service,
+                            Number(e.target.value.replace(/[^\d.]/g, "")) || 0
+                          )
+                        }
+                        placeholder="0"
+                        className="w-[46px] bg-transparent px-1 text-[13px] text-ink outline-none"
+                      />
+                      <span className="whitespace-nowrap text-[11px] text-muted">/night</span>
+                    </div>
+                  )}
+                </div>
               );
             })}
           </div>
@@ -1575,10 +1624,11 @@ function RuleToggle({
 /* Approximates the stepper + card so the two-column layout doesn't snap in. */
 function WizardSkeleton() {
   return (
-    <div className="mx-auto w-full max-w-[1120px] px-5 pb-20 pt-8 lg:px-7">
+    <div className="mx-auto w-full max-w-[1320px] px-5 pb-20 pt-5 lg:px-7">
+      {/* Same rhythm as the real header: breadcrumb, then the 30px title. */}
       <div className="skeleton h-4 w-72" />
-      <div className="skeleton mt-5 h-9 w-64" />
-      <div className="mt-8 grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
+      <div className="skeleton mt-2 h-8 w-64" />
+      <div className="mt-7 grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
         <div className="lg:pt-1">
           {STEPS.map((label) => (
             <div key={label} className="flex items-start gap-4 pb-8 last:pb-0">

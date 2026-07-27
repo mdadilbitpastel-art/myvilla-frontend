@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { fetchVilla, type Villa } from "@/lib/api";
+import { fetchVilla, fetchVillaReviews, type Villa, type Review } from "@/lib/api";
 import { villa as dummy, type Facility } from "@/lib/villa";
 import Breadcrumb from "@/components/property/Breadcrumb";
 import PropertyHeader from "@/components/property/PropertyHeader";
@@ -49,8 +49,16 @@ function serviceIcon(s: string): Facility["icon"] {
 export default function VillaDetailPage() {
   const params = useParams();
   const id = String(params.id);
+  // A coupon carried in from a home-page offer (?coupon=CODE) — forwarded to
+  // checkout via the reservation card so it's already applied at payment.
+  const [coupon, setCoupon] = useState("");
+  useEffect(() => {
+    setCoupon(new URLSearchParams(window.location.search).get("coupon") || "");
+  }, []);
   // undefined = loading, null = not found, Villa = loaded
   const [v, setV] = useState<Villa | null | undefined>(undefined);
+  // Real reviews for this villa, fetched alongside it.
+  const [reviews, setReviews] = useState<Review[]>([]);
   // Tracked separately: a network blip is not the same as a deleted listing,
   // and telling a user their villa "may have been removed" is alarming.
   const [failed, setFailed] = useState(false);
@@ -88,6 +96,24 @@ export default function VillaDetailPage() {
       active = false;
     };
   }, [id, attempt]);
+
+  // Load the villa's reviews once it exists. A failure here is silent — the
+  // reviews section just shows its empty state rather than blocking the page.
+  useEffect(() => {
+    if (!v) {
+      setReviews([]);
+      return;
+    }
+    let active = true;
+    fetchVillaReviews(id)
+      .then((rs) => {
+        if (active) setReviews(rs);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [v, id]);
 
   // The hand-over is measured once, then remembered — never re-measured while
   // the strip is up.
@@ -183,8 +209,8 @@ export default function VillaDetailPage() {
 
   if (failed) {
     return (
-      <div className="mx-auto flex min-h-[60vh] max-w-[1200px] flex-col items-center justify-center px-5 text-center">
-        <h1 className="text-[22px] font-bold text-ink">Couldn&apos;t load this villa</h1>
+      <div className="mx-auto flex min-h-[60vh] max-w-[1320px] flex-col items-center justify-center px-5 text-center">
+        <h1 className="text-[22px] font-bold text-ink">Couldn&apos;t load this property</h1>
         <p className="mt-2 text-[14px] text-body">
           Check your connection and try again.
         </p>
@@ -203,13 +229,14 @@ export default function VillaDetailPage() {
     // Mirror the loaded layout so the page fills in rather than snapping in.
     return (
       <div
-        className="mx-auto max-w-[1200px] px-5 pb-20 pt-6"
+        className="mx-auto max-w-[1320px] px-5 pb-20 pt-5 lg:px-7"
         aria-busy="true"
         aria-label="Loading villa"
       >
+        {/* Same rhythm as the real header: breadcrumb, then the 30px title. */}
         <div className="skeleton h-4 w-64" />
-        <div className="skeleton mt-5 h-7 w-2/3 max-w-[420px]" />
-        <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-2">
+        <div className="skeleton mt-2 h-8 w-2/3 max-w-[420px]" />
+        <div className="mt-8 grid grid-cols-1 gap-3 md:grid-cols-2">
           <div className="skeleton aspect-[4/3] rounded-2xl md:aspect-auto md:h-[420px]" />
           <div className="grid grid-cols-2 gap-3 md:h-[420px]">
             {[0, 1, 2, 3].map((i) => (
@@ -232,7 +259,7 @@ export default function VillaDetailPage() {
 
   if (v === null) {
     return (
-      <div className="mx-auto flex min-h-[60vh] max-w-[1200px] flex-col items-center justify-center px-5 text-center">
+      <div className="mx-auto flex min-h-[60vh] max-w-[1320px] flex-col items-center justify-center px-5 text-center">
         <h1 className="text-[22px] font-bold text-ink">Villa not found</h1>
         <p className="mt-2 text-[14px] text-body">This listing may have been removed.</p>
         <Link
@@ -265,11 +292,11 @@ export default function VillaDetailPage() {
   ];
 
   const location = [v.city, v.country].filter(Boolean).join(", ");
-  const subtitle = `${v.propertyType || "Villa"}${location ? " in " + location : ""} hosted by ${dummy.host.name}`;
+  const subtitle = `${v.propertyType || "Villa"}${location ? " in " + location : ""} hosted by ${v.hostName || "your host"}`;
 
-  // Exactly what the owner ticked in the wizard — the facilities block and the
-  // optional extra-services block are both driven off the same saved list.
-  const { facilities: facilityLabels, extras } = splitServices(v.services);
+  // Facilities come from the free-form `services` list; the optional extra
+  // services (with their per-night prices) are their own list on the villa.
+  const { facilities: facilityLabels } = splitServices(v.services);
   const facilities: Facility[] = facilityLabels.map((s) => ({
     label: s,
     icon: serviceIcon(s),
@@ -293,37 +320,42 @@ export default function VillaDetailPage() {
   const breadcrumb = ["Home", "Villas", v.country || "Listing", v.title];
 
   return (
-    <div className="mx-auto max-w-[1200px] px-5 pb-20 pt-6">
-      {/* Sticky page header — breadcrumb, title and Share/Save. Bleeds to the
-          viewport edges so its background covers the full width. It collapses
-          in two stages: the text rows tighten early, and the photo strip only
-          appears once the gallery below has scrolled past. */}
+    <div className="pb-20">
+      {/* Sticky page header — breadcrumb, title and Share/Save, in the same bar
+          as every other page (see PageHeader): full-viewport background, text on
+          the content grid, transparent→line border and the pb-4/pt-5 → py-2.5
+          rhythm. It collapses in two stages of its own: the text rows tighten
+          early, and the photo strip only appears once the gallery below has
+          scrolled past. */}
       <div
         ref={headerRef}
-        className={`sticky top-[68px] z-30 -mx-5 bg-page px-5 transition-all duration-300 ease-out ${
-          collapsed ? "py-2.5" : "pt-0"
+        className={`sticky top-[68px] z-30 border-b bg-page transition-all duration-200 ease-out ${
+          collapsed ? "border-line py-2.5" : "border-transparent pb-4 pt-5"
         }`}
       >
-        <Breadcrumb items={breadcrumb} compact={collapsed} />
-        <PropertyHeader
-          title={v.title}
-          rating={dummy.rating}
-          reviewsCount={dummy.reviewsCount}
-          villaId={v.id}
-          isOwner={v.isOwner}
-          compact={collapsed}
-        />
-        {/* The thumbnail strip only joins the pinned header once the real
-            gallery below has scrolled past it. */}
-        <div
-          className={`overflow-hidden transition-[max-height,margin,opacity] duration-300 ease-out ${
-            galleryCollapsed ? "mt-2 max-h-[60px] opacity-100" : "mt-0 max-h-0 opacity-0"
-          }`}
-        >
-          <Gallery hero={hero} thumbs={thumbs} compact />
+        <div className="mx-auto w-full max-w-[1320px] px-5 lg:px-7">
+          <Breadcrumb items={breadcrumb} compact={collapsed} />
+          <PropertyHeader
+            title={v.title}
+            rating={v.rating}
+            reviewsCount={v.reviewsCount}
+            villaId={v.id}
+            isOwner={v.isOwner}
+            compact={collapsed}
+          />
+          {/* The thumbnail strip only joins the pinned header once the real
+              gallery below has scrolled past it. */}
+          <div
+            className={`overflow-hidden transition-[max-height,margin,opacity] duration-300 ease-out ${
+              galleryCollapsed ? "mt-2 max-h-[60px] opacity-100" : "mt-0 max-h-0 opacity-0"
+            }`}
+          >
+            <Gallery hero={hero} thumbs={thumbs} compact />
+          </div>
         </div>
       </div>
 
+      <div className="mx-auto max-w-[1320px] px-5 pt-4 lg:px-7">
       {/* The full gallery stays in normal flow so it scrolls away like any
           other content; its height eases to zero as the strip takes over — same
           duration and easing, so the two read as one movement. */}
@@ -355,16 +387,16 @@ export default function VillaDetailPage() {
             detail={plural(v.bedrooms, "bed")}
           />
           <Facilities facilities={facilities} />
-          <ExtraServices services={extras} />
-          {/* Reviews / rating are public/demo content — kept as-is */}
-          <Reviews
-            reviews={dummy.reviews}
-            breakdown={dummy.ratingBreakdown}
-            rating={dummy.rating}
-            reviewsCount={dummy.reviewsCount}
-          />
+          <ExtraServices services={v.extraServices} />
+          <Reviews reviews={reviews} rating={v.rating} reviewsCount={v.reviewsCount} />
           <LocationMap location={[v.address, v.city, v.country].filter(Boolean).join(", ")} />
-          <HostSection host={dummy.host} />
+          <HostSection
+            name={v.hostName}
+            avatar={v.hostAvatar}
+            gender={v.hostGender}
+            email={v.hostEmail}
+            phone={v.hostPhone}
+          />
           {/* The host's own rules — check-in/out times and what's allowed. */}
           <HouseRules rules={v.houseRules} additional={v.additionalRules} />
         </div>
@@ -385,14 +417,16 @@ export default function VillaDetailPage() {
           >
             <ReservationCard
               pricing={pricing}
-              rating={dummy.rating}
+              rating={v.rating}
               villaId={v.id}
               ownerId={v.ownerId}
               maxGuests={v.guests}
               checkInTime={v.checkInTime}
+              coupon={coupon}
             />
           </div>
         </aside>
+      </div>
       </div>
     </div>
   );

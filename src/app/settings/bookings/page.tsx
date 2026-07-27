@@ -2,15 +2,18 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Star } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useLiveRefresh } from "@/lib/useLiveRefresh";
 import { useToast } from "@/lib/toast";
 import { useConfirm } from "@/lib/confirm";
 import SettingsSidebar from "@/components/settings/SettingsSidebar";
+import BookingDetails from "@/components/settings/BookingDetails";
+import StarRating from "@/components/ui/StarRating";
 import CountPill from "@/components/ui/CountPill";
 import Img from "@/components/ui/Img";
-import { fetchMyBookings, cancelBooking, type Booking } from "@/lib/api";
+import { fetchMyBookings, cancelBooking, submitReview, type Booking } from "@/lib/api";
+import { bookingStatus, lifecycleOf, STATUS_TONE_CLASS } from "@/lib/booking";
 
 const COLUMNS = [
   "Name of Villa",
@@ -18,7 +21,12 @@ const COLUMNS = [
   "Stay Duration",
   "No. of Guests",
   "Status",
+  "",
 ];
+
+// One grid template shared by the header and every row so the columns line up.
+const ROW_GRID = "grid-cols-[1.4fr_0.9fr_1.1fr_0.8fr_0.9fr_1.6fr]";
+const ROW_MINW = "min-w-[860px]";
 
 const MONTHS = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -67,6 +75,14 @@ function greetingText(b: Booking): string {
     where ? `📍 ${where}` : "",
     `📅 ${fmtFull(b.checkIn)} → ${fmtFull(b.checkOut)} (${b.nights} night${b.nights === 1 ? "" : "s"})`,
     `👥 ${b.guests} guest${b.guests === 1 ? "" : "s"}`,
+    ...(b.extraServices?.length
+      ? [
+          `✨ Extra services:`,
+          ...b.extraServices.map(
+            (s) => `   • ${s.name} — ${money(s.price)} × ${b.nights} = ${money(s.price * b.nights)}`
+          ),
+        ]
+      : []),
     `💳 Total paid: ${money(b.total)}`,
     ``,
     b.villaCover ? `📸 ${b.villaCover}` : "",
@@ -141,66 +157,152 @@ function SortDropdown({ sort, onToggle }: { sort: "desc" | "asc"; onToggle: () =
 
 function BookingRow({
   booking,
-  kind,
   onCancel,
   cancelling,
+  onReview,
+  reviewBusy,
+  expanded,
+  onToggle,
 }: {
   booking: Booking;
-  kind: "active" | "history";
-  onCancel: (id: string, title: string) => void;
+  onCancel: (booking: Booking) => void;
   cancelling: boolean;
+  onReview: (rating: number, comment: string) => void | Promise<void>;
+  reviewBusy: boolean;
+  expanded: boolean;
+  onToggle: (id: string) => void;
 }) {
-  const cancelled = booking.status === "cancelled";
-  const responded = booking.hostResponded;
+  const status = bookingStatus(booking);
+  // The server decides whether cancelling is still on the table: only a live,
+  // not-yet-checked-in stay (upcoming / awaiting) can be called off.
+  const canCancel = booking.canCancel;
+  const rowRef = useRef<HTMLDivElement>(null);
+
+  // On expand, bring the revealed details into view (after the open animation).
+  useEffect(() => {
+    if (!expanded) return;
+    const t = setTimeout(() => {
+      rowRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }, 320);
+    return () => clearTimeout(t);
+  }, [expanded]);
+
   return (
-    <div className="grid min-w-[620px] grid-cols-[1.4fr_1fr_1.2fr_1fr_1fr] items-center rounded-lg border border-line px-4 py-3.5 text-[13px]">
-      <Link
-        href={`/villa/${booking.villaId}`}
-        title={booking.villaTitle}
-        className="truncate pr-2 text-ink hover:text-primary"
+    <div
+      ref={rowRef}
+      className={`${ROW_MINW} overflow-hidden rounded-lg border transition-colors ${
+        expanded ? "border-primary/40 bg-primary/[0.015]" : "border-line"
+      }`}
+    >
+      {/* Collapsed: the compact table row (collapses away as the detail opens). */}
+      <div
+        className={`grid transition-all duration-300 ease-out ${
+          expanded ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr] opacity-100"
+        }`}
       >
-        {booking.villaTitle}
-      </Link>
-      <span className="text-body">{relativeTime(booking.createdAt)}</span>
-      <span className="text-body">{fmtStay(booking.checkIn, booking.checkOut)}</span>
-      <span className="text-body">
-        {booking.guests} guest{booking.guests === 1 ? "" : "s"}
-      </span>
-      <span className="flex flex-col items-end gap-1 text-right">
-        {kind === "active" ? (
-          <>
-            {/* The host's reply lands here without a reload — the page polls. */}
-            <span
-              className={`text-[13px] font-semibold ${
-                responded ? "text-primary" : "text-muted"
-              }`}
+        <div className="overflow-hidden">
+          <div className={`grid ${ROW_GRID} items-center px-4 py-3.5 text-[13px]`}>
+            <Link
+              href={`/villa/${booking.villaId}`}
+              title={booking.villaTitle}
+              className="group flex min-w-0 items-center gap-2.5 pr-2"
             >
-              {responded ? "Responded" : "Awaiting response"}
+              <Img
+                src={booking.villaCover}
+                alt={booking.villaTitle}
+                className="h-9 w-9 shrink-0 rounded-lg object-cover"
+              />
+              <span className="flex min-w-0 flex-col">
+                <span className="truncate text-ink group-hover:text-primary">
+                  {booking.villaTitle}
+                </span>
+                {booking.extraServices?.length > 0 && (
+                  <span
+                    className="truncate text-[11px] text-muted"
+                    title={booking.extraServices.map((s) => s.name).join(", ")}
+                  >
+                    ✨ {booking.extraServices.length} extra service
+                    {booking.extraServices.length === 1 ? "" : "s"} · +{money(booking.extrasTotal)}
+                  </span>
+                )}
+              </span>
+            </Link>
+            <span className="text-body">{relativeTime(booking.createdAt)}</span>
+            <span className="text-body">{fmtStay(booking.checkIn, booking.checkOut)}</span>
+            <span className="text-body">
+              {booking.guests} guest{booking.guests === 1 ? "" : "s"}
             </span>
-            <button
-              type="button"
-              onClick={() => onCancel(booking.id, booking.villaTitle)}
-              disabled={cancelling}
-              aria-busy={cancelling}
-              className="text-[12px] font-medium text-red-400 underline underline-offset-2 transition-colors hover:text-red-500 disabled:opacity-50"
-            >
-              {cancelling ? (
-                <>
-                  <span className="spinner" aria-hidden /> Cancelling…
-                </>
-              ) : (
-                "Cancel Booking"
+            {/* Status — reflects where the stay actually is (upcoming / ongoing / done). */}
+            <span className={`text-[13px] font-semibold ${STATUS_TONE_CLASS[status.tone]}`}>
+              {status.label}
+            </span>
+            {/* Actions — cancel / rate (per stay state) + view details. */}
+            <div className="flex items-center justify-end gap-2">
+              {booking.reviewRating > 0 ? (
+                <span
+                  title="Your rating"
+                  className="inline-flex items-center gap-1 whitespace-nowrap rounded-lg bg-star/10 px-2.5 py-1.5"
+                >
+                  <StarRating value={booking.reviewRating} size={13} />
+                </span>
+              ) : booking.canReview ? (
+                <button
+                  type="button"
+                  onClick={() => onToggle(booking.id)}
+                  className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-star/15 px-3 py-1.5 text-[12.5px] font-semibold text-[#b8860b] transition-colors hover:bg-star/25"
+                >
+                  <Star size={13} className="fill-star text-star" aria-hidden />
+                  Rate stay
+                </button>
+              ) : null}
+              {canCancel && (
+                <button
+                  type="button"
+                  onClick={() => onCancel(booking)}
+                  disabled={cancelling}
+                  aria-busy={cancelling}
+                  className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-[#e5484d] px-3.5 py-1.5 text-[12.5px] font-semibold text-white transition-colors hover:bg-[#d93d42] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {cancelling ? <span className="spinner" aria-hidden /> : "Cancel booking"}
+                </button>
               )}
-            </button>
-          </>
-        ) : cancelled ? (
-          <span className="text-[13px] font-semibold text-red-400">Cancelled</span>
-        ) : responded ? (
-          <span className="text-[13px] font-semibold text-primary">Accepted</span>
-        ) : (
-          <span className="text-[13px] font-semibold text-body">Completed</span>
-        )}
-      </span>
+              <button
+                type="button"
+                onClick={() => onToggle(booking.id)}
+                aria-expanded={expanded}
+                aria-label={`View ${booking.villaTitle} booking details`}
+                // py-[5px], not py-1.5: the 1px border adds the missing pixel,
+                // so this ends up exactly as tall as the filled buttons beside it.
+                className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-[5px] text-[12.5px] font-medium text-body transition-colors hover:border-primary hover:bg-primary/5 hover:text-primary"
+              >
+                <span className="w-[30px] text-center">View</span>
+                <ChevronDown size={15} className="shrink-0" aria-hidden />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Expanded: the redesigned full detail, which carries its own header,
+          status, cancel action and Hide control — so nothing shows twice. */}
+      <div
+        className={`grid transition-all duration-300 ease-out ${
+          expanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+        }`}
+      >
+        <div className="overflow-hidden">
+          <div className="px-4 py-4 sm:px-5">
+            <BookingDetails
+              booking={booking}
+              onCollapse={() => onToggle(booking.id)}
+              onCancel={canCancel ? () => onCancel(booking) : undefined}
+              cancelling={cancelling}
+              onReview={onReview}
+              reviewBusy={reviewBusy}
+            />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -212,6 +314,13 @@ export default function MyBookingsPage() {
   const [bookings, setBookings] = useState<Booking[] | null>(null);
   const [loadError, setLoadError] = useState("");
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [reviewingId, setReviewingId] = useState<string | null>(null);
+  // Which booking row is expanded to show its full details inline.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const toggleExpand = useCallback(
+    (id: string) => setExpandedId((cur) => (cur === id ? null : id)),
+    []
+  );
   // Each table sorts independently — one shared state would make sorting the
   // history silently re-order the active table above it.
   const [activeSort, setActiveSort] = useState<"desc" | "asc">("desc");
@@ -251,21 +360,25 @@ export default function MyBookingsPage() {
     load();
   }, [ready, user, load]);
 
-  // Keeps the host's "Responded" state current without a manual reload. Paused
-  // mid-cancel so an in-flight poll can't land stale rows over the new state.
+  // Keeps the list current (e.g. a stay rolling from upcoming to ongoing)
+  // without a manual reload. Paused mid-cancel so an in-flight poll can't land
+  // stale rows over the new state.
   useLiveRefresh(() => load(true), ready && !!user && !cancellingId);
 
   // Active = still upcoming and not cancelled; History = past or cancelled.
   const { active, history } = useMemo(() => {
     const list = bookings ?? [];
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
     const active: Booking[] = [];
     const history: Booking[] = [];
     for (const b of list) {
-      const upcoming = new Date(b.checkOut) >= today;
-      if (b.status === "active" && upcoming) active.push(b);
-      else history.push(b);
+      // Active = the stay is still live (upcoming, awaiting check-in, or under
+      // way). Everything settled — completed, no-show, cancelled — is history.
+      const life = lifecycleOf(b);
+      if (life === "upcoming" || life === "awaiting_checkin" || life === "staying") {
+        active.push(b);
+      } else {
+        history.push(b);
+      }
     }
     const byCreated = (order: "desc" | "asc") => (a: Booking, b: Booking) => {
       const diff = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
@@ -289,23 +402,32 @@ export default function MyBookingsPage() {
   const toggleActiveSort = () => setActiveSort((s) => (s === "desc" ? "asc" : "desc"));
   const toggleHistorySort = () => setHistorySort((s) => (s === "desc" ? "asc" : "desc"));
 
-  async function onCancel(id: string, title: string) {
+  async function onCancel(b: Booking) {
     if (cancellingId) return;
+    const fee = b.cancelFeeNow;
+    // Spell out the exact fine (and refund) before it's charged — never a
+    // surprise after the fact.
+    const message =
+      fee > 0
+        ? `Your stay at "${b.villaTitle}" will be cancelled. A cancellation fee of ${money(fee)} applies, and you'll be refunded ${money(b.total - fee)}. This can't be undone.`
+        : `Your stay at "${b.villaTitle}" will be cancelled and you'll be fully refunded. This can't be undone.`;
     const ok = await confirm({
       title: "Cancel this booking?",
-      message: `Your stay at "${title}" will be cancelled. This can't be undone and cancellation charges may apply.`,
+      message,
       confirmLabel: "Cancel booking",
       cancelLabel: "Keep booking",
       tone: "danger",
     });
     if (!ok) return;
-    setCancellingId(id);
+    setCancellingId(b.id);
     try {
-      const updated = await cancelBooking(id);
+      const updated = await cancelBooking(b.id);
       setBookings((prev) =>
-        (prev ?? []).map((b) => (b.id === id ? updated : b))
+        (prev ?? []).map((x) => (x.id === b.id ? updated : x))
       );
-      toast.success("Booking cancelled.");
+      toast.success(
+        fee > 0 ? `Booking cancelled — ${money(fee)} fee applied.` : "Booking cancelled."
+      );
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Could not cancel booking.");
       // The banner sits at the top of the card, far above the row the user just
@@ -318,12 +440,30 @@ export default function MyBookingsPage() {
     }
   }
 
+  // Leave / update a review for a completed stay, then fold the fresh review
+  // back into the list so the row updates in place.
+  const onReview = useCallback(
+    async (b: Booking, rating: number, comment: string) => {
+      setReviewingId(b.id);
+      try {
+        const updated = await submitReview(b.id, rating, comment);
+        setBookings((prev) => (prev ?? []).map((x) => (x.id === b.id ? updated : x)));
+        toast.success("Thanks for your review!");
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Could not save your review.");
+      } finally {
+        setReviewingId(null);
+      }
+    },
+    [toast]
+  );
+
   // Guard: only signed-in users can view their bookings.
   if (!ready) return <div className="min-h-[60vh]" />;
 
   if (!user) {
     return (
-      <div className="mx-auto flex min-h-[60vh] w-full max-w-[1000px] flex-col items-center justify-center px-5 text-center">
+      <div className="mx-auto flex min-h-[60vh] w-full max-w-[1320px] flex-col items-center justify-center px-5 text-center">
         <h1 className="text-[22px] font-bold text-ink">You&apos;re signed out</h1>
         <p className="mt-2 text-[14px] text-body">Please sign in to view your bookings.</p>
         <Link
@@ -337,7 +477,7 @@ export default function MyBookingsPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-4 lg:px-7">
+    <div className="mx-auto w-full max-w-[1320px] px-5 pb-16 pt-4 lg:px-7">
       <div className="grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
         {/* Left sidebar */}
         <aside>
@@ -394,9 +534,12 @@ export default function MyBookingsPage() {
                   <BookingRow
                     key={b.id}
                     booking={b}
-                    kind="active"
                     onCancel={onCancel}
                     cancelling={cancellingId === b.id}
+                    onReview={(rating, comment) => onReview(b, rating, comment)}
+                    reviewBusy={reviewingId === b.id}
+                    expanded={expandedId === b.id}
+                    onToggle={toggleExpand}
                   />
                 ))
               )}
@@ -426,9 +569,12 @@ export default function MyBookingsPage() {
                   <BookingRow
                     key={b.id}
                     booking={b}
-                    kind="history"
                     onCancel={onCancel}
                     cancelling={false}
+                    onReview={(rating, comment) => onReview(b, rating, comment)}
+                    reviewBusy={reviewingId === b.id}
+                    expanded={expandedId === b.id}
+                    onToggle={toggleExpand}
                   />
                 ))
               )}
@@ -449,10 +595,10 @@ export default function MyBookingsPage() {
 
 function ColumnHeadings() {
   return (
-    <div className="mt-6 grid min-w-[620px] grid-cols-[1.4fr_1fr_1.2fr_1fr_1fr] px-4 text-[13px] text-muted">
-      {COLUMNS.map((c) => (
-        <span key={c} className={c === "Status" ? "text-right" : ""}>
-          {c}
+    <div className={`mt-6 grid ${ROW_MINW} ${ROW_GRID} px-4 text-[13px] text-muted`}>
+      {COLUMNS.map((c, i) => (
+        <span key={c || `col-${i}`} className={c === "" ? "text-right" : ""}>
+          {c || "Action"}
         </span>
       ))}
     </div>
@@ -465,7 +611,7 @@ function SkeletonRows({ count }: { count: number }) {
   return (
     <>
       {Array.from({ length: count }, (_, i) => (
-        <div key={i} className="skeleton h-[50px] min-w-[620px]" />
+        <div key={i} className={`skeleton h-[50px] ${ROW_MINW}`} />
       ))}
     </>
   );

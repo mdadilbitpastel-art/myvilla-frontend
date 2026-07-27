@@ -6,6 +6,14 @@ import { useEffect, useRef, useState } from "react";
 const CLEARANCE = 8;
 
 /**
+ * How far the header must get to stay pinned before letting it go is worth it,
+ * measured from where it pins (not from the top of the page). Below this the
+ * release is skipped entirely: the header would be let go the moment it pinned,
+ * which on a fast scroll reads as the heading flying off and then coming back.
+ */
+const MIN_PINNED_TRAVEL = 120;
+
+/**
  * Lets a sticky page header go once only the last row of a grid is left, so
  * those cards scroll in the clear instead of sliding underneath it.
  *
@@ -50,12 +58,27 @@ export function useStickyRelease(
       const contentEnd = rect.bottom - wrapTop;
       // Stop the header one gap above the row, plus a little daylight.
       const height = Math.round(lastRowTop - gap - CLEARANCE);
-      // The cut has to be worth making, and something must stay above it.
-      if (height < 120 || height >= contentEnd) {
+      // The cut has to be worth making, and something must stay above it. It is
+      // measured from the header's own bottom, so the answer doesn't change as
+      // the header collapses (it and `height` shrink by the same amount) — the
+      // page can't flip in and out of being released while the bar tightens up.
+      const header = Array.from(wrap.children).find(
+        // `includes`, because older WebKit still reports `-webkit-sticky`.
+        (el) => getComputedStyle(el).position.includes("sticky")
+      );
+      const headerHeight = header?.getBoundingClientRect().height ?? 0;
+      if (height - headerHeight < MIN_PINNED_TRAVEL || height >= contentEnd) {
         setBox(null);
         return;
       }
-      setBox({ height, marginBottom: Math.round(contentEnd - height) });
+      const next = { height, marginBottom: Math.round(contentEnd - height) };
+      // The header's collapse resizes it on every frame of its transition; only
+      // a measurement that actually moved is worth a re-render.
+      setBox((prev) =>
+        prev && prev.height === next.height && prev.marginBottom === next.marginBottom
+          ? prev
+          : next
+      );
     };
 
     const ro = new ResizeObserver(measure);

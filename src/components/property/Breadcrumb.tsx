@@ -20,13 +20,14 @@ export default function Breadcrumb({
   /** One tight line — used while the page header is stuck to the navbar. */
   compact?: boolean;
 }) {
+  // Same type scale, colours and spacing as the breadcrumb in the shared
+  // PageHeader — the size does NOT change as the header collapses, only the
+  // wrapping does, so the line reads identically on every page.
   return (
     <nav
       aria-label="Breadcrumb"
-      className={`flex items-center gap-x-2 ${
-        compact
-          ? "mb-1 flex-nowrap overflow-hidden whitespace-nowrap text-[12px]"
-          : "mb-6 flex-wrap gap-y-1 text-[13px] sm:text-[14px]"
+      className={`flex items-center gap-x-1.5 text-[13px] text-body ${
+        compact ? "flex-nowrap overflow-hidden whitespace-nowrap" : "flex-wrap gap-y-1"
       }`}
     >
       {items.map((item, i) => {
@@ -34,11 +35,11 @@ export default function Breadcrumb({
         const label = typeof item === "string" ? item : item.label;
         const href = typeof item === "string" ? HREFS[label] : item.href ?? HREFS[label];
         return (
-          <span key={`${label}-${i}`} className="flex min-w-0 items-center gap-2">
+          <span key={`${label}-${i}`} className="flex min-w-0 items-center gap-x-1.5">
             {isLast || !href ? (
-              <span className={`truncate ${isLast ? "text-muted" : "text-ink"}`}>{label}</span>
+              <span className={`truncate ${isLast ? "text-muted" : ""}`}>{label}</span>
             ) : (
-              <Link href={href} className="truncate text-ink underline underline-offset-2 hover:text-primary">
+              <Link href={href} className="truncate underline underline-offset-2 hover:text-primary">
                 {label}
               </Link>
             )}

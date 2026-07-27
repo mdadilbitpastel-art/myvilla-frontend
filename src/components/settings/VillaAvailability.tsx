@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, CalendarCheck2, Users, Minus, Plus } from "lucide-react";
 import { fetchVillaAvailability, type VillaAvailability } from "@/lib/api";
+import { firstBookableDate } from "@/lib/bookingWindow";
 
 /**
  * The host's own calendar for one villa, shown while they edit the listing.
@@ -49,13 +50,19 @@ function lastBookedNight(freeFrom: string): string {
   return iso(new Date(y, m - 1, d - 1));
 }
 
-/** Whole days from today to `value` — what the window is measured in. */
-function daysFromToday(value: string): number {
-  const [y, m, d] = value.split("-").map(Number);
-  const target = new Date(y, m - 1, d);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return Math.round((target.getTime() - today.getTime()) / 86_400_000);
+/** "2026-07-27" + n days, as another "YYYY-MM-DD". */
+function addDaysIso(date: string, n: number): string {
+  const [y, m, d] = date.split("-").map(Number);
+  if (!y) return date;
+  return iso(new Date(y, m - 1, d + n));
+}
+
+/** Whole days from `from` to `to` — what the window is measured in. */
+function daysBetween(from: string, to: string): number {
+  const a = new Date(from + "T00:00:00").getTime();
+  const b = new Date(to + "T00:00:00").getTime();
+  if (Number.isNaN(a) || Number.isNaN(b)) return 0;
+  return Math.round((b - a) / 86_400_000);
 }
 
 // Monday-first offset for the 1st of the month.
@@ -142,14 +149,6 @@ export default function VillaAvailabilityPanel({
     onDaysChange(Math.max(1, Math.min(value, MAX_DAYS)));
   }
 
-  // The window's last open date, computed from the draft rather than read off
-  // the server — the host has to see the result of a change they haven't saved.
-  const windowEndIso = useMemo(() => {
-    const end = new Date();
-    end.setDate(end.getDate() + Math.max(1, days));
-    return iso(end);
-  }, [days]);
-
   const today = new Date();
   const shown = new Date(today.getFullYear(), today.getMonth() + offset, 1);
   const year = shown.getFullYear();
@@ -159,15 +158,23 @@ export default function VillaAvailabilityPanel({
 
   // Once the villa's check-in time has gone by, nobody can still arrive today —
   // so tonight is as unreachable as yesterday, and the calendar says so rather
-  // than offering the host a date no guest could take. The same cutoff the
-  // guest's reservation card uses, kept on the same side of the clock.
-  const [h, m] = checkInTime.split(":");
-  const checkInPassed =
-    !!checkInTime && today.getHours() * 60 + today.getMinutes() >= Number(h) * 60 + Number(m);
-  // First date still open to a guest — every date before it is drawn as past.
-  const firstOpenIso = checkInPassed
-    ? iso(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1))
-    : todayIso;
+  // than offering the host a date no guest could take.
+  //
+  // Read back off the SERVER's own answer rather than judged here: the window
+  // turns over on the server's clock, which may be hours from the host's (this
+  // deployment runs in UTC), and a host must not be shown a first open date the
+  // guest's calendar disagrees with. `bookableUntil` is the exclusive end of
+  // the saved window, so subtracting the saved length lands exactly on its
+  // start. The local estimate is only for a villa that isn't saved yet.
+  const firstOpenIso =
+    data && data.bookableUntil && data.availabilityDays
+      ? addDaysIso(data.bookableUntil, -data.availabilityDays)
+      : firstBookableDate(checkInTime, today);
+  // The window is `days` dates COUNTED FROM the first open one — so 5 days from
+  // the 27th runs through the 31st, not the 1st. Its length comes from the
+  // draft rather than the server: the host has to see a change they haven't
+  // saved yet.
+  const windowEndIso = addDaysIso(firstOpenIso, Math.max(1, days) - 1);
 
   if (error) {
     return (
@@ -191,7 +198,10 @@ export default function VillaAvailabilityPanel({
   // The furthest booked night: closing the window before it would hide dates
   // the host has already promised, so the control stops there.
   const lastBooked = data.bookedDates.at(-1) ?? "";
-  const minDays = lastBooked ? Math.max(1, daysFromToday(lastBooked)) : 1;
+  // Counted from the first open date, and inclusive of the booked night itself.
+  const minDays = lastBooked
+    ? Math.max(1, daysBetween(firstOpenIso, lastBooked) + 1)
+    : 1;
 
   return (
     <div className="rounded-xl border border-line bg-white p-4 sm:p-5">
@@ -309,10 +319,14 @@ export default function VillaAvailabilityPanel({
           const isBlocked = blocked.has(date);
           const inWindow = !isPast && date <= windowEndIso;
 
-          const tone = isPast
-            ? "text-muted/40"
-            : isBooked
-              ? "bg-red-50 font-semibold text-red-600"
+          // A booked night stays "booked" (red) even once today's check-in time
+          // has passed: the stay is real and the host must still see it, not a
+          // greyed-out "past" cell. Only an UNbooked date that's out of reach
+          // reads as past.
+          const tone = isBooked
+            ? "bg-red-50 font-semibold text-red-600"
+            : isPast
+              ? "text-muted/40"
               : isBlocked
                 ? "bg-amber-100 font-semibold text-amber-700 line-through hover:bg-amber-200"
                 : inWindow
@@ -327,12 +341,12 @@ export default function VillaAvailabilityPanel({
               disabled={isPast || isBooked}
               onClick={() => onToggleBlocked(date)}
               title={
-                missedToday
-                  ? `${prettyDate(date)} — check-in time (${checkInTime}) has passed, so tonight can no longer be booked`
-                  : isPast
-                    ? prettyDate(date)
-                    : isBooked
-                      ? `${prettyDate(date)} — booked by a guest`
+                isBooked
+                  ? `${prettyDate(date)} — booked by a guest`
+                  : missedToday
+                    ? `${prettyDate(date)} — check-in time (${checkInTime}) has passed, so tonight can no longer be booked`
+                    : isPast
+                      ? prettyDate(date)
                       : isBlocked
                         ? `${prettyDate(date)} — closed by you. Tap to re-open.`
                         : inWindow

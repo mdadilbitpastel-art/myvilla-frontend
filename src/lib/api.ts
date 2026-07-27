@@ -1,5 +1,9 @@
 // Minimal GraphQL client + auth service for the Django/Strawberry backend.
 
+import type { BookingWindow } from "./bookingWindow";
+
+export type { BookingWindow };
+
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/graphql/";
 
@@ -226,6 +230,9 @@ export async function removeAvatar(): Promise<AuthUser> {
 
 /* ---- Villas / "Add your Villa" ---- */
 
+/** A premium add-on: a name and its price, charged per night. */
+export type ExtraService = { name: string; price: number };
+
 export type VillaInput = {
   title: string;
   propertyType?: string;
@@ -243,6 +250,8 @@ export type VillaInput = {
   /** Nights the host closed on the calendar, "YYYY-MM-DD". */
   blockedDates?: string[];
   services?: string[];
+  /** Premium add-ons with a per-night price each. */
+  extraServices?: ExtraService[];
   // House rules. Times are "HH:MM" (an <input type="time"> value); "" = unset.
   checkInTime?: string;
   checkOutTime?: string;
@@ -262,6 +271,13 @@ export type VillaPhoto = { id: string; url: string };
 export type Villa = {
   id: string;
   ownerId: string;
+  /** The host, for the "Hosted by" panel. Avatar is a base64 data-URL or ""
+   *  (empty → a gender-based placeholder is drawn). */
+  hostName: string;
+  hostEmail: string;
+  hostPhone: string;
+  hostAvatar: string;
+  hostGender: string;
   title: string;
   propertyType: string;
   city: string;
@@ -279,6 +295,8 @@ export type Villa = {
   /** Nights the host has closed by hand, from today forward. */
   blockedDates: string[];
   services: string[];
+  /** Premium add-ons the host offers, each with a per-night price. */
+  extraServices: ExtraService[];
   checkInTime: string;
   checkOutTime: string;
   petsAllowed: boolean;
@@ -288,6 +306,9 @@ export type Villa = {
   // The same rules already worded by the backend, for the detail page.
   houseRules: string[];
   pricePerNight: number;
+  /** Live review aggregate: average stars (1 decimal, 0 when none) + count. */
+  rating: number;
+  reviewsCount: number;
   acceptedPayments: string[];
   payoutMethod: string;
   payoutAccount: string;
@@ -305,13 +326,16 @@ export type Villa = {
 };
 
 const VILLA_SELECTION = `
-  id ownerId title propertyType city country address description buildUpArea
+  id ownerId hostName hostEmail hostPhone hostAvatar hostGender
+  title propertyType city country address description buildUpArea
   bedrooms guests singleBedRooms doubleBedRooms services pricePerNight
+  extraServices { name price }
   availabilityDays bookableUntil blockedDates
   checkInTime checkOutTime petsAllowed smokingAllowed eventsAllowed
   additionalRules houseRules
   acceptedPayments payoutMethod payoutAccount
   images photos { id url } coverImage createdAt
+  rating reviewsCount
   isAvailable unavailableReason isOwner`;
 
 export async function createVilla(input: VillaInput): Promise<Villa> {
@@ -352,6 +376,157 @@ export async function fetchMyVillas(): Promise<Villa[]> {
     {}
   );
   return data.myVillas;
+}
+
+// How many villas the current user owns. Cheap — used by the account sidebar to
+// decide whether the host-only sections (Rent Requests, Coupons) are shown.
+export async function fetchMyVillasCount(): Promise<number> {
+  const data = await gql<{ myVillasCount: number }>(
+    `query MyVillasCount { myVillasCount }`,
+    {}
+  );
+  return data.myVillasCount;
+}
+
+/* ---- Coupons (host-created discount codes) ---- */
+
+export type CouponDiscountType = "percent" | "fixed";
+
+/**
+ * What a coupon is doing right now. Always taken from the server, never
+ * re-derived here: the backend runs in UTC and a browser hours ahead of it
+ * would disagree about which day it is and call a live coupon expired.
+ */
+export type CouponStatus = "active" | "scheduled" | "expired" | "inactive";
+
+export type Coupon = {
+  id: string;
+  /** "" for a common coupon (all the host's villas), else a specific villa id. */
+  villaId: string;
+  villaTitle: string;
+  code: string;
+  discountType: CouponDiscountType;
+  discountValue: number;
+  active: boolean;
+  /** "all" (every villa) or "villa" (one listing). */
+  scope: "all" | "villa";
+  label: string;
+  createdAt: string;
+  /** Validity period, "YYYY-MM-DD" or "" when unset. Both ends inclusive. */
+  validFrom: string;
+  validUntil: string;
+  status: CouponStatus;
+  /** The period in one line ("Valid until 30 Sep 2026"), "" when it has none. */
+  validityLabel: string;
+  /** Whole days left including today; -1 when it never expires. */
+  daysLeft: number;
+};
+
+export type CouponInput = {
+  villaId?: string; // "" = applies to all of the host's villas
+  code: string;
+  discountType: CouponDiscountType;
+  discountValue: number;
+  active: boolean;
+  /** Both optional: "" = starts now / never expires. */
+  validFrom?: string;
+  validUntil?: string;
+};
+
+const COUPON_SELECTION = `
+  id villaId villaTitle code discountType discountValue active scope label createdAt
+  validFrom validUntil status validityLabel daysLeft`;
+
+export async function fetchMyCoupons(): Promise<Coupon[]> {
+  const data = await gql<{ myCoupons: Coupon[] }>(
+    `query MyCoupons { myCoupons { ${COUPON_SELECTION} } }`,
+    {}
+  );
+  return data.myCoupons;
+}
+
+export async function createCoupon(input: CouponInput): Promise<Coupon> {
+  const data = await gql<{ createCoupon: Coupon }>(
+    `mutation CreateCoupon($data: CouponInput!) {
+       createCoupon(data: $data) { ${COUPON_SELECTION} }
+     }`,
+    { data: input }
+  );
+  return data.createCoupon;
+}
+
+export async function updateCoupon(id: string, input: CouponInput): Promise<Coupon> {
+  const data = await gql<{ updateCoupon: Coupon }>(
+    `mutation UpdateCoupon($id: ID!, $data: CouponInput!) {
+       updateCoupon(id: $id, data: $data) { ${COUPON_SELECTION} }
+     }`,
+    { id, data: input }
+  );
+  return data.updateCoupon;
+}
+
+export async function deleteCoupon(id: string): Promise<boolean> {
+  const data = await gql<{ deleteCoupon: boolean }>(
+    `mutation DeleteCoupon($id: ID!) { deleteCoupon(id: $id) }`,
+    { id }
+  );
+  return data.deleteCoupon;
+}
+
+/* ---- Public offers (landing page) + coupon preview (payment page) ---- */
+
+export type Offer = {
+  villaId: string;
+  title: string;
+  city: string;
+  country: string;
+  coverImage: string;
+  pricePerNight: number;
+  code: string;
+  discountType: CouponDiscountType;
+  discountValue: number;
+  label: string;
+};
+
+// Public — real villas paired with an active coupon, for the landing page.
+export async function fetchPublicOffers(limit = 8): Promise<Offer[]> {
+  const data = await gql<{ publicOffers: Offer[] }>(
+    `query PublicOffers($limit: Int!) {
+       publicOffers(limit: $limit) {
+         villaId title city country coverImage pricePerNight
+         code discountType discountValue label
+       }
+     }`,
+    { limit }
+  );
+  return data.publicOffers;
+}
+
+export type CouponPreview = {
+  valid: boolean;
+  message: string;
+  code: string;
+  discountType: string;
+  discountValue: number;
+  discount: number;
+  label: string;
+};
+
+// Public — the payment page's live check of a code against a villa + nights.
+export async function validateCoupon(
+  code: string,
+  villaId: string,
+  nights: number
+): Promise<CouponPreview> {
+  const data = await gql<{ validateCoupon: CouponPreview }>(
+    `query ValidateCoupon($code: String!, $villaId: ID!, $nights: Int!) {
+       validateCoupon(code: $code, villaId: $villaId, nights: $nights) {
+         valid message code discountType discountValue discount label
+       }
+     }`,
+    { code, villaId, nights }
+  );
+  return data.validateCoupon;
 }
 
 // Wishlist — add/remove a villa; returns the new saved state (true = saved).
@@ -444,6 +619,26 @@ export async function fetchVilla(
   return data.villa;
 }
 
+/* ---- Booking window (public — what the guest's calendar may offer) ---- */
+
+// Public and deliberately thinner than `villaAvailability`: it names no guests
+// and says only "you can't have that date", which is all a calendar needs.
+export async function fetchBookingWindow(villaId: string): Promise<BookingWindow> {
+  const data = await gql<{ bookingWindow: Omit<BookingWindow, "fetchedAt"> }>(
+    `query BookingWindow($villaId: ID!) {
+       bookingWindow(villaId: $villaId) {
+         villaId availabilityDays checkInTime serverNow
+         firstDate lastDate maxCheckOut unavailableDates
+       }
+     }`,
+    { villaId }
+  );
+  // Stamped on arrival: the window turns over on the SERVER's clock, and this
+  // is what lets the page advance that clock instead of reading its own (which
+  // may be in another time zone entirely). See slideWindow.
+  return { ...data.bookingWindow, fetchedAt: Date.now() };
+}
+
 /* ---- Villa availability (owner view) ---- */
 
 export type BookedRange = {
@@ -504,6 +699,9 @@ export type BookingInput = {
   cardNumber: string;
   expiration: string;
   cvv: string;
+  /** PayPal / Google Pay account the guest pays from; masked on the server.
+   *  Empty for card payments (the card number carries that). */
+  paymentDetail?: string;
   billingStreet: string;
   billingApartment?: string;
   billingCity: string;
@@ -512,6 +710,10 @@ export type BookingInput = {
   billingCountry: string;
   contactEmail: string;
   contactPhone?: string;
+  /** Optional discount code; re-validated and applied on the server. */
+  couponCode?: string;
+  /** Names of the extra services the guest ticked; priced on the server. */
+  extraServices?: string[];
 };
 
 export type Booking = {
@@ -530,22 +732,65 @@ export type Booking = {
   guests: number;
   pricePerNight: number;
   subtotal: number;
+  discount: number;
+  couponCode: string;
   serviceFee: number;
   tax: number;
+  /** Extra services the guest chose (name + per-night price), and their summed
+   *  cost (price × nights). Frozen at booking time. */
+  extraServices: ExtraService[];
+  extrasTotal: number;
   total: number;
   paymentMethod: string;
   cardLast4: string;
   status: string;
-  hostResponded: boolean;
+  /** ISO timestamps set by the host on arrival/departure; "" until then. */
+  checkedInAt: string;
+  checkedOutAt: string;
   createdAt: string;
+  /** The host — shown to the guest on their own booking's detail panel. */
+  hostName: string;
+  hostEmail: string;
+  hostPhone: string;
+  hostAvatar: string;
+  hostGender: string;
+  /** The guest's contact phone — shown to the host on the rent-request panel. */
+  guestPhone: string;
+  /** Scheduled start/end datetimes (villa's check-in/out time on those dates),
+   *  ISO-8601. What "late" and "no-show" are measured against. */
+  checkInAt: string;
+  checkOutAt: string;
+  /** Derived live on the server: upcoming | awaiting_checkin | staying |
+   *  completed | no_show | cancelled. */
+  lifecycleStatus: string;
+  /** Hours past the scheduled check-in with the guest still not checked in
+   *  (0 unless awaiting_checkin). */
+  hoursLate: number;
+  /** Whether the guest may still cancel, and the fine a cancellation right now
+   *  would carry (0 when free). For cancelled bookings, cancellationFee is what
+   *  was charged and refundAmount what's returned. */
+  canCancel: boolean;
+  cancelFeeNow: number;
+  cancellationFee: number;
+  refundAmount: number;
+  /** Reviews: whether the guest may review this (completed) stay, and their
+   *  review if they've left one (rating 0 / "" comment when not). */
+  canReview: boolean;
+  reviewRating: number;
+  reviewComment: string;
 };
 
 const BOOKING_SELECTION = `
   id villaId villaTitle villaCover villaCity villaCountry
   guestName guestAvatar guestEmail
   checkIn checkOut nights guests
-  pricePerNight subtotal serviceFee tax total
-  paymentMethod cardLast4 status hostResponded createdAt`;
+  pricePerNight subtotal discount couponCode serviceFee tax
+  extraServices { name price } extrasTotal total
+  hostName hostEmail hostPhone hostAvatar hostGender guestPhone
+  checkInAt checkOutAt lifecycleStatus hoursLate
+  canCancel cancelFeeNow cancellationFee refundAmount
+  canReview reviewRating reviewComment
+  paymentMethod cardLast4 status checkedInAt checkedOutAt createdAt`;
 
 export async function createBooking(input: BookingInput): Promise<Booking> {
   const data = await gql<{ createBooking: Booking }>(
@@ -574,16 +819,6 @@ export async function fetchVillaBookings(): Promise<Booking[]> {
   return data.myVillaBookings;
 }
 
-export async function respondBooking(id: string): Promise<Booking> {
-  const data = await gql<{ respondBooking: Booking }>(
-    `mutation RespondBooking($id: ID!) {
-       respondBooking(id: $id) { ${BOOKING_SELECTION} }
-     }`,
-    { id }
-  );
-  return data.respondBooking;
-}
-
 export async function cancelBooking(id: string): Promise<Booking> {
   const data = await gql<{ cancelBooking: Booking }>(
     `mutation CancelBooking($id: ID!) {
@@ -592,6 +827,100 @@ export async function cancelBooking(id: string): Promise<Booking> {
     { id }
   );
   return data.cancelBooking;
+}
+
+// Host-side: mark the guest as arrived / departed on one of their villas.
+export async function checkInBooking(id: string): Promise<Booking> {
+  const data = await gql<{ checkInBooking: Booking }>(
+    `mutation CheckInBooking($id: ID!) {
+       checkInBooking(id: $id) { ${BOOKING_SELECTION} }
+     }`,
+    { id }
+  );
+  return data.checkInBooking;
+}
+
+export async function checkOutBooking(id: string): Promise<Booking> {
+  const data = await gql<{ checkOutBooking: Booking }>(
+    `mutation CheckOutBooking($id: ID!) {
+       checkOutBooking(id: $id) { ${BOOKING_SELECTION} }
+     }`,
+    { id }
+  );
+  return data.checkOutBooking;
+}
+
+/* ---- Reviews ---- */
+
+export type Review = {
+  id: string;
+  villaId: string;
+  /** The villa this review is for — shown on landing-page testimonial cards. */
+  villaTitle: string;
+  villaCity: string;
+  rating: number;
+  comment: string;
+  authorName: string;
+  authorAvatar: string;
+  authorGender: string;
+  createdAt: string;
+  /** True when the signed-in viewer wrote this review. */
+  isMine: boolean;
+};
+
+const REVIEW_SELECTION = `
+  id villaId villaTitle villaCity rating comment
+  authorName authorAvatar authorGender createdAt isMine`;
+
+/** Public: the reviews left on one villa, newest first. */
+export async function fetchVillaReviews(villaId: string, limit = 50): Promise<Review[]> {
+  const data = await gql<{ villaReviews: Review[] }>(
+    `query VillaReviews($villaId: ID!, $limit: Int!) {
+       villaReviews(villaId: $villaId, limit: $limit) { ${REVIEW_SELECTION} }
+     }`,
+    { villaId, limit }
+  );
+  return data.villaReviews;
+}
+
+/** Public: the most recent reviews across all villas (with written text), for
+ *  the landing-page testimonials. */
+export async function fetchLatestReviews(limit = 24): Promise<Review[]> {
+  const data = await gql<{ latestReviews: Review[] }>(
+    `query LatestReviews($limit: Int!) {
+       latestReviews(limit: $limit) { ${REVIEW_SELECTION} }
+     }`,
+    { limit }
+  );
+  return data.latestReviews;
+}
+
+/** The guest's oldest completed-but-unreviewed stay, or null. Drives the
+ *  landing-page "rate your stay" popup. */
+export async function fetchPendingReview(): Promise<Booking | null> {
+  const data = await gql<{ pendingReviewBooking: Booking | null }>(
+    `query PendingReview { pendingReviewBooking { ${BOOKING_SELECTION} } }`,
+    {}
+  );
+  return data.pendingReviewBooking;
+}
+
+/** Leave or update the guest's review for a completed booking. Returns the
+ *  booking with its review fields refreshed. */
+export async function submitReview(
+  bookingId: string,
+  rating: number,
+  comment: string
+): Promise<Booking> {
+  const data = await gql<{ submitReview: Booking }>(
+    `mutation SubmitReview($bookingId: ID!, $rating: Int!, $comment: String!) {
+       submitReview(bookingId: $bookingId, rating: $rating, comment: $comment) {
+         ${BOOKING_SELECTION}
+       }
+     }`,
+    { bookingId, rating, comment }
+  );
+  return data.submitReview;
 }
 
 export async function requestPasswordReset(email: string): Promise<void> {

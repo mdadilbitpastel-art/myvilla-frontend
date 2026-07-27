@@ -7,8 +7,9 @@ import { Star, BadgeCheck, Lock, ArrowRight } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import VillaCard from "@/components/home/VillaCard";
 import Avatar from "@/components/ui/Avatar";
+import PageHeader from "@/components/ui/PageHeader";
 import { fetchMyVillas, type Villa } from "@/lib/api";
-import type { VillaCardData } from "@/lib/home";
+import { villaGallery, type VillaCardData } from "@/lib/home";
 import {
   accountProfile,
   accountReviews,
@@ -19,9 +20,11 @@ const FALLBACK_IMG =
   "https://images.unsplash.com/photo-1571896349842-33c89424de2d?auto=format&fit=crop&w=600&q=80";
 
 function villaToCard(v: Villa): VillaCardData {
+  const image = v.photos[0]?.url || v.coverImage || FALLBACK_IMG;
   return {
     id: v.id,
-    image: v.photos[0]?.url || v.coverImage || FALLBACK_IMG,
+    image,
+    images: villaGallery(v, image),
     city: v.city || v.title,
     country: v.country || v.propertyType || "",
     price: v.pricePerNight,
@@ -38,7 +41,7 @@ export default function AccountPage() {
 
   if (!user) {
     return (
-      <div className="mx-auto flex min-h-[60vh] w-full max-w-[1200px] flex-col items-center justify-center px-5 text-center">
+      <div className="mx-auto flex min-h-[60vh] w-full max-w-[1320px] flex-col items-center justify-center px-5 text-center">
         <h1 className="text-[22px] font-bold text-ink">You&apos;re signed out</h1>
         <p className="mt-2 text-[14px] text-body">
           Please sign in to view your account.
@@ -54,32 +57,30 @@ export default function AccountPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1200px] px-5 pb-16 pt-7 lg:px-7">
-      {/* Breadcrumb */}
-      <nav className="text-[14px] text-ink">
-        <Link href="/" className="underline underline-offset-2 hover:text-primary">
-          Home
-        </Link>
-        <span className="mx-1.5 text-muted">/</span>
-        <Link href="/settings" className="underline underline-offset-2 hover:text-primary">
-          Settings
-        </Link>
-        <span className="mx-1.5 text-muted">/</span>
-        <span className="text-muted">Profile</span>
-      </nav>
+    // The header lives outside the content container so its background covers
+    // the full viewport, exactly like the "Manage Account" one.
+    <div className="pb-16">
+      <PageHeader
+        crumbs={[
+          { label: "Home", href: "/" },
+          { label: "Manage Account", href: "/settings" },
+          { label: "My Account" },
+        ]}
+        title="My Account"
+      />
 
-      <h1 className="mt-5 text-[30px] font-bold text-ink">My Account</h1>
+      <div className="mx-auto w-full max-w-[1320px] px-5 pt-4 lg:px-7">
+        {/* Top: profile (left) + My Villas (right) */}
+        <div className="grid grid-cols-1 gap-x-12 gap-y-12 lg:grid-cols-[360px_1fr]">
+          <ProfileCard user={user} />
+          <MyVillas />
+        </div>
 
-      {/* Top: profile (left) + My Villas (right) */}
-      <div className="mt-5 grid grid-cols-1 gap-x-12 gap-y-12 lg:grid-cols-[360px_1fr]">
-        <ProfileCard user={user} />
-        <MyVillas />
-      </div>
-
-      {/* Bottom: reviews (left) + rating breakdown (right) */}
-      <div className="mt-14 grid grid-cols-1 gap-x-12 gap-y-10 lg:grid-cols-[1fr_360px]">
-        <ReviewsList />
-        <RatingBreakdown />
+        {/* Bottom: reviews (left) + rating breakdown (right) */}
+        <div className="mt-14 grid grid-cols-1 gap-x-12 gap-y-10 lg:grid-cols-[1fr_360px]">
+          <ReviewsList />
+          <RatingBreakdown />
+        </div>
       </div>
     </div>
   );

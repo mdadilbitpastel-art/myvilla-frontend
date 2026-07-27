@@ -6,52 +6,102 @@ import VillaRow from "@/components/home/VillaRow";
 import PromoGrid from "@/components/home/PromoGrid";
 import UniqueStays from "@/components/home/UniqueStays";
 import Testimonials from "@/components/home/Testimonials";
-import { topPicks, featuredVillas, type VillaCardData } from "@/lib/home";
-import { fetchVillas, type Villa } from "@/lib/api";
+import CouponPopup from "@/components/home/CouponPopup";
+import ReviewPrompt from "@/components/reviews/ReviewPrompt";
+import { topPicks, featuredVillas, villaGallery, type VillaCardData } from "@/lib/home";
+import { fetchVillas, fetchPublicOffers, type Villa, type Offer } from "@/lib/api";
 
 const FALLBACK_IMG =
   "https://images.unsplash.com/photo-1571896349842-33c89424de2d?auto=format&fit=crop&w=600&q=80";
 
-// Real backend villa → the card shape the landing page renders.
-function toCard(v: Villa): VillaCardData {
+// Once-per-session flag so the offer popup greets a visitor without nagging.
+const POPUP_SEEN_KEY = "myvilla_offer_popup_seen";
+
+// Real backend villa → the card shape the landing page renders. `offers` maps a
+// villa id to its active coupon, so a card can carry an offer badge.
+function toCard(v: Villa, offers: Map<string, Offer>): VillaCardData {
+  const offer = offers.get(v.id);
+  const image = v.coverImage || FALLBACK_IMG;
   return {
     id: v.id,
-    image: v.coverImage || FALLBACK_IMG,
+    image,
+    images: villaGallery(v, image),
     city: v.city || v.title,
     country: v.country || v.propertyType || "",
     price: v.pricePerNight,
     distance: v.propertyType || "Villa",
     dates: `${v.bedrooms} BR · ${v.guests} guests`,
+    offer: offer ? { code: offer.code, label: offer.label } : undefined,
   };
 }
 
 export default function Home() {
-  // Start from the mock lists so the page is never empty, then swap in the
-  // real villas from the backend as soon as they load.
-  const [picks, setPicks] = useState<VillaCardData[]>(topPicks);
-  const [featured, setFeatured] = useState<VillaCardData[]>(featuredVillas);
+  // `null` = still loading: the rows show skeletons rather than the mock lists,
+  // so a real visitor never sees stand-in villas flash before the real ones.
+  // The mock lists are used only as a fallback when the backend can't answer.
+  const [picks, setPicks] = useState<VillaCardData[] | null>(null);
+  const [featured, setFeatured] = useState<VillaCardData[] | null>(null);
+  const [offers, setOffers] = useState<Offer[]>([]);
+  const [popupOffer, setPopupOffer] = useState<Offer | null>(null);
 
   useEffect(() => {
-    fetchVillas(24)
-      .then((villas) => {
-        if (!villas.length) return; // keep the mock fallback
-        const cards = villas.map(toCard);
-        setPicks(cards.slice(0, 4));
-        setFeatured(cards.length > 4 ? cards.slice(4, 8) : cards.slice(0, 4));
+    // Fetch villas and live offers together so cards can be tagged with their
+    // coupon and the promo grid can show real properties.
+    Promise.all([fetchVillas(24), fetchPublicOffers(8)])
+      .then(([villas, liveOffers]) => {
+        setOffers(liveOffers);
+        const offerMap = new Map(liveOffers.map((o) => [o.villaId, o]));
+        if (villas.length) {
+          const cards = villas.map((v) => toCard(v, offerMap));
+          setPicks(cards.slice(0, 4));
+          setFeatured(cards.length > 4 ? cards.slice(4, 8) : cards.slice(0, 4));
+        } else {
+          // Backend answered but has no villas yet → show the mock lists so the
+          // landing page still has something to show.
+          setPicks(topPicks);
+          setFeatured(featuredVillas);
+        }
+
+        // Show the offer popup once per session, if there's an offer to show.
+        if (liveOffers.length && typeof window !== "undefined") {
+          const seen = window.sessionStorage.getItem(POPUP_SEEN_KEY);
+          if (!seen) setPopupOffer(liveOffers[0]);
+        }
       })
       .catch(() => {
-        /* backend unreachable → keep the mock fallback */
+        // Backend unreachable → fall back to the mock lists (no popup).
+        setPicks(topPicks);
+        setFeatured(featuredVillas);
       });
   }, []);
+
+  function dismissPopup() {
+    if (typeof window !== "undefined") {
+      window.sessionStorage.setItem(POPUP_SEEN_KEY, "1");
+    }
+    setPopupOffer(null);
+  }
 
   return (
     <>
       <Hero />
-      <VillaRow title="Top picks by myVilla" data={picks} variant="card" />
-      <PromoGrid />
-      <VillaRow title="Featured villas" data={featured} variant="card" />
+      <VillaRow
+        title="Top picks by myVilla"
+        data={picks ?? []}
+        loading={picks === null}
+        variant="card"
+      />
+      <PromoGrid offers={offers} />
+      <VillaRow
+        title="Featured villas"
+        data={featured ?? []}
+        loading={featured === null}
+        variant="card"
+      />
       <UniqueStays />
       <Testimonials />
+      {popupOffer && <CouponPopup offer={popupOffer} onClose={dismissPopup} />}
+      <ReviewPrompt />
     </>
   );
 }

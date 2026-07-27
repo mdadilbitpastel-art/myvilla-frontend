@@ -14,24 +14,38 @@ export type StayPricing = {
   discount: number;
   serviceFee: number;
   tax: number;
+  /** Chosen extra services, charged per night: (sum of per-night prices) × nights. */
+  extras: number;
   total: number;
 };
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-export function computeStayPricing(pricePerNight: number, nights: number): StayPricing {
+export function computeStayPricing(
+  pricePerNight: number,
+  nights: number,
+  // Coupon discount off the accommodation subtotal. Fee and tax are still
+  // charged on the full subtotal — mirrors the backend (create_booking).
+  discount = 0,
+  // Sum of the per-night prices of the extra services the guest ticked. Charged
+  // per night and added straight to the total — no fee or tax on top, exactly
+  // like the backend (create_booking).
+  extrasPerNight = 0
+): StayPricing {
   const safeNights = Math.max(0, nights);
   const subtotal = round2(pricePerNight * safeNights);
-  // No discount scheme exists yet — the row stays so the layout is final.
-  const discount = 0;
+  // Never let a discount exceed the subtotal (a stay can't cost less than $0).
+  const safeDiscount = Math.min(Math.max(0, round2(discount)), subtotal);
   const serviceFee = round2(subtotal * SERVICE_FEE_RATE);
   const tax = round2(subtotal * TAX_RATE);
+  const extras = round2(Math.max(0, extrasPerNight) * safeNights);
   return {
     subtotal,
-    discount,
+    discount: safeDiscount,
     serviceFee,
     tax,
-    total: round2(subtotal - discount + serviceFee + tax),
+    extras,
+    total: round2(subtotal - safeDiscount + serviceFee + tax + extras),
   };
 }
 

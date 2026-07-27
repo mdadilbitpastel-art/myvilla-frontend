@@ -8,6 +8,7 @@ import { useToast } from "@/lib/toast";
 import { useConfirm } from "@/lib/confirm";
 import SettingsSidebar from "@/components/settings/SettingsSidebar";
 import Img from "@/components/ui/Img";
+import { setVillaCount } from "@/lib/useProperty";
 import { fetchMyVillas, deleteVilla, type Villa } from "@/lib/api";
 
 const PLACEHOLDER_IMG =
@@ -108,7 +109,13 @@ export default function MyPropertyPage() {
     setRemovingId(id);
     try {
       await deleteVilla(id);
-      setVillas((prev) => (prev ? prev.filter((v) => v.id !== id) : prev));
+      setVillas((prev) => {
+        const next = prev ? prev.filter((v) => v.id !== id) : prev;
+        // Keep the sidebar's host-only sections in sync: removing the last
+        // property hides Rent Requests + Coupons right away.
+        if (next && user) setVillaCount(user.id, next.length);
+        return next;
+      });
       toast.success("Property removed.");
     } catch {
       setBanner({ kind: "error", text: "Could not remove the property. Please try again." });
@@ -136,11 +143,15 @@ export default function MyPropertyPage() {
   // Load the user's real villas from the backend.
   const load = useCallback(() => {
     fetchMyVillas()
-      .then(setVillas)
+      .then((vs) => {
+        setVillas(vs);
+        // Refresh the sidebar's host-only sections off the real count.
+        if (user) setVillaCount(user.id, vs.length);
+      })
       .catch((e) =>
         setLoadError(e instanceof Error ? e.message : "Could not load your properties.")
       );
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     if (ready && user) load();
@@ -157,7 +168,7 @@ export default function MyPropertyPage() {
 
   if (!user) {
     return (
-      <div className="mx-auto flex min-h-[60vh] w-full max-w-[1000px] flex-col items-center justify-center px-5 text-center">
+      <div className="mx-auto flex min-h-[60vh] w-full max-w-[1320px] flex-col items-center justify-center px-5 text-center">
         <h1 className="text-[22px] font-bold text-ink">You&apos;re signed out</h1>
         <p className="mt-2 text-[14px] text-body">
           Please sign in to view your properties.
@@ -176,7 +187,7 @@ export default function MyPropertyPage() {
   const rows: Row[] | null = villas ? villas.map(villaToRow) : null;
 
   return (
-    <div className="mx-auto w-full max-w-[1000px] px-5 pb-16 pt-4 lg:px-7">
+    <div className="mx-auto w-full max-w-[1320px] px-5 pb-16 pt-4 lg:px-7">
       <div className="grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
         {/* Left sidebar */}
         <aside>
@@ -343,22 +354,22 @@ export default function MyPropertyPage() {
                         paragraph of controls; the icons are the conventional
                         ones for these actions, and each keeps its name for
                         screen readers and as a hover tooltip. */}
-                    <div className="flex shrink-0 items-center gap-1">
+                    <div className="flex shrink-0 items-center gap-2">
                       <Link
                         href={`/settings/property/add?edit=${p.id}`}
                         aria-label={`Edit ${label}`}
                         title="Edit"
-                        className="rounded-lg p-2 text-ink transition-colors hover:bg-page hover:text-primary"
+                        className="flex h-9 w-9 items-center justify-center rounded-lg border border-line text-body transition-colors hover:border-primary hover:bg-primary/5 hover:text-primary"
                       >
-                        <Pencil size={17} aria-hidden />
+                        <Pencil size={16} aria-hidden />
                       </Link>
                       <Link
                         href={`/villa/${p.id}`}
                         aria-label={`View ${label}`}
                         title="View"
-                        className="rounded-lg p-2 text-ink transition-colors hover:bg-page hover:text-primary"
+                        className="flex h-9 w-9 items-center justify-center rounded-lg border border-line text-body transition-colors hover:border-primary hover:bg-primary/5 hover:text-primary"
                       >
-                        <Eye size={17} aria-hidden />
+                        <Eye size={16} aria-hidden />
                       </Link>
                       <button
                         type="button"
@@ -367,12 +378,12 @@ export default function MyPropertyPage() {
                         aria-busy={removingId === p.id}
                         aria-label={`Remove ${label}`}
                         title="Remove"
-                        className="rounded-lg p-2 text-red-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-50"
+                        className="flex h-9 w-9 items-center justify-center rounded-lg border border-line text-body transition-colors hover:border-red-300 hover:bg-red-50 hover:text-red-500 disabled:opacity-50"
                       >
                         {removingId === p.id ? (
                           <span className="spinner block" aria-hidden />
                         ) : (
-                          <Trash2 size={17} aria-hidden />
+                          <Trash2 size={16} aria-hidden />
                         )}
                       </button>
                     </div>
