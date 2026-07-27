@@ -219,7 +219,15 @@ export default function ProfileSettingsPage() {
 
     setSaving(true);
     try {
-      const updated = await updateProfile({ ...values, fullName: values.fullName.trim() });
+      // A country code picked without a number is only a UI convenience — don't
+      // persist a lone "+91". Drop it back to empty before saving.
+      const { code: cCode, number: cNumber } = splitContact(values.emergencyContact);
+      const emergencyContact = cNumber ? joinContact(cCode, cNumber) : "";
+      const updated = await updateProfile({
+        ...values,
+        fullName: values.fullName.trim(),
+        emergencyContact,
+      });
       setUser(updated);
       setEditing(false);
       toast.success("Your changes have been saved.");

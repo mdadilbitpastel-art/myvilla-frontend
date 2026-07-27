@@ -56,10 +56,16 @@ export function splitContact(full: string): { code: string; number: string } {
   return { code: "", number: s.replace(/\D/g, "") };
 }
 
-/** Recombine a code + number for storage. Empty number → empty string. */
+/**
+ * Recombine a code + number. The country code is kept even before a number is
+ * typed, so a guest can pick the code FIRST and fill the number after (the two
+ * fields share one stored string, and dropping the code here made the picker
+ * reset the moment it was chosen). A lone code with no number is normalised
+ * back to "" when the form is saved — see the profile page.
+ */
 export function joinContact(code: string, number: string): string {
   const n = (number || "").replace(/\D/g, "");
-  if (!n) return "";
+  if (!n) return code || "";
   return code ? `${code} ${n}` : n;
 }
 
