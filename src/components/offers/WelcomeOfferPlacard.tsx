@@ -2,13 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { useRouter } from "next/navigation";
 import { X, PartyPopper } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useWelcomeOffer } from "@/lib/welcome";
 
 /**
  * The first-booking offer, carried on-screen like a cardboard sign on a stick.
+ * Only ever shown to signed-out visitors (see WelcomeOfferHost), so it asks for
+ * one thing: an account to land the discount on.
  *
  * It comes up from a corner, swings as if someone just planted it there, then
  * settles — the whole point is that it reads as a person holding up a placard
@@ -38,8 +39,7 @@ export default function WelcomeOfferPlacard({
   corner?: PlacardCorner;
   onClose: () => void;
 }) {
-  const router = useRouter();
-  const { user, openAuth } = useAuth();
+  const { openAuth } = useAuth();
   const { offer } = useWelcomeOffer();
   // Two stages: carried in (tilted, off-screen) → planted (upright). Kicked off
   // a frame after mount so the browser has the "before" state to animate from.
@@ -63,13 +63,9 @@ export default function WelcomeOfferPlacard({
   const percent = Math.round(offer.percentOff);
 
   function act() {
+    // The offer is real, but it needs an account to land on.
     onClose();
-    if (!user) {
-      // Signed out: the offer is real but it needs an account to land on.
-      openAuth("signin");
-      return;
-    }
-    router.push("/search");
+    openAuth("signin");
   }
 
   return createPortal(
@@ -146,7 +142,7 @@ export default function WelcomeOfferPlacard({
                   onClick={act}
                   className="mt-3 w-full rounded-lg bg-[#5c3a0c] py-2 text-[12.5px] font-bold text-[#ffe9c4] transition-colors hover:bg-[#734a12]"
                 >
-                  {offer.signedIn ? "Find a villa" : "Sign in to claim"}
+                  Sign in to claim
                 </button>
               </div>
             </div>

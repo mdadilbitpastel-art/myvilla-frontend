@@ -2,13 +2,19 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
+import { useAuth } from "@/lib/auth";
 import { useWelcomeOffer } from "@/lib/welcome";
 import WelcomeOfferPlacard, { type PlacardCorner } from "./WelcomeOfferPlacard";
 
 /**
- * Keeps the first-booking placard turning up around the site until the guest
- * actually books — on the landing page as soon as it loads, and every so often
+ * Keeps the first-booking placard turning up around the site for signed-out
+ * visitors — on the landing page as soon as it loads, and every so often
  * elsewhere, from a different corner each time.
+ *
+ * Signed-out only, deliberately. The offer is an invitation to join, so it is
+ * addressed to people who haven't: someone already signed in either still has
+ * the discount (and will see it itemised at checkout) or has spent it, and
+ * either way a sign popping up in their corner is just noise.
  *
  * Mounted once in the root layout so it survives navigation: the timers are
  * about how long someone has been on the SITE, not on a page, and remounting
@@ -37,7 +43,11 @@ const MUTED_PATHS = [/^\/villa\/[^/]+\/book$/, /^\/forgot-password/, /^\/reset-p
 
 export default function WelcomeOfferHost() {
   const pathname = usePathname() ?? "/";
-  const { available } = useWelcomeOffer();
+  const { user, ready } = useAuth();
+  const { available: offerAvailable } = useWelcomeOffer();
+  // Nothing until auth has settled: a restored session arrives a beat after
+  // mount, and showing the sign in that gap would flash it at a signed-in guest.
+  const available = ready && !user && offerAvailable;
   const [shown, setShown] = useState(false);
   const [round, setRound] = useState(0);
   // When the sign may next appear, and how many times it has already. Refs, not
@@ -75,8 +85,8 @@ export default function WelcomeOfferHost() {
     return () => clearTimeout(timer);
   }, [shown]);
 
-  // The moment the guest books, `available` flips false — pull the sign
-  // immediately rather than letting the current one run out.
+  // The moment the guest signs in (or books), `available` flips false — pull
+  // the sign immediately rather than letting the current one run out.
   useEffect(() => {
     if (!available && shown) setShown(false);
   }, [available, shown]);

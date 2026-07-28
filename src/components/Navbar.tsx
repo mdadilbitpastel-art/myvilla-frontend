@@ -53,10 +53,27 @@ export function Logo({
   );
 }
 
+/**
+ * A quiet stand-in for whichever control auth is about to resolve to.
+ *
+ * The session is restored on the client, so for the first frames the header
+ * genuinely doesn't know who is asking. Guessing "Get Started" and then
+ * swapping it for "My Account" reads as the page changing its mind about you;
+ * a placeholder of the same size simply finishes loading.
+ */
+function AuthSkeleton({ className = "" }: { className?: string }) {
+  return (
+    <span
+      aria-hidden
+      className={`animate-pulse rounded-full bg-line ${className}`}
+    />
+  );
+}
+
 export default function Navbar() {
   const [open, setOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const { user, signOut, authMode, openAuth, closeAuth } = useAuth();
+  const { user, ready, signOut, authMode, openAuth, closeAuth } = useAuth();
   const loggedIn = !!user;
   const pathname = usePathname();
   const menuRef = useRef<HTMLDivElement>(null);
@@ -124,14 +141,21 @@ export default function Navbar() {
           <nav className="hidden items-center gap-8 lg:flex">
             {navLinks.map((link) =>
               link.label === "Signin" ? (
-                <button
-                  key={link.label}
-                  type="button"
-                  onClick={() => openAuth("signin")}
-                  className="text-[15px] text-muted transition-colors hover:text-ink"
-                >
-                  {link.label}
-                </button>
+                // Held as a placeholder until we know: this tab disappears
+                // entirely for a signed-in guest, so showing it early would
+                // make the nav shuffle its items after the session lands.
+                !ready ? (
+                  <AuthSkeleton key={link.label} className="h-[13px] w-11" />
+                ) : (
+                  <button
+                    key={link.label}
+                    type="button"
+                    onClick={() => openAuth("signin")}
+                    className="text-[15px] text-muted transition-colors hover:text-ink"
+                  >
+                    {link.label}
+                  </button>
+                )
               ) : link.href === "#" ? (
                 // No destination built yet. Rendering these as <Link href="#">
                 // made every click jump the page to the top.
@@ -159,7 +183,11 @@ export default function Navbar() {
             )}
           </nav>
 
-          {loggedIn ? (
+          {!ready ? (
+            // Sized to the account pill, the taller of the two possible
+            // controls, so the header's height never settles twice.
+            <AuthSkeleton className="hidden h-[38px] w-[136px] sm:block" />
+          ) : loggedIn ? (
             <div ref={menuRef} className="relative hidden sm:block">
               {/* A pill carrying the signed-in face: who you are is the point
                   of this control, so the avatar leads and the label follows. */}
@@ -287,17 +315,21 @@ export default function Navbar() {
           <div className="flex w-full flex-col px-5 py-2 lg:px-7">
             {navLinks.map((link) =>
               link.label === "Signin" ? (
-                <button
-                  key={link.label}
-                  type="button"
-                  onClick={() => {
-                    setOpen(false);
-                    openAuth("signin");
-                  }}
-                  className="py-3 text-left text-[15px] text-muted"
-                >
-                  {link.label}
-                </button>
+                !ready ? (
+                  <AuthSkeleton key={link.label} className="my-3 h-[13px] w-11" />
+                ) : (
+                  <button
+                    key={link.label}
+                    type="button"
+                    onClick={() => {
+                      setOpen(false);
+                      openAuth("signin");
+                    }}
+                    className="py-3 text-left text-[15px] text-muted"
+                  >
+                    {link.label}
+                  </button>
+                )
               ) : link.href === "#" ? (
                 <button
                   key={link.label}
@@ -324,7 +356,9 @@ export default function Navbar() {
                 </Link>
               )
             )}
-            {loggedIn ? (
+            {!ready ? (
+              <AuthSkeleton className="mt-2 mb-3 h-[46px] w-full rounded-lg sm:hidden" />
+            ) : loggedIn ? (
               <div className="mt-1 flex flex-col border-t border-line pt-1 sm:hidden">
                 <Link
                   href="/settings"

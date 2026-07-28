@@ -46,6 +46,11 @@ const STEPS = [
   "Payment Method",
 ];
 
+// How many photos one property may carry. Enough to show every room without
+// turning the listing's gallery into a scroll — and the backend enforces the
+// same number, so this is the friendly half of the rule, not the whole of it.
+const MAX_IMAGES = 10;
+
 const VILLA_TYPES = [
   "Villa Living",
   "Combinative Villa",
@@ -271,7 +276,10 @@ function Wizard() {
   // field: nothing reaches the server until the listing itself is saved.
   const [blockedDates, setBlockedDates] = useState<string[]>([]);
   const [price, setPrice] = useState("");
-  const [acceptedPayments, setAcceptedPayments] = useState<string[]>([...PAYMENT_METHODS]);
+  // Nothing ticked to begin with. These decide what a guest may actually pay
+  // with, so the host has to say — a default of "all of them" is a choice made
+  // on their behalf that they'd never be prompted to look at.
+  const [acceptedPayments, setAcceptedPayments] = useState<string[]>([]);
 
   // Edit mode — load the villa and pre-fill every section.
   useEffect(() => {
@@ -315,9 +323,9 @@ function Wizard() {
         setExtraServices(v.extraServices || []);
         setBlockedDates(v.blockedDates || []);
         setPrice(v.pricePerNight ? String(v.pricePerNight) : "");
-        setAcceptedPayments(
-          v.acceptedPayments?.length ? v.acceptedPayments : [...PAYMENT_METHODS]
-        );
+        // Whatever the villa actually accepts, unfilled if somehow nothing —
+        // the same "you have to choose" rule the add flow starts from.
+        setAcceptedPayments(v.acceptedPayments || []);
         const loaded = (v.photos || []).map((p) => ({
           key: nextImageKey(),
           id: p.id,
@@ -1211,15 +1219,27 @@ function ImagesStep({
     e.target.value = "";
     if (!files.length) return;
     setError("");
+    // Say so rather than silently keeping the first few: a host who picked
+    // twelve photos and got ten deserves to know which rule bit them.
+    const room = MAX_IMAGES - images.length;
+    const taking = files.slice(0, Math.max(room, 0));
+    if (taking.length < files.length) {
+      setError(
+        `A property can have at most ${MAX_IMAGES} photos — ${
+          taking.length ? `only ${taking.length} of these were added.` : "remove one to add another."
+        }`
+      );
+      if (!taking.length) return;
+    }
     setBusy(true);
     try {
-      const encoded = await Promise.all(files.map((f) => fileToResizedDataUrl(f, 1280, 0.82)));
+      const encoded = await Promise.all(taking.map((f) => fileToResizedDataUrl(f, 1280, 0.82)));
       const added: WizardImage[] = encoded.map((dataUrl) => ({
         key: nextImageKey(),
         kind: "new",
         dataUrl,
       }));
-      setImages((prev) => [...prev, ...added].slice(0, 15));
+      setImages((prev) => [...prev, ...added].slice(0, MAX_IMAGES));
     } catch {
       setError("One of the images could not be read.");
     } finally {
@@ -1231,8 +1251,9 @@ function ImagesStep({
     <div>
       <h2 className="text-[16px] font-bold text-ink">Add photos of your villa</h2>
       <p className="mt-1 text-[13px] text-muted">
-        Add up to 15 images. The first one is the cover — hover any other photo
-        and tap &ldquo;Set as cover&rdquo; to make it the cover instead.
+        Add up to {MAX_IMAGES} images. The first one is the cover — hover any
+        other photo and tap &ldquo;Set as cover&rdquo; to make it the cover
+        instead.
       </p>
 
       <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3">
@@ -1263,7 +1284,7 @@ function ImagesStep({
           </div>
         ))}
 
-        {images.length < 15 && (
+        {images.length < MAX_IMAGES && (
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
@@ -1316,7 +1337,7 @@ function PricingStep({
                 className="w-16 bg-transparent text-[15px] font-semibold text-ink placeholder:font-normal placeholder:text-muted focus:outline-none"
               />
             </div>
-            <span>per night for your villa!</span>
+            <span>per night for your property!</span>
           </div>
 
           <p className="mt-5 flex items-center gap-2 text-[13px] text-muted">
