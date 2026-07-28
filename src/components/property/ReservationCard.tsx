@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Star, Users } from "lucide-react";
+import { Users } from "lucide-react";
 import type { Villa } from "@/lib/villa";
 import { fetchBookingWindow } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -21,7 +21,6 @@ import DateField from "@/components/ui/DateField";
 
 export default function ReservationCard({
   pricing,
-  rating,
   villaId,
   ownerId,
   maxGuests = 4,
@@ -29,7 +28,6 @@ export default function ReservationCard({
   coupon = "",
 }: {
   pricing: Villa["pricing"];
-  rating: number;
   /** real villa id — omit for the static demo page (Reserve disabled) */
   villaId?: string;
   /** owner's user id — used to block booking your own villa */
@@ -208,20 +206,13 @@ export default function ReservationCard({
     // Kept deliberately tight vertically: the card is sticky, so anything past
     // roughly one viewport height gets cut off at the bottom — the total was.
     <div className="rounded-2xl border border-line bg-white p-5 shadow-[0_8px_30px_rgba(0,0,0,0.06)]">
-      {/* Price + rating */}
-      <div className="flex items-center justify-between">
-        <p className="text-[22px] font-bold text-ink">
-          ${pricing.price}
-          <span className="text-[15px] font-normal text-muted"> / {pricing.period}</span>
-        </p>
-        <span className="flex items-center gap-1.5 text-[14px]">
-          <Star size={15} className="fill-star text-star" />
-          <span className="font-medium text-ink">{rating}</span>
-          <a href="#reviews" className="text-muted underline underline-offset-2">
-            {pricing.ratingReviews} Reviews
-          </a>
-        </span>
-      </div>
+      {/* Price. The rating used to sit opposite it, but this card is about one
+          thing — what a stay costs and booking it — and the score is already
+          told by the page header and the reviews section below. */}
+      <p className="text-[22px] font-bold text-ink">
+        ${pricing.price}
+        <span className="text-[15px] font-normal text-muted"> / {pricing.period}</span>
+      </p>
 
       {/* How far ahead this host is open — the calendar allows exactly this
           span and nothing else, so it's worth saying out loud. */}

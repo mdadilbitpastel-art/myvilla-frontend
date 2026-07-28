@@ -67,7 +67,7 @@ export default function VillaViewPage() {
         {/* Reservation sidebar */}
         <aside className="lg:col-start-2 lg:row-start-1">
           <div className="pt-6 lg:sticky lg:top-[88px]">
-            <ReservationCard pricing={villa.pricing} rating={villa.rating} />
+            <ReservationCard pricing={villa.pricing} />
           </div>
         </aside>
       </div>

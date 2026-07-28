@@ -247,50 +247,50 @@ textarea:disabled {
   }
 }
 
-/* Map pins on the landing page (see PropertyMap). A price tag reads faster
-   than a teardrop marker, and Leaflet's default icon needs image assets the
-   bundler would have to be taught about. */
+/* Map pins on the landing page (see PropertyMap): an ordinary red location pin,
+   drawn here rather than with Leaflet's default icon, which needs image assets
+   the bundler would have to be taught about.
+
+   The price used to live in the pin itself, which stopped being readable as
+   soon as two listings sat near each other — it's on the hover card now. */
 .villa-pin {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  /* The anchor point is the tip of the tail below, so the pill sits above and
-     centred on the coordinate it marks. */
-  transform: translate(-50%, calc(-100% - 6px));
-  white-space: nowrap;
-  border-radius: 9999px;
-  background: #ff2d2d;
-  padding: 3px 9px 3px 7px;
-  font-size: 12px;
-  font-weight: 700;
-  color: #fff;
-  box-shadow: 0 2px 8px rgba(20, 20, 40, 0.28);
-  transition: background-color 0.15s ease;
-}
-/* The tail — what turns the price tag into a map marker pointing at a spot. */
-.villa-pin::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  bottom: -5px;
-  transform: translateX(-50%);
-  border-left: 5px solid transparent;
-  border-right: 5px solid transparent;
-  border-top: 6px solid #ff2d2d;
+  /* `inline-block`, NOT `block`: Leaflet sizes the marker node to the icon's
+     declared size, which is 0×0 here, and a block child would inherit that
+     zero width. It measured 0px wide — which put the hover card's notch on the
+     pin's anchor instead of its edge, i.e. straight through the middle of it —
+     while the SVG spilled out to the right of the point it was marking. */
+  display: inline-block;
+  /* The anchor point is the pin's tip, so it stands ON the coordinate rather
+     than straddling it. `transform-origin` keeps that tip planted when the pin
+     grows on hover. */
+  transform: translate(-50%, -100%);
+  transform-origin: bottom center;
+  color: #ff2d2d;
+  cursor: pointer;
+  filter: drop-shadow(0 3px 4px rgba(20, 20, 40, 0.3));
+  transition:
+    transform 0.18s cubic-bezier(0.22, 0.61, 0.36, 1),
+    color 0.18s ease,
+    filter 0.18s ease;
 }
 .villa-pin svg {
   display: block;
-  flex-shrink: 0;
 }
-.leaflet-marker-icon:hover .villa-pin,
-.leaflet-marker-icon:focus .villa-pin {
-  background: #d41f1f;
-  z-index: 1;
+/* Raised for exactly as long as its card is open — set from PropertyMap rather
+   than by :hover, because the pointer spends most of that time on the card and
+   not on the pin. The scale is about the tip (transform-origin above), so the
+   pin grows without stepping off the place it marks.
+
+   Leaflet writes a z-index onto every marker inline, so lifting the raised one
+   above its neighbours has to outrank that — otherwise a pin in a dense cluster
+   sits under whatever was placed after it. */
+.leaflet-marker-icon:has(.villa-pin.is-active) {
+  z-index: 1000 !important;
 }
-.leaflet-marker-icon:hover .villa-pin::after,
-.leaflet-marker-icon:focus .villa-pin::after {
-  border-top-color: #d41f1f;
+.villa-pin.is-active {
+  color: #d41f1f;
+  transform: translate(-50%, -100%) scale(1.12);
+  filter: drop-shadow(0 6px 8px rgba(20, 20, 40, 0.4));
 }
 /* The hover card is a React element outside the map box (see PropertyMap), so
    Leaflet's own popup styling isn't used at all. */

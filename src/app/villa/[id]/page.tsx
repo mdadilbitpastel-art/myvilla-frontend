@@ -196,9 +196,12 @@ export default function VillaDetailPage() {
     const ro = new ResizeObserver(([entry]) => {
       const h = Math.ceil(entry.contentRect.height / 8) * 8;
       // Border box: the padding and the 1px rule the header draws at its foot.
-      const box = Math.ceil(
-        (entry.borderBoxSize?.[0]?.blockSize ?? el.getBoundingClientRect().height) / 8
-      ) * 8;
+      // Not rounded to 8s like the value above — this one is where the header
+      // physically ends, and the reviews heading butts right up against it. A
+      // few pixels of slack would open a gap for rows to show through.
+      const box = Math.round(
+        entry.borderBoxSize?.[0]?.blockSize ?? el.getBoundingClientRect().height
+      );
       // The first measurement is the resting height — take it straight away.
       if (first) {
         first = false;
@@ -335,19 +338,24 @@ export default function VillaDetailPage() {
     guests: plural(v.guests, "guest"),
   };
 
-  const breadcrumb = ["Home", "Villas", v.country || "Listing", v.title];
+  // Villas → country → this villa. No "Home" step, and no "Listing" filler
+  // either: a villa without a country simply skips that step.
+  const breadcrumb = ["Villas", v.country, v.title].filter(Boolean) as string[];
 
   return (
     // Expose where content below the sticky header should stop — the nav plus
     // the (collapsing) page header, including its thumbnail strip. The reviews
     // section's sticky heading/ratings park here so they clear the strip.
-    // Measured on the header's border box (padding + its bottom rule): the
-    // content height alone left the heading parked a dozen pixels high, so the
-    // header clipped its top edge.
+    // Exactly where the header ends, measured on its border box (padding + the
+    // bottom rule) — the content height alone left it a dozen pixels short, so
+    // the header clipped whatever parked here. No gap is added on purpose: the
+    // reviews heading butts straight onto the header and carries the breathing
+    // room as its own padding, so a review scrolling up disappears behind the
+    // heading instead of reappearing in a strip above it.
     <div
       className="pb-20"
       style={{
-        ["--villa-sticky-top" as string]: `${NAV_HEIGHT + (headerBoxHeight || headerHeight) + 12}px`,
+        ["--villa-sticky-top" as string]: `${NAV_HEIGHT + (headerBoxHeight || headerHeight)}px`,
       }}
     >
       {/* Sticky page header — breadcrumb, title and Share/Save, in the same bar
@@ -441,7 +449,6 @@ export default function VillaDetailPage() {
           >
             <ReservationCard
               pricing={pricing}
-              rating={v.rating}
               villaId={v.id}
               ownerId={v.ownerId}
               maxGuests={v.guests}

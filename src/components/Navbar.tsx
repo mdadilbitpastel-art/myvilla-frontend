@@ -196,13 +196,25 @@ export default function Navbar() {
                 onClick={() => setMenuOpen((v) => !v)}
                 aria-expanded={menuOpen}
                 aria-haspopup="menu"
-                className={`group flex items-center gap-2 rounded-full bg-gradient-to-r from-primary to-[#8a7dff] py-1 pl-1 pr-3.5 text-[14px] font-semibold text-white ring-1 ring-white/25 transition-all duration-200 hover:brightness-[1.06] active:scale-[0.98] ${
+                className={`group relative flex cursor-pointer items-center gap-2 overflow-hidden rounded-full bg-gradient-to-r from-primary to-[#8a7dff] py-1 pl-1 pr-3.5 text-[14px] font-semibold text-white ring-1 ring-white/25 transition-all duration-200 hover:brightness-[1.06] active:translate-y-0 active:scale-[0.98] ${
+                  // Open, the pill stays raised — it's the menu's anchor, and
+                  // dropping back down while the panel is still there read as
+                  // the two coming apart. It settles when the menu closes.
                   menuOpen
-                    ? "shadow-[0_8px_20px_rgba(99,91,255,0.45)]"
-                    : "shadow-[0_4px_14px_rgba(99,91,255,0.32)] hover:shadow-[0_6px_18px_rgba(99,91,255,0.42)]"
+                    ? "-translate-y-0.5 shadow-[0_8px_20px_rgba(99,91,255,0.45)]"
+                    : "shadow-[0_4px_14px_rgba(99,91,255,0.32)] hover:-translate-y-0.5 hover:shadow-[0_6px_18px_rgba(99,91,255,0.42)]"
                 }`}
               >
-                <span className="rounded-full bg-white/25 p-[2px] ring-1 ring-white/40">
+                {/* A light bar that sweeps across the pill on hover. Parked off
+                    the left edge and slid clear of the right one, so it only
+                    ever reads as a glint travelling over the gradient. */}
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute inset-y-0 -left-1/2 w-1/2 -skew-x-12 bg-white/25 blur-[3px] transition-transform duration-700 ease-out group-hover:translate-x-[400%]"
+                />
+                {/* The contents sit above the sheen — a positioned sibling would
+                    otherwise paint over unpositioned ones. */}
+                <span className="relative rounded-full bg-white/25 p-[2px] ring-1 ring-white/40 transition-transform duration-200 group-hover:scale-105">
                   <Avatar
                     src={user?.avatar}
                     name={user?.fullName}
@@ -210,10 +222,10 @@ export default function Navbar() {
                     size={26}
                   />
                 </span>
-                My Account
+                <span className="relative">My Account</span>
                 <ChevronDown
                   size={16}
-                  className={`transition-transform duration-200 ${menuOpen ? "rotate-180" : ""}`}
+                  className={`relative transition-transform duration-200 ${menuOpen ? "rotate-180" : ""}`}
                 />
               </button>
 

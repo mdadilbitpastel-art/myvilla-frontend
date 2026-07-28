@@ -5,5 +5,7 @@ import PageHeader from "@/components/ui/PageHeader";
  * Privacy read exactly like "Manage Account" rather than a one-off hero.
  */
 export default function LegalHeader({ title }: { title: string }) {
-  return <PageHeader crumbs={[{ label: "Home", href: "/" }, { label: title }]} title={title} />;
+  // No breadcrumb: the title already names the page, and a trail would only
+  // have repeated it.
+  return <PageHeader title={title} />;
 }

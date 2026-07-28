@@ -568,7 +568,6 @@ function BookVillaContent() {
           background covers the full viewport width. */}
       <PageHeader
         crumbs={[
-          { label: "Home", href: "/" },
           { label: "Villas", href: "/search" },
           { label: v.title, href: `/villa/${id}`, truncate: true },
           { label: "Confirm Payment" },

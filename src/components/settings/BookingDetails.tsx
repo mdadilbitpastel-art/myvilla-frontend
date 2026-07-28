@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   LogIn,
@@ -78,6 +78,25 @@ export function StayActionButton({
   // The server's clock, ticking — never the browser's. The button opens at an
   // exact hour, and the two clocks can be whole time zones apart.
   const now = useServerWallClock(booking.serverNow);
+  // Where the "why is this locked" bubble should be drawn, in viewport
+  // coordinates. It is positioned fixed on purpose: the list row around this
+  // button clips its overflow, so an absolutely placed bubble got cut off at
+  // the row's top edge and looked like it slid under the row above.
+  const wrapRef = useRef<HTMLSpanElement>(null);
+  const [tip, setTip] = useState<{ top: number; left: number; below: boolean } | null>(null);
+
+  // A fixed bubble does not travel with the page, so any scroll dismisses it.
+  useEffect(() => {
+    if (!tip) return;
+    const hide = () => setTip(null);
+    window.addEventListener("scroll", hide, { passive: true, capture: true });
+    window.addEventListener("resize", hide);
+    return () => {
+      window.removeEventListener("scroll", hide, { capture: true });
+      window.removeEventListener("resize", hide);
+    };
+  }, [tip]);
+
   const gate = checkInGate(booking, now);
   const action = stayAction(booking);
   if (action !== "check_in" && action !== "check_out") return null;
@@ -103,9 +122,9 @@ export function StayActionButton({
       type="button"
       disabled={busy || locked}
       aria-busy={busy}
-      // The reason is on the wrapper too (below) — a disabled button gets no
-      // pointer events, so its own title would never show on hover.
-      title={locked ? gate.reason : undefined}
+      // No `title`: the styled bubble below says the same thing straight away,
+      // and the two together showed up as a doubled tooltip on hover.
+      aria-describedby={locked ? `stay-lock-${booking.id}` : undefined}
       onClick={() => (isIn ? onCheckIn(booking.id) : onCheckOut(booking.id))}
       className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-1.5 text-[13px] font-semibold text-white transition-colors disabled:cursor-not-allowed ${
         locked ? "bg-muted/60" : `${tone} disabled:opacity-60`
@@ -131,18 +150,41 @@ export function StayActionButton({
 
   if (!locked) return button;
 
-  // Locked: the button can't be hovered itself, so the wrapper carries the
-  // explanation — as a native tooltip AND a styled bubble, since a host who
-  // can't press the button deserves to be told why without waiting a second.
+  // Locked: the button can't be hovered itself (a disabled button takes no
+  // pointer events), so the wrapper listens and places the bubble. Measured on
+  // enter and drawn fixed, above the button — or below it when the button sits
+  // too close to the top of the viewport for the bubble to fit.
+  const showTip = () => {
+    const r = wrapRef.current?.getBoundingClientRect();
+    if (!r) return;
+    const below = r.top < 96;
+    setTip({ top: below ? r.bottom + 6 : r.top - 6, left: r.right, below });
+  };
+
   return (
-    <span className="group relative inline-flex" title={gate.reason}>
+    <span
+      ref={wrapRef}
+      className="inline-flex"
+      onMouseEnter={showTip}
+      onMouseLeave={() => setTip(null)}
+      onFocus={showTip}
+      onBlur={() => setTip(null)}
+    >
       {button}
-      <span
-        role="tooltip"
-        className="pointer-events-none absolute bottom-[calc(100%+6px)] right-0 z-30 w-max max-w-[240px] rounded-lg bg-ink px-2.5 py-1.5 text-[11.5px] font-medium leading-4 text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100"
-      >
-        {gate.reason}
-      </span>
+      {tip && (
+        <span
+          id={`stay-lock-${booking.id}`}
+          role="tooltip"
+          style={{ top: tip.top, left: tip.left }}
+          // Fixed + a z above the sticky page chrome: nothing in the table can
+          // clip it or paint over it.
+          className={`pointer-events-none fixed z-[60] w-max max-w-[240px] -translate-x-full rounded-lg bg-ink px-2.5 py-1.5 text-[11.5px] font-medium leading-4 text-white shadow-lg ${
+            tip.below ? "" : "-translate-y-full"
+          }`}
+        >
+          {gate.reason}
+        </span>
+      )}
     </span>
   );
 }

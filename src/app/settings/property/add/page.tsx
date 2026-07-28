@@ -527,7 +527,6 @@ function Wizard() {
           background covers the full viewport width. */}
       <PageHeader
         crumbs={[
-          { label: "Home", href: "/" },
           // No "Settings" step: this area is "Manage Account" now.
           { label: "Manage Account", href: "/settings" },
           { label: "My Property", href: "/settings/property" },

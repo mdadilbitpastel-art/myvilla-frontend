@@ -32,7 +32,8 @@ export default function PageHeader({
   action,
   children,
 }: {
-  crumbs: Crumb[];
+  /** The trail above the title. Omit it on a page that has no useful one. */
+  crumbs?: Crumb[];
   title: string;
   /** One supporting line under the title; it folds away on collapse. */
   subtitle?: React.ReactNode;
@@ -70,8 +71,11 @@ export default function PageHeader({
         }`}
       >
         <div className="mx-auto w-full max-w-[1320px] px-5 lg:px-7">
-          <div className="flex items-start justify-between gap-4">
+          <div>
             <div className="min-w-0">
+              {/* Nothing is rendered without crumbs — an empty nav would still
+                  push the title down by its own line height. */}
+              {!!crumbs?.length && (
               <nav
                 aria-label="Breadcrumb"
                 className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[13px] text-body"
@@ -101,15 +105,25 @@ export default function PageHeader({
                   );
                 })}
               </nav>
-              <h1
-                className={`font-extrabold text-ink transition-all duration-200 ${
-                  scrolled ? "mt-0.5 text-[20px]" : "mt-2 text-[30px]"
+              )}
+              {/* The action shares the title's row and is centred against it,
+                  so a "Back" / "Cancel" link reads as belonging to the heading
+                  rather than floating up beside the breadcrumb. */}
+              <div
+                className={`flex items-center justify-between gap-4 transition-all duration-200 ${
+                  crumbs?.length ? (scrolled ? "mt-0.5" : "mt-2") : ""
                 }`}
               >
-                {title}
-              </h1>
+                <h1
+                  className={`min-w-0 font-extrabold text-ink transition-all duration-200 ${
+                    scrolled ? "text-[20px]" : "text-[30px]"
+                  }`}
+                >
+                  {title}
+                </h1>
+                {action && <div className="shrink-0">{action}</div>}
+              </div>
             </div>
-            {action && <div className="shrink-0 pt-0.5">{action}</div>}
           </div>
 
           {subtitle && (

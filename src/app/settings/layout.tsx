@@ -24,7 +24,10 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
     // can only travel inside its own parent, so a wrapper around the header
     // alone would pin it for exactly its own height and no further.
     <div>
-      <PageHeader crumbs={[{ label: "Home", href: "/" }, { label: "Manage Account" }]} title="Manage Account" />
+      {/* No breadcrumb anywhere in the account area: the heading names it, and
+          the section you're in is already the highlighted item in the sidebar
+          right below — the trail only repeated both. */}
+      <PageHeader title="Manage Account" />
       {children}
     </div>
   );

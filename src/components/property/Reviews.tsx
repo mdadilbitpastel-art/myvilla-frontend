@@ -35,15 +35,13 @@ export default function Reviews({
   }));
   const maxCount = Math.max(1, ...dist.map((d) => d.count));
 
+  // Just the word. The score and the count are already stated by the ratings
+  // panel to the right of this section — repeating them in the heading made the
+  // same "4.5 · 13 reviews" appear twice within one screen.
   const heading = (
     <span className="flex items-center gap-2">
       <Star size={20} className="fill-star text-star" aria-hidden />
-      <h3 className="text-[18px] font-semibold text-ink">
-        {rating > 0 ? `${rating.toFixed(1)} · ` : ""}
-        {reviewsCount > 0
-          ? `${reviewsCount} review${reviewsCount === 1 ? "" : "s"}`
-          : "Reviews"}
-      </h3>
+      <h3 className="text-[18px] font-semibold text-ink">Reviews</h3>
     </span>
   );
 
@@ -63,10 +61,14 @@ export default function Reviews({
         // items-start so each column tops out on its own, letting both the left
         // heading and the right ratings stick independently.
         <div className="grid grid-cols-1 gap-x-12 gap-y-8 lg:grid-cols-[1fr_300px] lg:items-start">
-          {/* Reviewer list — its heading sticks, the reviews scroll under it. */}
+          {/* Reviewer list — its heading sticks, the reviews scroll under it.
+              The heading parks flush against the page header and carries the
+              gap as its own pt-4, so its background covers every pixel between
+              the two: a review sliding up vanishes behind it for good instead
+              of resurfacing in the strip above. */}
           <div className="lg:order-1">
             <div
-              className="sticky z-10 mb-4 border-b border-line bg-page pb-3 pt-1"
+              className="sticky z-10 mb-4 border-b border-line bg-page pb-3 pt-4"
               style={{ top: "var(--villa-sticky-top, 200px)" }}
             >
               {heading}
@@ -102,10 +104,12 @@ export default function Reviews({
             </div>
           </div>
 
-          {/* Aggregate + distribution — sticks alongside the heading. */}
+          {/* Aggregate + distribution — sticks a heading's height lower than
+              the left column, so it lines up with the first review rather than
+              riding right under the page header. */}
           <div
             className="lg:sticky lg:order-2 lg:self-start lg:border-l lg:border-line lg:pl-10"
-            style={{ top: "var(--villa-sticky-top, 200px)" }}
+            style={{ top: "calc(var(--villa-sticky-top, 200px) + 72px)" }}
           >
             <div className="flex items-end gap-3">
               <span className="text-[40px] font-extrabold leading-none text-ink">

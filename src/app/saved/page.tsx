@@ -80,8 +80,9 @@ export default function SavedPage() {
       {/* The header and the results share this wrapper — that is what lets the
           header be released above the last row (see useStickyRelease). */}
       <div ref={wrapRef} className="relative" style={wrapStyle}>
+      {/* No breadcrumb at all here — the wishlist hangs off nothing, so a trail
+          would only have repeated the title. */}
       <PageHeader
-        crumbs={[{ label: "Home", href: "/" }, { label: "Saved Villas" }]}
         title="Saved Villas"
         subtitle="Villas you've added to your wishlist."
       />

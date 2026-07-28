@@ -2,8 +2,8 @@ import { Clock, PawPrint, Cigarette, PartyPopper, CircleSlash } from "lucide-rea
 
 // Each rule is worded by the backend off what the host set (see
 // properties/api/types.py). The icon is picked from that wording, and a rule
-// the host said "no" to is shown muted rather than in the primary badge — the
-// same list then reads as "what you can do" at a glance.
+// the host said "no" to is shown muted — the same list then reads as "what you
+// can do" at a glance.
 function iconFor(rule: string) {
   const t = rule.toLowerCase();
   if (t.includes("pet")) return PawPrint;
@@ -35,9 +35,12 @@ export default function HouseRules({
           const negative = isNegative(rule);
           return (
             <li key={rule} className="flex items-center gap-3 text-[15px] text-ink">
+              {/* No filled badge: the chip stays neutral on every row and the
+                  icon's own colour is what separates an allowed rule from one
+                  the host said no to. */}
               <span
-                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
-                  negative ? "bg-page text-muted" : "bg-primary text-white"
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-page ${
+                  negative ? "text-muted" : "text-ink"
                 }`}
               >
                 <Icon size={17} aria-hidden />

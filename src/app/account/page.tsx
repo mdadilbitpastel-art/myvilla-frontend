@@ -63,7 +63,6 @@ export default function AccountPage() {
     <div className="pb-16">
       <PageHeader
         crumbs={[
-          { label: "Home", href: "/" },
           { label: "Manage Account", href: "/settings" },
           { label: "My Account" },
         ]}
@@ -96,7 +95,6 @@ function AccountSkeleton() {
     <div className="pb-16">
       <PageHeader
         crumbs={[
-          { label: "Home", href: "/" },
           { label: "Manage Account", href: "/settings" },
           { label: "My Account" },
         ]}

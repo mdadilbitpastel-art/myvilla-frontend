@@ -13,18 +13,32 @@ import {
   PROPERTY_TYPES,
   matchesCategories,
 } from "@/lib/categories";
-import { searchVillas, type Villa, type VillaFilters } from "@/lib/api";
+import {
+  searchVillas,
+  fetchPublicOffers,
+  type Villa,
+  type Offer,
+  type VillaFilters,
+} from "@/lib/api";
 import { villaGallery, type VillaCardData } from "@/lib/home";
 import GuestSelect from "@/components/ui/GuestSelect";
 
 /** Tailwind `gap-6` between result rows, needed to measure one row's height. */
 const GRID_GAP = 24;
 
+// Coupons to pull. Matched to the search's own result limit so every villa a
+// search can return is able to carry its pill.
+const OFFER_LIMIT = 60;
+
 const FALLBACK_IMG =
   "https://images.unsplash.com/photo-1571896349842-33c89424de2d?auto=format&fit=crop&w=600&q=80";
 
-function toCard(v: Villa): VillaCardData {
+// `offers` maps a villa id to its active coupon, so a result carries the same
+// red discount pill it has on the landing page — a villa shouldn't look like a
+// worse deal here than it does on the home page.
+function toCard(v: Villa, offers: Map<string, Offer>): VillaCardData {
   const image = v.photos[0]?.url || v.coverImage || FALLBACK_IMG;
+  const offer = offers.get(v.id);
   return {
     id: v.id,
     title: v.title, // show the villa's main title as the card heading
@@ -35,6 +49,7 @@ function toCard(v: Villa): VillaCardData {
     price: v.pricePerNight,
     distance: v.propertyType || "Villa",
     dates: `${v.bedrooms} BR · sleeps ${v.guests}`,
+    offer: offer ? { code: offer.code, label: offer.label } : undefined,
     unavailable: v.isAvailable ? undefined : v.unavailableReason || "Not available",
   };
 }
@@ -86,8 +101,10 @@ export default function SearchPage() {
 function SearchPageContent() {
   const searchParams = useSearchParams();
   // Seed from the URL so `/search?q=Bali` is correct on the very first paint
-  // instead of rendering an empty box and reconciling in an effect.
-  const initial = useRef<State>({
+  // instead of rendering an empty box and reconciling in an effect. Read once,
+  // lazily: `syncUrl` rewrites the query string as the visitor searches, and
+  // the seed must stay the search they arrived with.
+  const [initial] = useState<State>(() => ({
     q: searchParams.get("q") || searchParams.get("location") || "",
     guests: parseInt(searchParams.get("guests") || "0", 10) || 0,
     categories: parseCategories(searchParams.get("category")),
@@ -95,14 +112,18 @@ function SearchPageContent() {
     checkIn: searchParams.get("checkIn") || "",
     checkOut: searchParams.get("checkOut") || "",
     availableOnly: searchParams.get("available") === "1",
-  });
+  }));
 
-  const [state, setState] = useState<State>(initial.current);
+  const [state, setState] = useState<State>(initial);
   // The text field is separate so typing doesn't fire a query on every keystroke.
-  const [query, setQuery] = useState(initial.current.q);
+  const [query, setQuery] = useState(initial.q);
   const [results, setResults] = useState<Villa[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // The live coupons, by villa. Fetched once and reused for every search:
+  // which villas have an offer doesn't change with the filters, and refetching
+  // per keystroke would only make the pills flicker.
+  const [offers, setOffers] = useState<Map<string, Offer>>(new Map());
   // True once the page is scrolled and the search block is stuck to the navbar.
   //
   // Anchored, not gesture-based: once collapsed (160px down) it stays that way
@@ -136,11 +157,12 @@ function SearchPageContent() {
     window.history.replaceState(null, "", qs ? `/search?${qs}` : "/search");
   }, []);
 
-  const run = useCallback(
+  // The search itself. Kept apart from the loading flag below so the first
+  // search — fired on mount, when the page is already in its loading state —
+  // can go straight to the network without touching state on the way.
+  const fetchResults = useCallback(
     (s: State) => {
     const id = ++seq.current;
-    setLoading(true);
-    setError("");
     // One known type can be filtered server-side. A combination — or "Others",
     // which is a category no listing literally stores — is narrowed here
     // instead, from the full result set.
@@ -171,10 +193,37 @@ function SearchPageContent() {
     [syncUrl]
   );
 
-  // Run the URL-seeded search once on mount (e.g. arriving from the Hero search).
+  // What every later search goes through: show that something is happening,
+  // clear the last failure, then fetch.
+  const run = useCallback(
+    (s: State) => {
+      setLoading(true);
+      setError("");
+      fetchResults(s);
+    },
+    [fetchResults]
+  );
+
+  // Run the URL-seeded search once on mount (e.g. arriving from the Hero
+  // search). Straight to `fetchResults`: there is no previous state to reset.
   useEffect(() => {
-    run(initial.current);
-  }, [run]);
+    fetchResults(initial);
+  }, [fetchResults, initial]);
+
+  // The coupons, alongside the search rather than before it: results must never
+  // wait on an advert, so a failed fetch just means cards without pills.
+  useEffect(() => {
+    let cancelled = false;
+    fetchPublicOffers(OFFER_LIMIT)
+      .then((list) => {
+        if (cancelled) return;
+        setOffers(new Map(list.map((o) => [o.villaId, o])));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
 
   // Search as the user types, once they pause. Matching is by substring on the
@@ -461,7 +510,7 @@ function SearchPageContent() {
               className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
             >
               {shown.map((v) => (
-                <VillaCard key={v.id} data={toCard(v)} variant="card" />
+                <VillaCard key={v.id} data={toCard(v, offers)} variant="card" />
               ))}
             </div>
           </div>
