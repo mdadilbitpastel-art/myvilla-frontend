@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Star } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useVillaCount } from "@/lib/useProperty";
 import { useLiveRefresh } from "@/lib/useLiveRefresh";
@@ -10,7 +10,6 @@ import { useToast } from "@/lib/toast";
 import SettingsSidebar from "@/components/settings/SettingsSidebar";
 import BookingDetails, { StayActionButton } from "@/components/settings/BookingDetails";
 import CountPill from "@/components/ui/CountPill";
-import StarRating from "@/components/ui/StarRating";
 import Img from "@/components/ui/Img";
 import { fetchVillaBookings, checkInBooking, checkOutBooking, type Booking } from "@/lib/api";
 import {
@@ -153,9 +152,15 @@ function RequestRow({
               <span className={`text-[13px] font-semibold ${STATUS_TONE_CLASS[status.tone]}`}>
                 {status.label}
               </span>
+              {/* One star and the score rather than a five-star strip — the
+                  strip crowded the status column and read as decoration. */}
               {req.reviewRating > 0 && (
-                <span title={`Guest rated ${req.reviewRating}/5`}>
-                  <StarRating value={req.reviewRating} size={12} />
+                <span
+                  title={`Guest rated this stay ${req.reviewRating} out of 5`}
+                  className="inline-flex items-center gap-1 whitespace-nowrap text-[12px] font-medium text-muted"
+                >
+                  <Star size={11} className="fill-star text-star" aria-hidden />
+                  Guest rated {req.reviewRating.toFixed(1)}
                 </span>
               )}
             </span>

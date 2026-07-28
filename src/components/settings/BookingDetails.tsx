@@ -15,7 +15,6 @@ import {
 } from "lucide-react";
 import Img from "@/components/ui/Img";
 import Avatar from "@/components/ui/Avatar";
-import StarRating from "@/components/ui/StarRating";
 import ReviewForm from "@/components/reviews/ReviewForm";
 import type { Booking } from "@/lib/api";
 import {
@@ -123,14 +122,10 @@ export function StayActionButton({
       ) : (
         <LogOut size={15} aria-hidden />
       )}
+      {/* Just the action. How late the guest is — and how long is left — is the
+          status pill's job right beside it; the button stays one clean word so
+          it never reads as a moving target. */}
       {label}
-      {/* The countdown lives inside the button in the final stretch, so the
-          host sees how long is left without reading anything else. */}
-      {isIn && !locked && gate.badge && (
-        <span className="rounded bg-white/20 px-1.5 py-px text-[11px] font-bold">
-          {gate.badge}
-        </span>
-      )}
     </button>
   );
 
@@ -447,10 +442,15 @@ export default function BookingDetails({
           {booking.reviewRating > 0 && !editingReview ? (
             <div>
               <div className="flex items-center justify-between gap-3">
+                {/* Title, then the score as a small pill. A leading star icon
+                    followed by a five-star strip read as two competing star
+                    rows; one number states the same thing more calmly. */}
                 <div className="flex items-center gap-2">
-                  <Star size={15} className="fill-star text-star" aria-hidden />
                   <span className="text-[13px] font-bold text-ink">Your review</span>
-                  <StarRating value={booking.reviewRating} size={14} />
+                  <span className="inline-flex items-center gap-1 rounded-md bg-star/10 px-2 py-0.5 text-[12.5px] font-semibold text-[#b8860b]">
+                    <Star size={12} className="fill-star text-star" aria-hidden />
+                    {booking.reviewRating.toFixed(1)} / 5
+                  </span>
                 </div>
                 <button
                   type="button"
@@ -489,10 +489,13 @@ export default function BookingDetails({
           it shows up in their rent-request history. */}
       {role === "owner" && booking.reviewRating > 0 && (
         <div className="rounded-xl border border-line bg-page/50 p-4">
+          {/* Same treatment as the guest's own view above: one score pill. */}
           <div className="flex items-center gap-2">
-            <Star size={15} className="fill-star text-star" aria-hidden />
             <span className="text-[13px] font-bold text-ink">Guest&apos;s review</span>
-            <StarRating value={booking.reviewRating} size={14} />
+            <span className="inline-flex items-center gap-1 rounded-md bg-star/10 px-2 py-0.5 text-[12.5px] font-semibold text-[#b8860b]">
+              <Star size={12} className="fill-star text-star" aria-hidden />
+              {booking.reviewRating.toFixed(1)} / 5
+            </span>
           </div>
           {booking.reviewComment && (
             <p className="mt-2 text-[13px] leading-5 text-body">{booking.reviewComment}</p>

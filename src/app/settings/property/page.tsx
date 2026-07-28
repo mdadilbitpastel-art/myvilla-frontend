@@ -65,10 +65,10 @@ function villaToRow(v: Villa): Row {
     city: v.city || v.title,
     country: v.country || "",
     price: v.pricePerNight,
-    // The backend doesn't expose a rating yet, so every listing shows "New".
-    // Kept as `number | null` so the rated branch works once it does.
-    rating: null,
-    reviews: 0,
+    // The villa's real review aggregate. No reviews yet → null, which the card
+    // shows as "New" rather than a misleading 0.0.
+    rating: v.reviewsCount > 0 ? v.rating : null,
+    reviews: v.reviewsCount,
     posted: timeAgo(v.createdAt),
     unavailable: v.isAvailable ? "" : v.unavailableReason || "Booked",
     rooms: [
@@ -323,7 +323,7 @@ export default function MyPropertyPage() {
                       <Star size={13} className="fill-star text-star" aria-hidden />
                       {p.rating !== null ? (
                         <>
-                          <span className="font-semibold text-ink">{p.rating}</span>
+                          <span className="font-semibold text-ink">{p.rating.toFixed(1)}</span>
                           <span className="text-muted">({p.reviews})</span>
                         </>
                       ) : (

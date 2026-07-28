@@ -79,7 +79,13 @@ export default function SettingsSidebar({ active }: { active?: string }) {
 
   // Host-only sections appear only once the user owns a property. Until then
   // (and after the last one is removed) they're kept out of the nav entirely.
-  const items = ITEMS.filter((item) => !item.hostOnly || hasProperty);
+  //
+  // The section you're actually on is the exception: on a hard refresh the
+  // villa count starts unknown, and dropping the open section would leave the
+  // nav with nothing highlighted — as if the refresh had moved you elsewhere.
+  const items = ITEMS.filter(
+    (item) => !item.hostOnly || hasProperty || item.label === current
+  );
 
   return (
     // Sticky below the 68px header so only the settings panel on the right

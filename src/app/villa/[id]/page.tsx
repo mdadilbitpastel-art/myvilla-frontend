@@ -77,6 +77,11 @@ export default function VillaDetailPage() {
   const galleryCollapsedRef = useRef(false);
   // Live height of that header, so the reservation card can park below it.
   const [headerHeight, setHeaderHeight] = useState(0);
+  // The same header measured as a *border* box — its padding and bottom border
+  // included. That is where the header actually ends on screen, so anything
+  // that must sit clear of it (the reviews section's sticky heading) has to be
+  // offset by this, not by the content height.
+  const [headerBoxHeight, setHeaderBoxHeight] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -190,14 +195,22 @@ export default function VillaDetailPage() {
     let first = true;
     const ro = new ResizeObserver(([entry]) => {
       const h = Math.ceil(entry.contentRect.height / 8) * 8;
+      // Border box: the padding and the 1px rule the header draws at its foot.
+      const box = Math.ceil(
+        (entry.borderBoxSize?.[0]?.blockSize ?? el.getBoundingClientRect().height) / 8
+      ) * 8;
       // The first measurement is the resting height — take it straight away.
       if (first) {
         first = false;
         setHeaderHeight(h);
+        setHeaderBoxHeight(box);
         return;
       }
       clearTimeout(timer);
-      timer = window.setTimeout(() => setHeaderHeight(h), 180);
+      timer = window.setTimeout(() => {
+        setHeaderHeight(h);
+        setHeaderBoxHeight(box);
+      }, 180);
     });
     ro.observe(el);
     return () => {
@@ -328,9 +341,14 @@ export default function VillaDetailPage() {
     // Expose where content below the sticky header should stop — the nav plus
     // the (collapsing) page header, including its thumbnail strip. The reviews
     // section's sticky heading/ratings park here so they clear the strip.
+    // Measured on the header's border box (padding + its bottom rule): the
+    // content height alone left the heading parked a dozen pixels high, so the
+    // header clipped its top edge.
     <div
       className="pb-20"
-      style={{ ["--villa-sticky-top" as string]: `${NAV_HEIGHT + headerHeight + 8}px` }}
+      style={{
+        ["--villa-sticky-top" as string]: `${NAV_HEIGHT + (headerBoxHeight || headerHeight) + 12}px`,
+      }}
     >
       {/* Sticky page header — breadcrumb, title and Share/Save, in the same bar
           as every other page (see PageHeader): full-viewport background, text on

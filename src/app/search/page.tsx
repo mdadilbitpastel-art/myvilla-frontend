@@ -259,7 +259,7 @@ function SearchPageContent() {
   const count = shown?.length ?? 0;
 
   return (
-    <div className="mx-auto max-w-[1320px] px-5 pb-20 pt-8">
+    <div className="mx-auto max-w-[1320px] px-5 pb-20 pt-4">
       <div
         ref={stickyWrapRef}
         className="relative"
@@ -296,7 +296,7 @@ function SearchPageContent() {
           <form
             onSubmit={submitSearch}
             className={`flex gap-3 rounded-2xl border border-line bg-white sm:flex-row sm:items-center ${
-              collapsed ? "min-w-0 flex-1 flex-row items-center p-2" : "mt-6 flex-col p-3"
+              collapsed ? "min-w-0 flex-1 flex-row items-center p-2" : "mt-4 flex-col p-3"
             }`}
           >
             <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-line px-4 py-2.5">
@@ -356,7 +356,7 @@ function SearchPageContent() {
             so the filters stay reachable without eating the viewport. */}
         <div
           className={`flex flex-wrap gap-2 transition-all duration-200 ${
-            collapsed ? "mt-3" : "mt-5"
+            collapsed ? "mt-3" : "mt-4"
           }`}
         >
           {SEARCH_CATEGORIES.map((cat) => {
@@ -401,8 +401,10 @@ function SearchPageContent() {
         </div>
       </div>
 
-      {/* Results — held at a minimum height so the footer doesn't jump. */}
-      <div className="mt-8 min-h-[420px] space-y-4">
+      {/* Results — held at a minimum height so the footer doesn't jump. The
+          top gap is deliberately tight: it's the last thing between the fold
+          and the first row of cards. */}
+      <div className="mt-5 min-h-[420px] space-y-4">
         {error && (
           <div
             role="alert"
@@ -439,7 +441,7 @@ function SearchPageContent() {
             aria-busy={loading}
             className={`transition-opacity ${loading ? "opacity-60" : ""}`}
           >
-            <p className="mb-4 text-[14px] text-muted">
+            <p className="mb-3 text-[14px] text-muted">
               {count} villa{count === 1 ? "" : "s"}{" "}
               {state.availableOnly ? "available" : "found"}
               {!state.availableOnly && availableCount < count && (

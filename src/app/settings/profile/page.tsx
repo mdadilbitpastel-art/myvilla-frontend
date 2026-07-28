@@ -342,7 +342,7 @@ export default function ProfileSettingsPage() {
                             placeholder="Code"
                             menu="fit"
                             triggerClass={`rounded-lg border px-3 py-2.5 text-[14px] text-ink transition-colors focus:outline-none ${
-                              editing ? "cursor-pointer" : "cursor-default"
+                              editing ? "cursor-pointer" : "cursor-default!"
                             } ${
                               !editing
                                 ? "border-transparent bg-page"
@@ -388,7 +388,7 @@ export default function ProfileSettingsPage() {
                     onChange={(next) => set("gender", next)}
                     placeholder={editing ? "Select gender" : "Not provided"}
                     triggerClass={`${inputCls(editing, false)} ${
-                      editing ? "cursor-pointer" : "cursor-default"
+                      editing ? "cursor-pointer" : "cursor-default!"
                     }`}
                     options={GENDERS.map((g) => ({ value: g, label: g }))}
                   />
@@ -469,7 +469,7 @@ export default function ProfileSettingsPage() {
                     onClick={() => fileRef.current?.click()}
                     disabled={avatarBusy}
                     aria-label={user.avatar ? "Change profile photo" : "Add profile photo"}
-                    className="absolute bottom-0 right-0 flex h-9 w-9 items-center justify-center rounded-full border-2 border-white bg-primary text-white shadow-sm transition-colors hover:bg-primary-dark disabled:opacity-70"
+                    className="absolute bottom-0 right-0 flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border-2 border-white bg-primary text-white shadow-sm transition-colors hover:bg-primary-dark disabled:opacity-70"
                   >
                     <Camera size={16} aria-hidden />
                   </button>
@@ -487,7 +487,7 @@ export default function ProfileSettingsPage() {
                     type="button"
                     onClick={removePhoto}
                     disabled={avatarBusy}
-                    className="mt-3 text-[13px] font-semibold text-red-600 underline underline-offset-2 transition-colors hover:text-red-700 disabled:opacity-70"
+                    className="mt-3 cursor-pointer text-[13px] font-semibold text-red-600 underline underline-offset-2 transition-colors hover:text-red-700 disabled:opacity-70"
                   >
                     Remove
                   </button>
@@ -497,7 +497,7 @@ export default function ProfileSettingsPage() {
                       type="button"
                       onClick={() => fileRef.current?.click()}
                       disabled={avatarBusy}
-                      className="mt-3 text-[13px] font-semibold text-primary underline underline-offset-2 disabled:opacity-70"
+                      className="mt-3 cursor-pointer text-[13px] font-semibold text-primary underline underline-offset-2 disabled:opacity-70"
                     >
                       Add photo
                     </button>
@@ -554,8 +554,12 @@ export default function ProfileSettingsPage() {
 // just disabled and restyled. Anything that swapped elements would change the
 // card's height the moment "Edit profile" is pressed.
 function inputCls(editing: boolean, invalid: boolean): string {
+  // `cursor-default!`: globals.css gives every :disabled control a not-allowed
+  // cursor, and that unlayered rule outranks a plain utility. These fields
+  // aren't refusing input — they're one Edit press away from it — so only the
+  // email row (genuinely unchangeable) is allowed to say "no".
   const base =
-    "w-full rounded-lg border px-3.5 py-2.5 text-[14px] text-ink transition-colors placeholder:text-muted focus:outline-none disabled:cursor-default disabled:opacity-100";
+    "w-full rounded-lg border px-3.5 py-2.5 text-[14px] text-ink transition-colors placeholder:text-muted focus:outline-none disabled:cursor-default! disabled:opacity-100";
   if (!editing) return `${base} border-transparent bg-page`;
   return `${base} bg-white ${
     invalid ? "border-red-400 focus:border-red-500" : "border-line focus:border-primary"

@@ -9,7 +9,6 @@ import { useToast } from "@/lib/toast";
 import { useConfirm } from "@/lib/confirm";
 import SettingsSidebar from "@/components/settings/SettingsSidebar";
 import BookingDetails from "@/components/settings/BookingDetails";
-import StarRating from "@/components/ui/StarRating";
 import CountPill from "@/components/ui/CountPill";
 import Img from "@/components/ui/Img";
 import { fetchMyBookings, cancelBooking, submitReview, type Booking } from "@/lib/api";
@@ -239,11 +238,14 @@ function BookingRow({
             {/* Actions — cancel / rate (per stay state) + view details. */}
             <div className="flex items-center justify-end gap-2">
               {booking.reviewRating > 0 ? (
+                // One star and the score, not a five-star strip: in a dense
+                // row the strip sat awkwardly next to the other star icons.
                 <span
-                  title="Your rating"
-                  className="inline-flex items-center gap-1 whitespace-nowrap rounded-lg bg-star/10 px-2.5 py-1.5"
+                  title={`You rated this stay ${booking.reviewRating} out of 5`}
+                  className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-star/10 px-2.5 py-1.5 text-[12.5px] font-semibold text-[#b8860b]"
                 >
-                  <StarRating value={booking.reviewRating} size={13} />
+                  <Star size={13} className="fill-star text-star" aria-hidden />
+                  Rated {booking.reviewRating.toFixed(1)}
                 </span>
               ) : booking.canReview ? (
                 <button
