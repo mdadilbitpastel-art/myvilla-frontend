@@ -1,3 +1,7 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+
 /**
  * A booking's real, relevant status. The authority is the server's live
  * `lifecycleStatus` (computed from the villa's check-in/out times, the clock,
@@ -29,6 +33,9 @@ type BookingLike = {
   // Present on live payloads; when absent we fall back to the dates below.
   lifecycleStatus?: string;
   hoursLate?: number;
+  // Scheduled wall-clock start/end, for the live "how late is this?" reading.
+  checkInAt?: string;
+  checkOutAt?: string;
 };
 
 /**
@@ -60,8 +67,25 @@ const STATUS_BY_LIFECYCLE: Record<Lifecycle, BookingStatus> = {
   upcoming: { label: "Booked", tone: "green" },
 };
 
-export function bookingStatus(b: BookingLike): BookingStatus {
-  return STATUS_BY_LIFECYCLE[lifecycleOf(b)];
+/**
+ * The status label to show. Pass `nowMs` (the server's ticking wall clock) to
+ * get the sharper reading of a stay nobody has checked into yet: how late the
+ * guest is, and — once check-out is close — that the window is running out.
+ * Without it this is exactly the plain lifecycle label it always was.
+ */
+export function bookingStatus(b: BookingLike, nowMs?: number): BookingStatus {
+  const life = lifecycleOf(b);
+  if (life === "awaiting_checkin" && nowMs !== undefined) {
+    const gate = checkInGate(b, nowMs);
+    if (gate.tone === "urgent") {
+      return { label: `Not checked in · ${gate.badge}`, tone: "red" };
+    }
+    if (gate.tone === "late") {
+      const h = gate.hoursLate;
+      return { label: `Not checked in · ${h} hr${h === 1 ? "" : "s"} late`, tone: "orange" };
+    }
+  }
+  return STATUS_BY_LIFECYCLE[life];
 }
 
 /**
@@ -139,6 +163,138 @@ export function stayAction(b: {
   if (b.checkedOutAt) return "done";
   if (b.checkedInAt) return "check_out";
   return "check_in";
+}
+
+/* ------------------------------------------------------------------ */
+/* When the host may check a guest in                                  */
+/* ------------------------------------------------------------------ */
+
+/** Past this many hours without a check-in, the button starts warning. */
+const LATE_AFTER_HOURS = 1;
+/** Inside this many hours of check-out, it goes urgent and counts down. */
+const URGENT_WITHIN_HOURS = 8;
+
+/**
+ * `check_in_at` / `check_out_at` / `server_now` all arrive as NAIVE wall-clock
+ * ISO strings — deliberately, so they compare to each other directly and none
+ * of them is shifted into the viewer's time zone. Parsed as local components
+ * purely to get comparable numbers; the value is only ever used in differences.
+ */
+function parseWall(value: string): number {
+  const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/.exec(value || "");
+  if (!m) return NaN;
+  const [, y, mo, d, h, mi, s] = m.map(Number) as unknown as number[];
+  return new Date(y, mo - 1, d, h, mi, s || 0).getTime();
+}
+
+/** "27 Jul 2026 at 2:00 PM" — how the gate names the hour it opens. */
+function fmtWall(value: string): string {
+  const t = parseWall(value);
+  if (Number.isNaN(t)) return "";
+  const d = new Date(t);
+  const date = d.toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return `${date} at ${time}`;
+}
+
+export type CheckInTone = "ready" | "late" | "urgent";
+
+export type CheckInGate = {
+  /** May the host press Check in right now? */
+  open: boolean;
+  /** Why not — shown on hover while the button is disabled. "" when open. */
+  reason: string;
+  /** How the button should look once it IS open. */
+  tone: CheckInTone;
+  /** Whole hours past the booking's check-in time (0 when not late yet). */
+  hoursLate: number;
+  /** Whole hours left before check-out (only meaningful when urgent). */
+  hoursToCheckOut: number;
+  /** Short countdown shown inside the button when urgent, e.g. "6h left". */
+  badge: string;
+};
+
+/**
+ * Whether — and how loudly — the host can check this guest in, at `nowMs` on
+ * the server's wall clock (see `useServerWallClock`).
+ *
+ * The hour comes from the BOOKING, not the villa: `check_in_at` is built from
+ * the check-in time snapshotted when the guest booked, so a host who re-times
+ * the property afterwards doesn't move an existing guest's arrival.
+ *
+ * Three stages once it opens: plain while the guest is roughly on time, a
+ * warning an hour past it, and an urgent countdown in the last stretch before
+ * check-out — the point after which the stay becomes a no-show.
+ */
+export function checkInGate(
+  b: { checkInAt?: string; checkOutAt?: string },
+  nowMs: number
+): CheckInGate {
+  const opensAt = parseWall(b.checkInAt || "");
+  const endsAt = parseWall(b.checkOutAt || "");
+  const base: CheckInGate = {
+    open: true,
+    reason: "",
+    tone: "ready",
+    hoursLate: 0,
+    hoursToCheckOut: 0,
+    badge: "",
+  };
+  // No clock yet (first paint, before the list lands) or no scheduled time —
+  // leave the button alone rather than guessing; the server refuses an early
+  // check-in regardless.
+  if (Number.isNaN(nowMs) || Number.isNaN(opensAt)) return base;
+
+  if (nowMs < opensAt) {
+    return {
+      ...base,
+      open: false,
+      reason: `Check-in opens ${fmtWall(b.checkInAt || "")} — the time this guest booked.`,
+    };
+  }
+
+  const hoursLate = Math.floor((nowMs - opensAt) / 3_600_000);
+  const hoursToCheckOut = Number.isNaN(endsAt)
+    ? Number.POSITIVE_INFINITY
+    : Math.max(0, Math.ceil((endsAt - nowMs) / 3_600_000));
+
+  if (hoursToCheckOut <= URGENT_WITHIN_HOURS) {
+    return {
+      ...base,
+      tone: "urgent",
+      hoursLate,
+      hoursToCheckOut,
+      badge: hoursToCheckOut <= 0 ? "last chance" : `${hoursToCheckOut}h left`,
+    };
+  }
+  if (hoursLate >= LATE_AFTER_HOURS) {
+    return { ...base, tone: "late", hoursLate, hoursToCheckOut };
+  }
+  return { ...base, hoursToCheckOut };
+}
+
+/**
+ * The server's wall clock, ticking. Takes the stamp that came with the data and
+ * advances it by real elapsed time, so the button opens on the hour the SERVER
+ * keeps rather than the browser's — the two can be whole time zones apart.
+ * Re-bases whenever fresh data arrives. NaN until the first stamp lands.
+ */
+export function useServerWallClock(serverNow: string, tickMs = 30_000): number {
+  const base = useMemo(
+    () => ({ wall: parseWall(serverNow), at: Date.now() }),
+    [serverNow]
+  );
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => tick((n) => n + 1), tickMs);
+    return () => clearInterval(timer);
+  }, [tickMs]);
+  if (Number.isNaN(base.wall)) return NaN;
+  return base.wall + (Date.now() - base.at);
 }
 
 /** "12 Feb 2026, 3:40 PM" from an ISO timestamp, or "" when unset. */

@@ -39,6 +39,19 @@ export default function PropertyHeader({
   // Navigating away mid-toast would otherwise set state after unmount.
   useEffect(() => () => clearTimeout(copyTimer.current), []);
 
+  // Jump down to the reviews section, offsetting for the sticky page header so
+  // the heading doesn't land hidden underneath it.
+  function scrollToReviews() {
+    const el = document.getElementById("reviews");
+    if (!el) return;
+    // Match where the section's own sticky heading parks (below the collapsed
+    // header + thumbnail strip), read from the same CSS variable.
+    const cssTop = getComputedStyle(el).getPropertyValue("--villa-sticky-top").trim();
+    const offset = (parseInt(cssTop, 10) || 120) + 8;
+    const y = el.getBoundingClientRect().top + window.scrollY - offset;
+    window.scrollTo({ top: y, behavior: "smooth" });
+  }
+
   async function onShare() {
     const url = typeof window !== "undefined" ? window.location.href : "";
     // The link goes INSIDE the text, not in `url`. Chat apps — WhatsApp above
@@ -78,8 +91,12 @@ export default function PropertyHeader({
         >
           {title}
         </h1>
-        <div
-          className={`flex shrink-0 items-center gap-3 ${
+        {/* The rating + reviews cluster jumps to the reviews section on click. */}
+        <button
+          type="button"
+          onClick={scrollToReviews}
+          aria-label="See the reviews"
+          className={`group flex shrink-0 cursor-pointer items-center gap-3 ${
             compact ? "text-[13px]" : "mt-2 text-[15px]"
           }`}
         >
@@ -89,11 +106,11 @@ export default function PropertyHeader({
           </span>
           <span className="text-muted">·</span>
           {/* "Reviews" is the first thing to go when space is tight. */}
-          <span className="whitespace-nowrap text-ink">
+          <span className="whitespace-nowrap text-ink underline-offset-2 group-hover:text-primary group-hover:underline">
             {reviewsCount}
             {compact ? "" : " Reviews"}
           </span>
-        </div>
+        </button>
       </div>
 
       {/* Icon-only actions: three round buttons, each labelled for screen

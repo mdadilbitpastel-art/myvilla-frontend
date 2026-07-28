@@ -4,12 +4,14 @@ import { useEffect, useState } from "react";
 import Hero from "@/components/home/Hero";
 import VillaRow from "@/components/home/VillaRow";
 import PromoGrid from "@/components/home/PromoGrid";
+import PropertyMap from "@/components/home/PropertyMap";
 import UniqueStays from "@/components/home/UniqueStays";
 import Testimonials from "@/components/home/Testimonials";
 import CouponPopup from "@/components/home/CouponPopup";
 import ReviewPrompt from "@/components/reviews/ReviewPrompt";
 import { topPicks, featuredVillas, villaGallery, type VillaCardData } from "@/lib/home";
 import { fetchVillas, fetchPublicOffers, type Villa, type Offer } from "@/lib/api";
+import { useWelcomeOffer } from "@/lib/welcome";
 
 const FALLBACK_IMG =
   "https://images.unsplash.com/photo-1571896349842-33c89424de2d?auto=format&fit=crop&w=600&q=80";
@@ -43,6 +45,9 @@ export default function Home() {
   const [featured, setFeatured] = useState<VillaCardData[] | null>(null);
   const [offers, setOffers] = useState<Offer[]>([]);
   const [popupOffer, setPopupOffer] = useState<Offer | null>(null);
+  // Whether this visitor still has their first-booking discount to spend. It
+  // decides which popup gets the on-load slot (see the render below).
+  const { available: welcomeAvailable, loading: welcomeLoading } = useWelcomeOffer();
 
   useEffect(() => {
     // Fetch villas and live offers together so cards can be tagged with their
@@ -98,9 +103,16 @@ export default function Home() {
         loading={featured === null}
         variant="card"
       />
+      <PropertyMap />
       <UniqueStays />
       <Testimonials />
-      {popupOffer && <CouponPopup offer={popupOffer} onClose={dismissPopup} />}
+      {/* The first-booking offer comes first: while a visitor still has it, the
+          placard (mounted in the root layout) greets them and this host-coupon
+          popup stays out of the way. Once they've booked, `welcomeAvailable`
+          goes false and the host offers take the slot instead. */}
+      {popupOffer && !welcomeLoading && !welcomeAvailable && (
+        <CouponPopup offer={popupOffer} onClose={dismissPopup} />
+      )}
       <ReviewPrompt />
     </>
   );

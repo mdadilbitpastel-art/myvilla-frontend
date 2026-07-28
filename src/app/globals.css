@@ -180,6 +180,124 @@ textarea:disabled {
   display: none;
 }
 
+/* Wordmark. "Villa" carries a slow sheen — a light band travelling through the
+   brand colour — so the logo is alive without anything moving on the page.
+   It runs at its own pace: hovering the logo changes nothing. */
+@keyframes logoSheen {
+  from {
+    background-position: 200% 50%;
+  }
+  to {
+    background-position: 0% 50%;
+  }
+}
+.logo-mark {
+  display: inline-block;
+}
+.logo-villa {
+  background-image: linear-gradient(
+    100deg,
+    var(--color-primary) 0%,
+    var(--color-primary) 32%,
+    #b9b2ff 46%,
+    #ffffff 50%,
+    #b9b2ff 54%,
+    var(--color-primary) 68%,
+    var(--color-primary) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: logoSheen 5.5s linear infinite;
+}
+/* ".com" swings in from behind the wordmark — edge-on at 90°, hinged on its
+   left edge. It plays once, on load: an arrival, not a tic. */
+.logo-com {
+  display: inline-block;
+  transform-origin: left center;
+  animation: logoComIn 1.8s cubic-bezier(0.33, 0, 0.2, 1) both;
+}
+@keyframes logoComIn {
+  from {
+    opacity: 0;
+    transform: perspective(420px) rotateY(90deg);
+  }
+  to {
+    opacity: 1;
+    transform: perspective(420px) rotateY(0deg);
+  }
+}
+
+/* The dot of ".com" — a small pulse that keeps time with the sheen. */
+.logo-dot {
+  display: inline-block;
+  animation: logoDot 5.5s ease-in-out infinite;
+}
+@keyframes logoDot {
+  0%,
+  86%,
+  100% {
+    transform: scale(1);
+    color: var(--color-ink);
+  }
+  92% {
+    transform: scale(1.35);
+    color: var(--color-primary);
+  }
+}
+
+/* Map pins on the landing page (see PropertyMap). A price tag reads faster
+   than a teardrop marker, and Leaflet's default icon needs image assets the
+   bundler would have to be taught about. */
+.villa-pin {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  /* The anchor point is the tip of the tail below, so the pill sits above and
+     centred on the coordinate it marks. */
+  transform: translate(-50%, calc(-100% - 6px));
+  white-space: nowrap;
+  border-radius: 9999px;
+  background: #ff2d2d;
+  padding: 3px 9px 3px 7px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(20, 20, 40, 0.28);
+  transition: background-color 0.15s ease;
+}
+/* The tail — what turns the price tag into a map marker pointing at a spot. */
+.villa-pin::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  transform: translateX(-50%);
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 6px solid #ff2d2d;
+}
+.villa-pin svg {
+  display: block;
+  flex-shrink: 0;
+}
+.leaflet-marker-icon:hover .villa-pin,
+.leaflet-marker-icon:focus .villa-pin {
+  background: #d41f1f;
+  z-index: 1;
+}
+.leaflet-marker-icon:hover .villa-pin::after,
+.leaflet-marker-icon:focus .villa-pin::after {
+  border-top-color: #d41f1f;
+}
+/* The hover card is a React element outside the map box (see PropertyMap), so
+   Leaflet's own popup styling isn't used at all. */
+.leaflet-container {
+  font: inherit;
+}
+
 /* ------------------------------------------------------------------ */
 /* Animations                                                          */
 /* ------------------------------------------------------------------ */
@@ -201,6 +319,40 @@ textarea:disabled {
   }
   to {
     opacity: 1;
+  }
+}
+
+/* The welcome placard, once it's been planted: a couple of swings around the
+   stick at the bottom, dying away — a hand-held sign coming to rest. Pivoting
+   at the bottom is what sells it; rotating about the centre reads as a spinning
+   card instead. */
+@keyframes placardSettle {
+  0% {
+    transform: rotate(-7deg);
+  }
+  30% {
+    transform: rotate(4.5deg);
+  }
+  55% {
+    transform: rotate(-2.5deg);
+  }
+  78% {
+    transform: rotate(1.2deg);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
+.animate-placard-settle {
+  transform-origin: 50% 100%;
+  animation: placardSettle 1.15s cubic-bezier(0.36, 0.07, 0.19, 0.97) 1;
+}
+
+/* Anyone who has asked for less motion gets the sign, not the performance. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-placard-settle {
+    animation: none;
   }
 }
 
@@ -389,6 +541,21 @@ textarea:disabled {
     transition: none !important;
     opacity: 1 !important;
     transform: none !important;
+  }
+
+  /* The wordmark holds still, and "Villa" keeps its solid brand colour rather
+     than the gradient it would otherwise be showing mid-sheen. */
+  .logo-dot,
+  .logo-com,
+  .logo-mark {
+    animation: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+  }
+  .logo-villa {
+    animation: none !important;
+    background-image: none;
+    color: var(--color-primary);
   }
 
   /* Keep the skeleton visible as a static block — just stop it sweeping. */

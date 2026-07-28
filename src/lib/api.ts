@@ -23,6 +23,12 @@ export type AuthUser = {
   address: string;
   emergencyContact: string;
   avatar: string;
+  /** Bank payout details, shared across all the host's villas. payoutAccount is
+   *  the masked account number ("•••• 1234"); "" until the host adds them. */
+  payoutAccountName: string;
+  payoutBankName: string;
+  payoutIfsc: string;
+  payoutAccount: string;
 };
 
 export type AuthResult = {
@@ -116,7 +122,8 @@ function updateTokens(accessToken: string, refreshToken: string) {
 }
 
 const USER_SELECTION =
-  "id email fullName phoneNumber country gender dateOfBirth address emergencyContact avatar";
+  "id email fullName phoneNumber country gender dateOfBirth address emergencyContact avatar " +
+  "payoutAccountName payoutBankName payoutIfsc payoutAccount";
 const USER_FIELDS = `user { ${USER_SELECTION} }`;
 
 export async function loginUser(
@@ -207,6 +214,26 @@ export async function updateProfile(input: ProfileInput): Promise<AuthUser> {
   return data.updateProfile;
 }
 
+/** Save the host's shared bank payout details. Leave accountNumber blank to
+ *  keep the existing (masked) one. Returns the updated user (also persisted). */
+export async function updatePayoutDetails(
+  accountName: string,
+  bankName: string,
+  accountNumber: string,
+  ifsc: string
+): Promise<AuthUser> {
+  const data = await gql<{ updatePayoutDetails: AuthUser }>(
+    `mutation UpdatePayout($accountName: String!, $bankName: String!, $accountNumber: String!, $ifsc: String!) {
+       updatePayoutDetails(accountName: $accountName, bankName: $bankName, accountNumber: $accountNumber, ifsc: $ifsc) {
+         ${USER_SELECTION}
+       }
+     }`,
+    { accountName, bankName, accountNumber, ifsc }
+  );
+  persistUser(data.updatePayoutDetails);
+  return data.updatePayoutDetails;
+}
+
 export async function updateAvatar(image: string): Promise<AuthUser> {
   const data = await gql<{ updateAvatar: AuthUser }>(
     `mutation UpdateAvatar($image: String!) {
@@ -261,12 +288,21 @@ export type VillaInput = {
   additionalRules?: string;
   pricePerNight?: number;
   acceptedPayments?: string[];
+  /** Host bank payout details. payoutAccount = account number (masked server-side). */
+  payoutAccountName?: string;
+  payoutBankName?: string;
+  payoutIfsc?: string;
   payoutMethod?: string;
   payoutAccount?: string;
   images?: string[]; // base64 data-URLs
+  /** Unified display order: each entry is an existing image id or "new" for the
+   *  next uploaded image. */
+  imageOrder?: string[];
+  /** Which photo (0-based index into imageOrder) is the cover. */
+  coverIndex?: number;
 };
 
-export type VillaPhoto = { id: string; url: string };
+export type VillaPhoto = { id: string; url: string; isCover: boolean };
 
 export type Villa = {
   id: string;
@@ -310,6 +346,10 @@ export type Villa = {
   rating: number;
   reviewsCount: number;
   acceptedPayments: string[];
+  /** Host bank payout details; payoutAccount is the masked account number. */
+  payoutAccountName: string;
+  payoutBankName: string;
+  payoutIfsc: string;
   payoutMethod: string;
   payoutAccount: string;
   images: string[];
@@ -333,8 +373,8 @@ const VILLA_SELECTION = `
   availabilityDays bookableUntil blockedDates
   checkInTime checkOutTime petsAllowed smokingAllowed eventsAllowed
   additionalRules houseRules
-  acceptedPayments payoutMethod payoutAccount
-  images photos { id url } coverImage createdAt
+  acceptedPayments payoutAccountName payoutBankName payoutIfsc payoutMethod payoutAccount
+  images photos { id url isCover } coverImage createdAt
   rating reviewsCount
   isAvailable unavailableReason isOwner`;
 
@@ -487,6 +527,33 @@ export type Offer = {
   discountValue: number;
   label: string;
 };
+
+/**
+ * The platform's first-booking welcome offer. `available` says whether to
+ * advertise it — true for signed-out visitors too, since they haven't booked
+ * either. `claimed` is only ever true for a signed-in guest who already has a
+ * booking, which is what stops the popup nagging them.
+ */
+export type WelcomeOffer = {
+  available: boolean;
+  claimed: boolean;
+  percentOff: number;
+  headline: string;
+  blurb: string;
+  signedIn: boolean;
+};
+
+// Public. Sent with the session when there is one, so the answer is about this
+// guest; `createBooking` re-checks eligibility under a lock before charging.
+export async function fetchWelcomeOffer(): Promise<WelcomeOffer> {
+  const data = await gql<{ welcomeOffer: WelcomeOffer }>(
+    `query WelcomeOffer {
+       welcomeOffer { available claimed percentOff headline blurb signedIn }
+     }`,
+    {}
+  );
+  return data.welcomeOffer;
+}
 
 // Public — real villas paired with an active coupon, for the landing page.
 export async function fetchPublicOffers(limit = 8): Promise<Offer[]> {
@@ -734,6 +801,9 @@ export type Booking = {
   subtotal: number;
   discount: number;
   couponCode: string;
+  /** What the discount was for, worded for a receipt: a coupon code, or
+   *  "First booking offer". "" when nothing came off. */
+  discountLabel: string;
   serviceFee: number;
   tax: number;
   /** Extra services the guest chose (name + per-night price), and their summed
@@ -760,6 +830,11 @@ export type Booking = {
    *  ISO-8601. What "late" and "no-show" are measured against. */
   checkInAt: string;
   checkOutAt: string;
+  /** The server's wall clock when this was answered, same naive form as the
+   *  two above. The host's check-in button opens at an exact hour and it's the
+   *  SERVER that decides when — the browser may be in another time zone, so it
+   *  must not judge that from its own clock (see useServerWallClock). */
+  serverNow: string;
   /** Derived live on the server: upcoming | awaiting_checkin | staying |
    *  completed | no_show | cancelled. */
   lifecycleStatus: string;
@@ -784,10 +859,10 @@ const BOOKING_SELECTION = `
   id villaId villaTitle villaCover villaCity villaCountry
   guestName guestAvatar guestEmail
   checkIn checkOut nights guests
-  pricePerNight subtotal discount couponCode serviceFee tax
+  pricePerNight subtotal discount couponCode discountLabel serviceFee tax
   extraServices { name price } extrasTotal total
   hostName hostEmail hostPhone hostAvatar hostGender guestPhone
-  checkInAt checkOutAt lifecycleStatus hoursLate
+  checkInAt checkOutAt serverNow lifecycleStatus hoursLate
   canCancel cancelFeeNow cancellationFee refundAmount
   canReview reviewRating reviewComment
   paymentMethod cardLast4 status checkedInAt checkedOutAt createdAt`;

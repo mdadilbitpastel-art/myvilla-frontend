@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Logo } from "@/components/Navbar";
 
 // Footer labels that link to real pages (others are placeholders → "#").
 const LINK_HREFS: Record<string, string> = {
@@ -47,11 +48,9 @@ export default function Footer() {
         <div className="grid grid-cols-2 gap-x-8 gap-y-10 md:grid-cols-[1.4fr_repeat(4,1fr)]">
           {/* Brand */}
           <div className="col-span-2 md:col-span-1">
-            <Link href="/" className="text-[22px] font-bold tracking-tight">
-              <span className="text-ink">My</span>
-              <span className="text-primary">Villa</span>
-              <span className="text-ink">.com</span>
-            </Link>
+            {/* The header's wordmark, held still: one animated logo per page
+                is a signature, two is a distraction. */}
+            <Logo animated={false} />
           </div>
 
           {/* Link columns */}
@@ -137,18 +136,28 @@ function StoreBadge({
   glyph: React.ReactNode;
 }) {
   return (
-    // No store listings yet — see the social buttons above.
-    <button
-      type="button"
-      aria-label={`${top} ${bottom}`}
-      className="flex w-[150px] items-center gap-3 rounded-lg bg-black px-3 py-2 text-white transition-transform hover:scale-[1.02]"
-    >
-      <span className="shrink-0">{glyph}</span>
-      <span className="flex flex-col leading-tight">
-        <span className="text-[9px] uppercase tracking-wide text-white/80">{top}</span>
-        <span className="text-[15px] font-semibold">{bottom}</span>
+    // No store listings yet — see the social buttons above. Hovering says so
+    // rather than leaving the badge looking like a link that does nothing.
+    <span className="group relative inline-block">
+      <button
+        type="button"
+        title="Coming soon"
+        aria-label={`${top} ${bottom} — coming soon`}
+        className="flex w-[150px] items-center gap-3 rounded-lg bg-black px-3 py-2 text-white transition-transform hover:scale-[1.02]"
+      >
+        <span className="shrink-0">{glyph}</span>
+        <span className="flex flex-col leading-tight">
+          <span className="text-[9px] uppercase tracking-wide text-white/80">{top}</span>
+          <span className="text-[15px] font-semibold">{bottom}</span>
+        </span>
+      </button>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute bottom-full left-1/2 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-md bg-ink px-2 py-1 text-[11px] font-medium text-white opacity-0 shadow-md transition-opacity duration-150 group-hover:opacity-100"
+      >
+        Coming soon
       </span>
-    </button>
+    </span>
   );
 }
 

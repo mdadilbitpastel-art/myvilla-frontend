@@ -36,8 +36,9 @@ function villaToCard(v: Villa): VillaCardData {
 export default function AccountPage() {
   const { user, ready } = useAuth();
 
-  // Guard: only signed-in users can view their account.
-  if (!ready) return <div className="min-h-[60vh]" />;
+  // Guard: only signed-in users can view their account. While auth resolves,
+  // show the page's skeleton from the very first paint — never a blank gap.
+  if (!ready) return <AccountSkeleton />;
 
   if (!user) {
     return (
@@ -80,6 +81,63 @@ export default function AccountPage() {
         <div className="mt-14 grid grid-cols-1 gap-x-12 gap-y-10 lg:grid-cols-[1fr_360px]">
           <ReviewsList />
           <RatingBreakdown />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Skeleton — shown from the first paint while auth resolves            */
+/* ------------------------------------------------------------------ */
+
+function AccountSkeleton() {
+  return (
+    <div className="pb-16">
+      <PageHeader
+        crumbs={[
+          { label: "Home", href: "/" },
+          { label: "Manage Account", href: "/settings" },
+          { label: "My Account" },
+        ]}
+        title="My Account"
+      />
+      <div className="mx-auto w-full max-w-[1320px] px-5 pt-4 lg:px-7">
+        <div className="grid grid-cols-1 gap-x-12 gap-y-12 lg:grid-cols-[360px_1fr]">
+          {/* Profile card */}
+          <div>
+            <div className="flex items-center gap-4">
+              <div className="skeleton h-[74px] w-[74px] rounded-full" />
+              <div className="min-w-0 flex-1 space-y-2">
+                <div className="skeleton h-4 w-2/3" />
+                <div className="skeleton h-3 w-1/2" />
+              </div>
+            </div>
+            <div className="mt-6 space-y-2.5">
+              <div className="skeleton h-3 w-1/2" />
+              <div className="skeleton h-3 w-2/3" />
+              <div className="skeleton h-3 w-3/5" />
+              <div className="skeleton h-3 w-1/2" />
+            </div>
+            <div className="skeleton mt-6 h-9 w-32 rounded-lg" />
+          </div>
+
+          {/* My Villas */}
+          <div>
+            <div className="skeleton h-5 w-32" />
+            <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="overflow-hidden rounded-xl border border-line">
+                  <div className="skeleton aspect-[4/3] rounded-none" />
+                  <div className="space-y-2 p-3">
+                    <div className="skeleton h-[14px] w-3/4" />
+                    <div className="skeleton h-[12px] w-1/2" />
+                    <div className="skeleton h-[12px] w-2/3" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     </div>

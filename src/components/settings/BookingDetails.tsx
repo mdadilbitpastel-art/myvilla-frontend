@@ -2,7 +2,17 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { LogIn, LogOut, TicketPercent, ChevronUp, Mail, Phone, Star } from "lucide-react";
+import {
+  LogIn,
+  LogOut,
+  TicketPercent,
+  ChevronUp,
+  Mail,
+  Phone,
+  Star,
+  Lock,
+  AlertTriangle,
+} from "lucide-react";
 import Img from "@/components/ui/Img";
 import Avatar from "@/components/ui/Avatar";
 import StarRating from "@/components/ui/StarRating";
@@ -12,6 +22,8 @@ import {
   bookingStatus,
   bookingStatusDetail,
   stayAction,
+  checkInGate,
+  useServerWallClock,
   fmtDateTime,
   type BookingStatusTone,
 } from "@/lib/booking";
@@ -64,31 +76,79 @@ export function StayActionButton({
   onCheckOut: (id: string) => void;
   busy: boolean;
 }) {
+  // The server's clock, ticking — never the browser's. The button opens at an
+  // exact hour, and the two clocks can be whole time zones apart.
+  const now = useServerWallClock(booking.serverNow);
+  const gate = checkInGate(booking, now);
   const action = stayAction(booking);
   if (action !== "check_in" && action !== "check_out") return null;
 
   const isIn = action === "check_in";
-  const tone = isIn
-    ? "bg-[#2f9e44] hover:bg-[#268c3b]"
-    : "bg-primary hover:bg-primary-dark";
 
-  return (
+  // Check-out keeps its one look. Check-in escalates: plain green while the
+  // guest is roughly on time, amber an hour past their check-in, red with a
+  // countdown once check-out is close and the stay is about to be a no-show.
+  const tone = !isIn
+    ? "bg-primary hover:bg-primary-dark"
+    : gate.tone === "urgent"
+      ? "bg-[#d92d20] hover:bg-[#b42318]"
+      : gate.tone === "late"
+        ? "bg-[#e8912a] hover:bg-[#cf7d1c]"
+        : "bg-[#2f9e44] hover:bg-[#268c3b]";
+
+  const locked = isIn && !gate.open;
+  const label = isIn ? "Check in" : "Check out";
+
+  const button = (
     <button
       type="button"
-      disabled={busy}
+      disabled={busy || locked}
       aria-busy={busy}
+      // The reason is on the wrapper too (below) — a disabled button gets no
+      // pointer events, so its own title would never show on hover.
+      title={locked ? gate.reason : undefined}
       onClick={() => (isIn ? onCheckIn(booking.id) : onCheckOut(booking.id))}
-      className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-1.5 text-[13px] font-semibold text-white transition-colors disabled:opacity-60 ${tone}`}
+      className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-1.5 text-[13px] font-semibold text-white transition-colors disabled:cursor-not-allowed ${
+        locked ? "bg-muted/60" : `${tone} disabled:opacity-60`
+      }`}
     >
       {busy ? (
         <span className="spinner" aria-hidden />
+      ) : locked ? (
+        <Lock size={14} aria-hidden />
+      ) : isIn && gate.tone !== "ready" ? (
+        <AlertTriangle size={15} aria-hidden />
       ) : isIn ? (
         <LogIn size={15} aria-hidden />
       ) : (
         <LogOut size={15} aria-hidden />
       )}
-      {isIn ? "Check in" : "Check out"}
+      {label}
+      {/* The countdown lives inside the button in the final stretch, so the
+          host sees how long is left without reading anything else. */}
+      {isIn && !locked && gate.badge && (
+        <span className="rounded bg-white/20 px-1.5 py-px text-[11px] font-bold">
+          {gate.badge}
+        </span>
+      )}
     </button>
+  );
+
+  if (!locked) return button;
+
+  // Locked: the button can't be hovered itself, so the wrapper carries the
+  // explanation — as a native tooltip AND a styled bubble, since a host who
+  // can't press the button deserves to be told why without waiting a second.
+  return (
+    <span className="group relative inline-flex" title={gate.reason}>
+      {button}
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute bottom-[calc(100%+6px)] right-0 z-30 w-max max-w-[240px] rounded-lg bg-ink px-2.5 py-1.5 text-[11.5px] font-medium leading-4 text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100"
+      >
+        {gate.reason}
+      </span>
+    </span>
   );
 }
 
@@ -152,7 +212,10 @@ export default function BookingDetails({
   reviewBusy?: boolean;
 }) {
   const [editingReview, setEditingReview] = useState(false);
-  const status = bookingStatus(booking);
+  // Same ticking server clock the row uses, so the pill here and the label in
+  // the collapsed row above can never disagree about how late a guest is.
+  const now = useServerWallClock(booking.serverNow);
+  const status = bookingStatus(booking, now);
   const place = [booking.villaCity, booking.villaCountry].filter(Boolean).join(", ");
   // The panel is shared: the host sees it with check-in/out handlers, the guest
   // with a cancel handler. That tells us which side is reading, so the status

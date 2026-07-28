@@ -27,8 +27,10 @@ import {
   createVilla,
   updateVilla,
   fetchMyVillas,
+  updatePayoutDetails,
   type VillaInput,
   type ExtraService,
+  type AuthUser,
 } from "@/lib/api";
 import { fileToResizedDataUrl } from "@/lib/image";
 // Shared with the villa detail page, which splits a villa's saved `services`
@@ -65,14 +67,35 @@ const FACILITIES = [
 ] as const;
 
 const PAYMENT_METHODS = ["Mastercard", "Google Pay", "PayPal", "Visa"];
-const ACCOUNT_TYPES = ["Credit Card", "Debit Card"];
+
+// Banks a host can pick from for their payout account.
+const BANKS = [
+  "State Bank of India",
+  "HDFC Bank",
+  "ICICI Bank",
+  "Axis Bank",
+  "Kotak Mahindra Bank",
+  "Punjab National Bank",
+  "Bank of Baroda",
+  "Canara Bank",
+  "Union Bank of India",
+  "Bank of India",
+  "IndusInd Bank",
+  "IDFC First Bank",
+  "Yes Bank",
+  "Federal Bank",
+  "RBL Bank",
+  "Central Bank of India",
+  "Standard Chartered",
+  "Citibank",
+  "HSBC",
+  "Other",
+];
 
 // Steps with no mandatory fields (always "complete").
 // Extra services now live inside "Property Details" as an optional block, so
 // every remaining step is mandatory.
 const OPTIONAL_STEPS = new Set<number>();
-
-const digitsOf = (s: string) => s.replace(/\D/g, "");
 
 // The check-in / check-out times most listings use, pre-filled so a host who
 // keeps the industry-standard hours doesn't have to set anything. They're
@@ -162,17 +185,14 @@ function pricingError(price: string): FieldIssue | null {
 
 function paymentError(
   accepted: string[],
-  accountType: string,
-  cardNumber: string,
-  editMode: boolean
+  hasBankDetails: boolean
 ): FieldIssue | null {
   if (accepted.length === 0)
     return { field: "acceptedPayments", message: "Select at least one payment method." };
-  if (!accountType) return { field: "accountType", message: "Please choose Credit or Debit Card." };
-  const d = digitsOf(cardNumber);
-  // In edit mode a blank card means "keep the existing one".
-  if (editMode && d.length === 0) return null;
-  if (d.length < 12) return { field: "cardNumber", message: "Enter a valid card number." };
+  // Bank details live on the host (shared by all their villas), so the step is
+  // complete once they've been saved — see the payout card in PaymentStep.
+  if (!hasBankDetails)
+    return { field: "bankDetails", message: "Add your bank account details." };
   return null;
 }
 
@@ -196,7 +216,7 @@ export default function AddVillaPage() {
 
 function Wizard() {
   const router = useRouter();
-  useAuth();
+  const { user, setUser } = useAuth();
 
   // Edit mode when the URL carries ?edit=<villaId>. Read through the router
   // hook: `window.location` doesn't exist on the server, so the page would
@@ -240,6 +260,9 @@ function Wizard() {
 
   // Step 2–5.
   const [images, setImages] = useState<WizardImage[]>([]);
+  // Which image (by key) is the cover — a flag, not a position, so picking a
+  // cover never reorders the grid. "" falls back to the first image.
+  const [coverKey, setCoverKey] = useState("");
   const [services, setServices] = useState<string[]>([]);
   // Extra services the host offers, each with a per-night price. Kept separate
   // from `services` (facilities) so a price can ride along with each one.
@@ -249,8 +272,6 @@ function Wizard() {
   const [blockedDates, setBlockedDates] = useState<string[]>([]);
   const [price, setPrice] = useState("");
   const [acceptedPayments, setAcceptedPayments] = useState<string[]>([...PAYMENT_METHODS]);
-  const [accountType, setAccountType] = useState("");
-  const [cardNumber, setCardNumber] = useState("");
 
   // Edit mode — load the villa and pre-fill every section.
   useEffect(() => {
@@ -297,16 +318,22 @@ function Wizard() {
         setAcceptedPayments(
           v.acceptedPayments?.length ? v.acceptedPayments : [...PAYMENT_METHODS]
         );
-        setAccountType(v.payoutMethod || "");
-        setCardNumber(""); // blank = keep existing card on save
+        const loaded = (v.photos || []).map((p) => ({
+          key: nextImageKey(),
+          id: p.id,
+          url: p.url,
+          isCover: p.isCover,
+        }));
         setImages(
-          (v.photos || []).map((p) => ({
-            key: nextImageKey(),
+          loaded.map((im) => ({
+            key: im.key,
             kind: "existing" as const,
-            id: p.id,
-            url: p.url,
+            id: im.id,
+            url: im.url,
           }))
         );
+        // Restore which photo was the cover (its key), else the first.
+        setCoverKey((loaded.find((im) => im.isCover) ?? loaded[0])?.key ?? "");
         setLoadingVilla(false);
       })
       .catch((e) => {
@@ -331,7 +358,7 @@ function Wizard() {
     villaError(villa) ?? extraServicesError(extraServices),
     imagesError(images),
     pricingError(price),
-    paymentError(acceptedPayments, accountType, cardNumber, editMode),
+    paymentError(acceptedPayments, !!user?.payoutAccount),
   ];
   const stepComplete = stepIssues.map((e) => e === null);
   // The next section that still needs something — this one doesn't count.
@@ -402,6 +429,12 @@ function Wizard() {
       const keepImageIds = images
         .filter((im): im is WizardImage & { kind: "existing"; id: string } => im.kind === "existing")
         .map((im) => im.id);
+      // The unified display order. Each entry is an existing image's id or "new"
+      // for the next uploaded one, so the server keeps them in the shown order.
+      const imageOrder = images.map((im) => (im.kind === "existing" ? im.id : "new"));
+      // Which of them is the cover (its position). Falls back to the first.
+      const coverIdx = images.findIndex((im) => im.key === coverKey);
+      const coverIndex = coverIdx >= 0 ? coverIdx : 0;
 
       const input: VillaInput = {
         title: villa.title,
@@ -428,9 +461,9 @@ function Wizard() {
         additionalRules: villa.additionalRules,
         pricePerNight: Number(price) || 0,
         acceptedPayments,
-        payoutMethod: accountType,
-        payoutAccount: cardNumber,
         images: newImages,
+        imageOrder,
+        coverIndex,
       };
 
       if (editId) {
@@ -492,7 +525,15 @@ function Wizard() {
           { label: "My Property", href: "/settings/property" },
           { label: editMode ? "Edit your Property" : "Add your Property" },
         ]}
-        title={editMode ? "Edit your Property" : "Add your Property"}
+        title={
+          // `villa` is the wizard's own form state; `values` is only the prop
+          // name the step components receive it under, and isn't in scope here.
+          editMode
+            ? villa.title.trim()
+              ? `Edit "${villa.title.trim()}"`
+              : "Edit your Property"
+            : "Add your Property"
+        }
         action={
           <Link href="/settings/property" className={pageHeaderAction}>
             Back
@@ -530,7 +571,13 @@ function Wizard() {
             />
           )}
           {step === 1 && (
-            <ImagesStep images={images} setImages={setImages} setError={setError} />
+            <ImagesStep
+              images={images}
+              setImages={setImages}
+              coverKey={coverKey}
+              setCoverKey={setCoverKey}
+              setError={setError}
+            />
           )}
           {step === 2 && (
             <PricingStep price={price} setPrice={setPrice} invalidField={invalidField} />
@@ -539,10 +586,8 @@ function Wizard() {
             <PaymentStep
               accepted={acceptedPayments}
               setAccepted={setAcceptedPayments}
-              accountType={accountType}
-              setAccountType={setAccountType}
-              cardNumber={cardNumber}
-              setCardNumber={setCardNumber}
+              user={user}
+              onPayoutSaved={setUser}
               invalidField={invalidField}
             />
           )}
@@ -1144,13 +1189,21 @@ function VillaDetailsStep({
 function ImagesStep({
   images,
   setImages,
+  coverKey,
+  setCoverKey,
   setError,
 }: {
   images: WizardImage[];
   setImages: React.Dispatch<React.SetStateAction<WizardImage[]>>;
+  coverKey: string;
+  setCoverKey: (k: string) => void;
   setError: (s: string) => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
+  // The effective cover: the chosen one if it still exists, else the first.
+  const activeCover = images.some((im) => im.key === coverKey)
+    ? coverKey
+    : images[0]?.key ?? "";
   const [busy, setBusy] = useState(false);
 
   async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
@@ -1178,17 +1231,26 @@ function ImagesStep({
     <div>
       <h2 className="text-[16px] font-bold text-ink">Add photos of your villa</h2>
       <p className="mt-1 text-[13px] text-muted">
-        Add up to 15 images. The first one becomes the cover photo.
+        Add up to 15 images. The first one is the cover — hover any other photo
+        and tap &ldquo;Set as cover&rdquo; to make it the cover instead.
       </p>
 
       <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3">
         {images.map((im, i) => (
           <div key={im.key} className="img-frame group relative aspect-[4/3] overflow-hidden rounded-lg border border-line bg-page">
             <Img src={imageSrc(im)} alt={`Villa ${i + 1}`} className="h-full w-full object-cover" />
-            {i === 0 && (
-              <span className="absolute left-2 top-2 rounded bg-primary px-2 py-0.5 text-[10px] font-semibold text-white">
+            {im.key === activeCover ? (
+              <span className="absolute left-2 top-2 rounded bg-amber-500 px-2 py-0.5 text-[10px] font-semibold text-white shadow-sm">
                 Cover
               </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setCoverKey(im.key)}
+                className="absolute bottom-2 left-2 rounded bg-black/60 px-2 py-1 text-[10px] font-semibold text-white opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+              >
+                Set as cover
+              </button>
             )}
             <button
               type="button"
@@ -1279,25 +1341,89 @@ function PricingStep({
 /* Step 4 — Payment Method (Screenshot_4 / _5)                        */
 /* ================================================================== */
 
+const payoutInputCls =
+  "w-full rounded-md border border-line px-3.5 py-3 text-[14px] text-ink placeholder:text-muted focus:border-primary focus:outline-none";
+
+function PayoutReadRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <span className="shrink-0 text-[12.5px] text-muted">{label}</span>
+      <span className="truncate text-right text-[13.5px] font-medium text-ink">{value || "—"}</span>
+    </div>
+  );
+}
+
 function PaymentStep({
   accepted,
   setAccepted,
-  accountType,
-  setAccountType,
-  cardNumber,
-  setCardNumber,
+  user,
+  onPayoutSaved,
   invalidField,
 }: {
   accepted: string[];
   setAccepted: React.Dispatch<React.SetStateAction<string[]>>;
-  accountType: string;
-  setAccountType: (v: string) => void;
-  cardNumber: string;
-  setCardNumber: (v: string) => void;
+  user: AuthUser | null;
+  onPayoutSaved: (u: AuthUser) => void;
   invalidField: string;
 }) {
   function toggle(m: string) {
     setAccepted((prev) => (prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m]));
+  }
+
+  // The host's ONE bank account, shared by every property. Saved on the host,
+  // shown here as a read-only card that opens and can be edited in place.
+  const hasBank = !!user?.payoutAccount;
+  const [open, setOpen] = useState(!hasBank);
+  const [editing, setEditing] = useState(!hasBank);
+  const [name, setName] = useState(user?.payoutAccountName || "");
+  const [bank, setBank] = useState(user?.payoutBankName || "");
+  const [ifsc, setIfsc] = useState(user?.payoutIfsc || "");
+  const [acct, setAcct] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  // Re-sync the fields whenever the saved account changes (e.g. after a save).
+  useEffect(() => {
+    setName(user?.payoutAccountName || "");
+    setBank(user?.payoutBankName || "");
+    setIfsc(user?.payoutIfsc || "");
+    setAcct("");
+  }, [user?.payoutAccountName, user?.payoutBankName, user?.payoutIfsc, user?.payoutAccount]);
+
+  function startEdit() {
+    setEditing(true);
+    setOpen(true);
+    setErr("");
+  }
+  function cancelEdit() {
+    setName(user?.payoutAccountName || "");
+    setBank(user?.payoutBankName || "");
+    setIfsc(user?.payoutIfsc || "");
+    setAcct("");
+    setErr("");
+    setEditing(false);
+  }
+  async function save() {
+    if (!name.trim() || !bank.trim()) {
+      setErr("Enter the account holder name and select your bank.");
+      return;
+    }
+    const digits = acct.replace(/\D/g, "");
+    if ((!hasBank || digits) && digits.length < 8) {
+      setErr("Enter a valid bank account number.");
+      return;
+    }
+    setBusy(true);
+    setErr("");
+    try {
+      const updated = await updatePayoutDetails(name.trim(), bank.trim(), acct, ifsc.trim());
+      onPayoutSaved(updated);
+      setEditing(false);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Could not save your bank details.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -1330,36 +1456,136 @@ function PaymentStep({
         })}
       </div>
 
-      <p className="mt-6 text-[14px] text-ink">Add your account details:</p>
-      <div className="mt-3 max-w-[720px] space-y-3">
-        <div className="relative">
-          <select
-            value={accountType}
-            onChange={(e) => setAccountType(e.target.value)}
-            aria-label="Account type"
-            aria-invalid={invalidField === "accountType" || undefined}
-            className={`w-full appearance-none rounded-md border border-line bg-white px-3.5 py-3 pr-10 text-[14px] focus:border-primary focus:outline-none ${
-              accountType ? "text-ink" : "text-muted"
-            }`}
-          >
-            <option value="">Credit Card or Debit Card</option>
-            {ACCOUNT_TYPES.map((t) => (
-              <option key={t} value={t} className="text-ink">{t}</option>
-            ))}
-          </select>
-          <ChevronDown size={18} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-muted" />
-        </div>
-        <input
-          value={cardNumber}
-          onChange={(e) => setCardNumber(e.target.value)}
-          inputMode="numeric"
-          placeholder="Card Number"
-          aria-label="Card Number"
-          autoComplete="cc-number"
-          maxLength={19}
-          aria-invalid={invalidField === "cardNumber" || undefined}
-          className="w-full rounded-md border border-line px-3.5 py-3 text-[14px] text-ink placeholder:text-muted focus:border-primary focus:outline-none"
-        />
+      {/* Bank account — ONE for all the host's properties. Saved on the host,
+          shown collapsed & read-only, edited in place. */}
+      <p className="mt-6 text-[14px] text-ink">
+        Your bank account <span className="text-red-500">*</span>
+      </p>
+      <p className="mt-1 text-[12.5px] text-muted">
+        Used for all your properties — saved once, reused everywhere. Only the
+        last 4 digits of the account number are stored.
+      </p>
+
+      <div
+        className={`mt-3 max-w-[720px] overflow-hidden rounded-xl border ${
+          invalidField === "bankDetails" ? "border-red-400" : "border-line"
+        }`}
+      >
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+        >
+          <span className="min-w-0">
+            {hasBank ? (
+              <>
+                <span className="block truncate text-[14px] font-semibold text-ink">
+                  {user?.payoutBankName} · {user?.payoutAccount}
+                </span>
+                <span className="block truncate text-[12px] text-muted">
+                  {user?.payoutAccountName}
+                </span>
+              </>
+            ) : (
+              <span className="text-[14px] font-medium text-primary">
+                + Add bank account details
+              </span>
+            )}
+          </span>
+          <ChevronDown
+            size={18}
+            className={`shrink-0 text-muted transition-transform ${open ? "rotate-180" : ""}`}
+          />
+        </button>
+
+        {open && (
+          <div className="border-t border-line p-4">
+            {!editing && hasBank ? (
+              <div className="space-y-2">
+                <PayoutReadRow label="Account holder" value={user?.payoutAccountName || ""} />
+                <PayoutReadRow label="Bank" value={user?.payoutBankName || ""} />
+                <PayoutReadRow label="Account number" value={user?.payoutAccount || ""} />
+                <PayoutReadRow label="IFSC / SWIFT" value={user?.payoutIfsc || ""} />
+                <button
+                  type="button"
+                  onClick={startEdit}
+                  className="mt-2 rounded-lg border border-line px-4 py-2 text-[13px] font-medium text-body transition-colors hover:border-primary hover:text-primary"
+                >
+                  Edit
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Account holder name"
+                  aria-label="Account holder name"
+                  className={payoutInputCls}
+                />
+                <div className="relative">
+                  <select
+                    value={bank}
+                    onChange={(e) => setBank(e.target.value)}
+                    aria-label="Bank name"
+                    className={`${payoutInputCls} appearance-none pr-10 ${bank ? "text-ink" : "text-muted"}`}
+                  >
+                    <option value="">Select your bank</option>
+                    {BANKS.map((b) => (
+                      <option key={b} value={b} className="text-ink">
+                        {b}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown
+                    size={18}
+                    className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-muted"
+                  />
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <input
+                    value={acct}
+                    onChange={(e) => setAcct(e.target.value.replace(/\D/g, ""))}
+                    inputMode="numeric"
+                    maxLength={18}
+                    placeholder={hasBank ? `Account number (${user?.payoutAccount})` : "Account number"}
+                    aria-label="Account number"
+                    className={payoutInputCls}
+                  />
+                  <input
+                    value={ifsc}
+                    onChange={(e) => setIfsc(e.target.value.toUpperCase())}
+                    maxLength={20}
+                    placeholder="IFSC / SWIFT code (optional)"
+                    aria-label="IFSC or SWIFT code"
+                    className={`${payoutInputCls} uppercase`}
+                  />
+                </div>
+                {err && <p className="text-[12.5px] text-red-600">{err}</p>}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={save}
+                    disabled={busy}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-primary-dark disabled:opacity-60"
+                  >
+                    {busy ? <><span className="spinner" aria-hidden /> Saving…</> : hasBank ? "Update account" : "Save account"}
+                  </button>
+                  {hasBank && (
+                    <button
+                      type="button"
+                      onClick={cancelEdit}
+                      disabled={busy}
+                      className="rounded-lg border border-line px-4 py-2 text-[13px] font-medium text-body transition-colors hover:border-primary/40"
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <p className="mt-4 max-w-[640px] text-[12px] leading-5 text-body">

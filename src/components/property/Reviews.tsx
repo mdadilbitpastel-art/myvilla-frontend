@@ -35,29 +35,43 @@ export default function Reviews({
   }));
   const maxCount = Math.max(1, ...dist.map((d) => d.count));
 
+  const heading = (
+    <span className="flex items-center gap-2">
+      <Star size={20} className="fill-star text-star" aria-hidden />
+      <h3 className="text-[18px] font-semibold text-ink">
+        {rating > 0 ? `${rating.toFixed(1)} · ` : ""}
+        {reviewsCount > 0
+          ? `${reviewsCount} review${reviewsCount === 1 ? "" : "s"}`
+          : "Reviews"}
+      </h3>
+    </span>
+  );
+
   return (
     <section id="reviews" className="border-b border-line py-6">
-      <div className="mb-6 flex items-center gap-2">
-        <Star size={20} className="fill-star text-star" aria-hidden />
-        <h3 className="text-[18px] font-semibold text-ink">
-          {rating > 0 ? `${rating.toFixed(1)} · ` : ""}
-          {reviewsCount > 0
-            ? `${reviewsCount} review${reviewsCount === 1 ? "" : "s"}`
-            : "Reviews"}
-        </h3>
-      </div>
-
       {reviewsCount === 0 ? (
-        <div className="rounded-xl border border-dashed border-line px-5 py-8 text-center">
-          <p className="text-[14px] font-medium text-ink">No reviews yet</p>
-          <p className="mt-1 text-[13px] text-muted">
-            Be the first to review this villa after your stay.
-          </p>
-        </div>
+        <>
+          <div className="mb-6">{heading}</div>
+          <div className="rounded-xl border border-dashed border-line px-5 py-8 text-center">
+            <p className="text-[14px] font-medium text-ink">No reviews yet</p>
+            <p className="mt-1 text-[13px] text-muted">
+              Be the first to review this villa after your stay.
+            </p>
+          </div>
+        </>
       ) : (
-        <div className="grid grid-cols-1 gap-x-12 gap-y-8 lg:grid-cols-[1fr_300px]">
-          {/* Reviewer list */}
-          <div className="space-y-7 lg:order-1">
+        // items-start so each column tops out on its own, letting both the left
+        // heading and the right ratings stick independently.
+        <div className="grid grid-cols-1 gap-x-12 gap-y-8 lg:grid-cols-[1fr_300px] lg:items-start">
+          {/* Reviewer list — its heading sticks, the reviews scroll under it. */}
+          <div className="lg:order-1">
+            <div
+              className="sticky z-10 mb-4 border-b border-line bg-page pb-3 pt-1"
+              style={{ top: "var(--villa-sticky-top, 200px)" }}
+            >
+              {heading}
+            </div>
+            <div className="space-y-7">
             {shown.map((r) => (
               <div key={r.id}>
                 <div className="flex items-center gap-3">
@@ -85,10 +99,14 @@ export default function Reviews({
                 {showAll ? "Show fewer" : `Show all ${reviews.length} reviews`}
               </button>
             )}
+            </div>
           </div>
 
-          {/* Aggregate + distribution */}
-          <div className="lg:order-2 lg:border-l lg:border-line lg:pl-10">
+          {/* Aggregate + distribution — sticks alongside the heading. */}
+          <div
+            className="lg:sticky lg:order-2 lg:self-start lg:border-l lg:border-line lg:pl-10"
+            style={{ top: "var(--villa-sticky-top, 200px)" }}
+          >
             <div className="flex items-end gap-3">
               <span className="text-[40px] font-extrabold leading-none text-ink">
                 {rating.toFixed(1)}

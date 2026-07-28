@@ -10,7 +10,6 @@ import PropertyHeader from "@/components/property/PropertyHeader";
 import Gallery from "@/components/property/Gallery";
 import Overview from "@/components/property/Overview";
 import Description from "@/components/property/Description";
-import BedroomSection from "@/components/property/BedroomSection";
 import Facilities from "@/components/property/Facilities";
 import ExtraServices from "@/components/property/ExtraServices";
 import Reviews from "@/components/property/Reviews";
@@ -273,9 +272,15 @@ export default function VillaDetailPage() {
   }
 
   // --- Build the display data from real fields (+ dummy where noted) ---
-  const photoUrls =
+  // The cover photo leads (the big hero); the rest follow in their order — so
+  // the same image the host chose as the cover shows first here too.
+  const orderedPhotos =
     v.photos.length > 0
-      ? v.photos.map((p) => p.url)
+      ? [...v.photos].sort((a, b) => Number(b.isCover) - Number(a.isCover))
+      : [];
+  const photoUrls =
+    orderedPhotos.length > 0
+      ? orderedPhotos.map((p) => p.url)
       : v.coverImage
         ? [v.coverImage]
         : [dummy.images.hero];
@@ -320,7 +325,13 @@ export default function VillaDetailPage() {
   const breadcrumb = ["Home", "Villas", v.country || "Listing", v.title];
 
   return (
-    <div className="pb-20">
+    // Expose where content below the sticky header should stop — the nav plus
+    // the (collapsing) page header, including its thumbnail strip. The reviews
+    // section's sticky heading/ratings park here so they clear the strip.
+    <div
+      className="pb-20"
+      style={{ ["--villa-sticky-top" as string]: `${NAV_HEIGHT + headerHeight + 8}px` }}
+    >
       {/* Sticky page header — breadcrumb, title and Share/Save, in the same bar
           as every other page (see PageHeader): full-viewport background, text on
           the content grid, transparent→line border and the pb-4/pt-5 → py-2.5
@@ -381,11 +392,6 @@ export default function VillaDetailPage() {
       <div className="grid grid-cols-1 gap-x-12 lg:grid-cols-[1fr_360px]">
         <div>
           <Description text={description} />
-          <BedroomSection
-            image={thumbs[0] || hero}
-            title="Bedroom"
-            detail={plural(v.bedrooms, "bed")}
-          />
           <Facilities facilities={facilities} />
           <ExtraServices services={v.extraServices} />
           <Reviews reviews={reviews} rating={v.rating} reviewsCount={v.reviewsCount} />

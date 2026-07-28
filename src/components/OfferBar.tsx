@@ -60,9 +60,10 @@ export default function OfferBar() {
         height: open ? BAR_H : 0,
         opacity: open ? 1 : 0,
         transition: "height 0.45s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.45s ease",
-        // Light at both ends, deep through the middle — the message sits in the
-        // centre, so the strongest colour lands exactly under it and the band
-        // fades out towards the edges instead of ending in a hard block.
+        // The deeper red of the two: the badges on cards are the bright
+        // #ff2d2d, while a full-width band that thin needs the darker tone to
+        // sit under the white nav without shouting. Light at both ends, deep
+        // through the middle, where the message sits.
         backgroundImage:
           "linear-gradient(90deg, #ef7378 0%, #de5257 26%, #c22f37 50%, #de5257 74%, #ef7378 100%)",
       }}

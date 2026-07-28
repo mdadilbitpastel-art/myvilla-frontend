@@ -3,9 +3,10 @@
 import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { ChevronDown, Check } from "lucide-react";
+import { ChevronDown, Check, PartyPopper } from "lucide-react";
 import Img from "@/components/ui/Img";
 import { useAuth } from "@/lib/auth";
+import { useWelcomeOffer } from "@/lib/welcome";
 import {
   fetchVilla,
   fetchBookingWindow,
@@ -241,6 +242,10 @@ function BookVillaContent() {
   const [errorField, setErrorField] = useState<FieldKey | "">("");
   const [submitting, setSubmitting] = useState(false);
 
+  // The first-booking welcome offer. Read here so the total on screen is the
+  // total the server will charge; `createBooking` decides it again for real.
+  const welcome = useWelcomeOffer();
+
   // The host's booking window, and a clock to judge it against. Filling in a
   // payment form takes minutes: the villa's check-in time can go by, or another
   // guest can take these very nights, while this page sits open. Both are
@@ -369,13 +374,13 @@ function BookVillaContent() {
     applyCoupon(code);
   }, [v, dates, searchParams, applyCoupon]);
 
-  // The payment methods THIS host accepts, in a stable known order. A villa
-  // saved before the field existed lists nothing, so it falls back to offering
-  // all four rather than leaving the guest with nothing to pay with.
+  // The payment methods THIS host accepts, in a stable known order — EXACTLY
+  // what the host ticked, nothing more. No fallback to "all four": if the host
+  // enabled only Visa, the guest sees only Visa. An empty list means the host
+  // set none, and the form says so rather than inventing options.
   const acceptedMethods = useMemo(() => {
     const accepted = v?.acceptedPayments ?? [];
-    const chosen = KNOWN_METHODS.filter((m) => accepted.includes(m));
-    return chosen.length ? chosen : KNOWN_METHODS;
+    return KNOWN_METHODS.filter((m) => accepted.includes(m));
   }, [v?.acceptedPayments]);
 
   // Default to the host's first accepted method, and re-home the selection if
@@ -439,10 +444,19 @@ function BookVillaContent() {
 
   // --- Price details ---
   const price = v.pricePerNight || 0;
+  // The first-booking welcome offer, applied automatically — there is no code
+  // to type. It does NOT stack with a host's coupon: whichever takes more off
+  // wins, exactly as the server decides it when the booking is taken.
+  const rawSubtotal = Math.max(0, price * Math.max(0, trip.nights));
+  const welcomeDiscount = welcome.available
+    ? Math.round(rawSubtotal * (welcome.offer?.percentOff ?? 0)) / 100
+    : 0;
+  const couponDiscount = applied?.discount ?? 0;
+  const welcomeWins = welcomeDiscount > 0 && welcomeDiscount >= couponDiscount;
   const { subtotal, discount, serviceFee, tax, extras, total } = computeStayPricing(
     price,
     trip.nights,
-    applied?.discount ?? 0,
+    welcomeWins ? welcomeDiscount : couponDiscount,
     extrasPerNight
   );
   const cover = v.photos[0]?.url || v.coverImage || "";
@@ -537,6 +551,10 @@ function BookVillaContent() {
         couponCode: applied?.code || "",
         extraServices: selectedExtras,
       });
+      // That was their first booking if the welcome offer was still live —
+      // re-ask, so the placard stops appearing and the landing page hands its
+      // on-load slot back to the host offers.
+      welcome.refresh();
       router.push("/settings/bookings?booked=1");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Payment could not be completed.");
@@ -572,6 +590,29 @@ function BookVillaContent() {
       <div className="mt-5 grid grid-cols-1 gap-10 lg:grid-cols-[1fr_440px]">
         {/* ---------- Left: payment form ---------- */}
         <div>
+          {/* The welcome offer, already applied. Stated before the guest starts
+              typing card details, since it changes what they're about to pay. */}
+          {welcomeWins && (
+            <div className="mb-5 flex items-start gap-3 rounded-xl border border-green-200 bg-green-50 px-4 py-3">
+              <PartyPopper size={18} className="mt-0.5 shrink-0 text-green-600" aria-hidden />
+              <div className="min-w-0">
+                <p className="text-[13.5px] font-bold text-green-800">
+                  First booking offer applied — {Math.round(welcome.offer?.percentOff ?? 0)}% off
+                </p>
+                <p className="mt-0.5 text-[12.5px] leading-5 text-green-700">
+                  {money(welcomeDiscount)} off your stay, taken off automatically.
+                  {couponDiscount > 0 && (
+                    <>
+                      {" "}
+                      It beats your coupon{applied ? ` ${applied.code}` : ""} ({money(couponDiscount)}),
+                      so we&apos;ve used this one — the two don&apos;t stack.
+                    </>
+                  )}
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Trip details */}
           <h2 className="text-[15px] font-bold text-ink">Your Trip Details</h2>
           <TripRow
@@ -631,6 +672,12 @@ function BookVillaContent() {
               villa's own accepted methods, not a fixed row of logos. */}
           <div className="mt-8">
             <h2 className="text-[19px] font-semibold text-ink">Pay using</h2>
+            {acceptedMethods.length === 0 ? (
+              <p className="mt-4 rounded-xl border border-dashed border-line bg-page px-4 py-4 text-[13.5px] text-muted">
+                This host hasn&apos;t set up any payment methods for this villa yet.
+                Please contact the host before booking.
+              </p>
+            ) : (
             <div role="radiogroup" aria-label="Payment method" className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
               {acceptedMethods.map((m) => {
                 const on = method === m;
@@ -659,6 +706,7 @@ function BookVillaContent() {
                 );
               })}
             </div>
+            )}
             {errorField === "method" && (
               <p className="mt-2 text-[13px] text-red-600">Please choose a payment method.</p>
             )}
@@ -990,7 +1038,14 @@ function BookVillaContent() {
                   <span className="text-ink">{money(subtotal)}</span>
                 </div>
                 <div className="flex items-center justify-between text-body">
-                  <span>Discount{applied ? ` (${applied.code})` : ""}</span>
+                  <span>
+                    Discount
+                    {welcomeWins
+                      ? ` (first booking · ${Math.round(welcome.offer?.percentOff ?? 0)}%)`
+                      : applied
+                        ? ` (${applied.code})`
+                        : ""}
+                  </span>
                   <span className={discount > 0 ? "font-medium text-green-600" : "text-ink"}>
                     {discount > 0 ? `-${money(discount)}` : money(0)}
                   </span>

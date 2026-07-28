@@ -28,19 +28,27 @@ function isActive(href: string, pathname: string): boolean {
 export function Logo({
   className = "",
   onClick,
+  /** The header's mark is alive; the footer's is the same wordmark at rest. */
+  animated = true,
 }: {
   className?: string;
   onClick?: () => void;
+  animated?: boolean;
 }) {
   return (
     <Link
       href="/"
       onClick={onClick}
-      className={`text-[22px] font-bold tracking-tight ${className}`}
+      aria-label="MyVilla.com — home"
+      className={`text-[22px] font-bold tracking-tight ${animated ? "logo-mark" : ""} ${className}`}
     >
       <span className="text-ink">My</span>
-      <span className="text-primary">Villa</span>
-      <span className="text-ink">.com</span>
+      {/* Animated, the sheen is painted through the text, so the colour lives
+          in CSS; at rest it's simply the brand colour. */}
+      <span className={animated ? "logo-villa" : "text-primary"}>Villa</span>
+      <span className={`text-ink ${animated ? "logo-com" : ""}`}>
+        {animated ? <span className="logo-dot">.</span> : "."}com
+      </span>
     </Link>
   );
 }
@@ -153,17 +161,31 @@ export default function Navbar() {
 
           {loggedIn ? (
             <div ref={menuRef} className="relative hidden sm:block">
+              {/* A pill carrying the signed-in face: who you are is the point
+                  of this control, so the avatar leads and the label follows. */}
               <button
                 type="button"
                 onClick={() => setMenuOpen((v) => !v)}
                 aria-expanded={menuOpen}
                 aria-haspopup="menu"
-                className="flex items-center gap-1.5 rounded-lg bg-primary px-5 py-2.5 text-[14px] font-medium text-white shadow-sm transition-colors hover:bg-primary-dark"
+                className={`group flex items-center gap-2 rounded-full bg-gradient-to-r from-primary to-[#8a7dff] py-1 pl-1 pr-3.5 text-[14px] font-semibold text-white ring-1 ring-white/25 transition-all duration-200 hover:brightness-[1.06] active:scale-[0.98] ${
+                  menuOpen
+                    ? "shadow-[0_8px_20px_rgba(99,91,255,0.45)]"
+                    : "shadow-[0_4px_14px_rgba(99,91,255,0.32)] hover:shadow-[0_6px_18px_rgba(99,91,255,0.42)]"
+                }`}
               >
+                <span className="rounded-full bg-white/25 p-[2px] ring-1 ring-white/40">
+                  <Avatar
+                    src={user?.avatar}
+                    name={user?.fullName}
+                    gender={user?.gender}
+                    size={26}
+                  />
+                </span>
                 My Account
                 <ChevronDown
                   size={16}
-                  className={`transition-transform ${menuOpen ? "rotate-180" : ""}`}
+                  className={`transition-transform duration-200 ${menuOpen ? "rotate-180" : ""}`}
                 />
               </button>
 

@@ -13,7 +13,12 @@ import CountPill from "@/components/ui/CountPill";
 import StarRating from "@/components/ui/StarRating";
 import Img from "@/components/ui/Img";
 import { fetchVillaBookings, checkInBooking, checkOutBooking, type Booking } from "@/lib/api";
-import { bookingStatus, lifecycleOf, STATUS_TONE_CLASS } from "@/lib/booking";
+import {
+  bookingStatus,
+  lifecycleOf,
+  useServerWallClock,
+  STATUS_TONE_CLASS,
+} from "@/lib/booking";
 
 // A broken avatar URL falls back to this transparent pixel, which reveals the
 // initial-letter tile rendered behind it.
@@ -83,7 +88,10 @@ function RequestRow({
   onCheckOut: (id: string) => void;
   working: boolean;
 }) {
-  const status = bookingStatus(req);
+  // The server's clock, ticking — so a stay that has been waiting an hour says
+  // so without the host reloading, and on the SERVER's hour, not the browser's.
+  const now = useServerWallClock(req.serverNow);
+  const status = bookingStatus(req, now);
   const rowRef = useRef<HTMLDivElement>(null);
 
   // On expand, bring the newly revealed details into view — after the open

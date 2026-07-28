@@ -5,21 +5,26 @@ import { promo } from "@/lib/home";
 import type { Offer } from "@/lib/api";
 import Img from "@/components/ui/Img";
 import Reveal from "@/components/ui/Reveal";
+import InviteCard from "@/components/home/InviteCard";
 
 // A static marketing card (used when there are no live offers to show).
 function PromoCard({
   image,
   title,
+  href,
   className = "",
   big = false,
 }: {
   image: string;
   title: string;
+  /** Where the card leads. Without one it stays a plain, unclickable poster. */
+  href?: string;
   className?: string;
   big?: boolean;
 }) {
-  return (
-    <div className={`group relative overflow-hidden rounded-2xl ${className}`}>
+  const boxClass = `group relative block overflow-hidden rounded-2xl ${className}`;
+  const inner = (
+    <>
       <Image
         src={image}
         alt={title}
@@ -35,7 +40,15 @@ function PromoCard({
       >
         {title}
       </h3>
-    </div>
+    </>
+  );
+  // A card with a destination is a Link; without one it's a plain poster.
+  return href ? (
+    <Link href={href} className={boxClass}>
+      {inner}
+    </Link>
+  ) : (
+    <div className={boxClass}>{inner}</div>
   );
 }
 
@@ -107,14 +120,17 @@ export default function PromoGrid({ offers = [] }: { offers?: Offer[] }) {
           ) : (
             <PromoCard
               image={promo.offer}
-              title="Upto 25% off on your first purchase"
+              title="Upto 25% off on your first booking"
+              href="/search"
               className="min-h-[150px] sm:col-span-2"
             />
           )}
           {c ? (
             <OfferCard offer={c} className="min-h-[150px] sm:col-span-2" />
           ) : (
-            <PromoCard
+            // Not a poster: this one actually invites someone, by handing the
+            // site link to WhatsApp.
+            <InviteCard
               image={promo.invite}
               title="Invite your friends to get discounts"
               className="min-h-[150px] sm:col-span-2"

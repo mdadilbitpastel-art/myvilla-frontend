@@ -44,6 +44,9 @@ export type PlaceData = {
   title: string;
   highlight: string;
   description: string;
+  /** Photos of the same place, played on hover so the card reads as a clip.
+   *  `image` is the still it rests on, so it belongs first. */
+  gallery?: string[];
 };
 
 export type TestimonialData = {
@@ -101,24 +104,53 @@ export const featuredVillas: VillaCardData[] = [
   },
 ];
 
+// Stock photography for the "unique places" cards. Written as id + shared
+// suffix so a gallery of six reads as a list of photos, not a wall of URLs.
+const UNSPLASH = "https://images.unsplash.com/";
+const PLACE_IMG = "?auto=format&fit=crop&w=700&q=80";
+
 export const uniquePlaces: PlaceData[] = [
   {
-    image: "https://images.unsplash.com/photo-1544644181-1484b3fdfc62?auto=format&fit=crop&w=700&q=80",
+    image: `${UNSPLASH}photo-1544644181-1484b3fdfc62${PLACE_IMG}`,
     title: "Stay among the atolls in", highlight: "Maldives",
     description:
       "From the 2nd century AD, the islands were known as the 'Money Isles' due to the abundance of cowry shells, a currency of the early ages.",
+    gallery: [
+      "photo-1544644181-1484b3fdfc62",
+      "photo-1514282401047-d79a71a590e8",
+      "photo-1590523277543-a94d2e4eb00b",
+      "photo-1573843981267-be1999ff37cd",
+      "photo-1502680390469-be75c86b636f",
+      "photo-1512100356356-de1b84283e18",
+    ].map((id) => `${UNSPLASH}${id}${PLACE_IMG}`),
   },
   {
-    image: "https://images.unsplash.com/photo-1539020140153-e479b8c22e70?auto=format&fit=crop&w=700&q=80",
+    image: `${UNSPLASH}photo-1539020140153-e479b8c22e70${PLACE_IMG}`,
     title: "Experience the Ourika Valley in", highlight: "Morocco",
     description:
       "Morocco's Hispano-Moorish architecture blends influences from Berber culture, Spain, and contemporary artistic currents in the Middle East.",
+    gallery: [
+      "photo-1539020140153-e479b8c22e70",
+      "photo-1489749798305-4fea3ae63d43",
+      "photo-1553603227-2358aabe821e",
+      "photo-1597212618440-806262de4f6b",
+      "photo-1531761535209-180857e963b9",
+      "photo-1518544801976-3e159e50e5bb",
+    ].map((id) => `${UNSPLASH}${id}${PLACE_IMG}`),
   },
   {
-    image: "https://images.unsplash.com/photo-1533692328991-08159ff19fca?auto=format&fit=crop&w=700&q=80",
+    image: `${UNSPLASH}photo-1533692328991-08159ff19fca${PLACE_IMG}`,
     title: "Live traditionally in", highlight: "Mongolia",
     description:
       "Traditional Mongolian yurts consists of an angled latticework of wood or bamboo for walls, ribs, and a wheel.",
+    gallery: [
+      "photo-1533692328991-08159ff19fca",
+      "photo-1547471080-7cc2caa01a7e",
+      "photo-1596701062351-8c2c14d1fdd0",
+      "photo-1519677100203-a0e668c92439",
+      "photo-1504609773096-104ff2c73ba4",
+      "photo-1504280390367-361c6d9f38f4",
+    ].map((id) => `${UNSPLASH}${id}${PLACE_IMG}`),
   },
 ];
 

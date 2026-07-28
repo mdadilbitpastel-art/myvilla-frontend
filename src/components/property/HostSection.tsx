@@ -60,22 +60,8 @@ export default function HostSection({
         )}
       </div>
 
-      {email ? (
-        <a
-          href={`mailto:${email}`}
-          className="mt-5 inline-block rounded-lg border border-primary/40 px-5 py-2.5 text-[14px] font-medium text-primary transition-colors hover:bg-primary/5"
-        >
-          Contact Host
-        </a>
-      ) : (
-        <button
-          type="button"
-          disabled
-          className="mt-5 rounded-lg border border-line px-5 py-2.5 text-[14px] font-medium text-muted"
-        >
-          Contact Host
-        </button>
-      )}
+      {/* No "Contact Host" button: the e-mail and phone above are already the
+          ways to reach them, and the button only repeated the mailto link. */}
 
       <div className="mt-6 flex items-start gap-3 text-[14px] text-body">
         <Shield size={22} className="mt-0.5 shrink-0 fill-ink text-ink" aria-hidden />
