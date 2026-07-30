@@ -1,19 +1,23 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Users } from "lucide-react";
 import type { Villa } from "@/lib/villa";
 import { fetchBookingWindow } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { computeStayPricing, money, TAX_RATE } from "@/lib/pricing";
+import { propertyNoun } from "@/lib/categories";
 import {
   addDays,
   firstBookableDate,
   isDateOpen,
-  maxCheckOutFor,
+  iso,
   prettyDate,
+  serverDate,
+  shortRange,
   slideWindow,
+  splitStay,
   stayProblem,
   type BookingWindow,
 } from "@/lib/bookingWindow";
@@ -26,6 +30,7 @@ export default function ReservationCard({
   maxGuests = 4,
   checkInTime = "",
   coupon = "",
+  propertyType = "",
 }: {
   pricing: Villa["pricing"];
   /** real villa id — omit for the static demo page (Reserve disabled) */
@@ -38,14 +43,21 @@ export default function ReservationCard({
   checkInTime?: string;
   /** a coupon code to carry through to checkout (from a home-page offer). */
   coupon?: string;
+  /** the listing's own category — decides what the card calls the place. */
+  propertyType?: string;
 }) {
   const router = useRouter();
   const { user, openAuth } = useAuth();
 
-  // A booking takes the whole villa, so the party size changes nothing about
+  // A booking takes the whole place, so the party size changes nothing about
   // the price — there is nothing here for a guest to choose. The capacity is
   // stated instead, and the booking is made for it.
   const guestCount = Math.max(1, maxGuests);
+
+  // What this listing calls itself — "the whole bungalow", "the whole villa".
+  // "" for a hotel, where a guest takes a room rather than the building, so the
+  // line is left off entirely rather than reworded into something untrue.
+  const noun = propertyNoun(propertyType);
 
   // No fixed cap on the length of a stay: the host's window is the limit, so a
   // villa opened for two months can be booked for two months. The backend
@@ -109,9 +121,11 @@ export default function ReservationCard({
   useEffect(() => {
     if (!win) return;
     if (checkIn && isDateOpen(checkIn, win) && checkOut > checkIn) {
-      // Still valid; only pull check-out back if the window shrank past it.
-      const latest = maxCheckOutFor(checkIn, win);
-      if (checkOut > latest) setCheckOut(latest);
+      // Still valid; only pull check-out back if the window itself shrank past
+      // it. A taken night in between is NOT pulled back — the guest is left on
+      // the date they picked and told which night is in the way, rather than
+      // having the field silently rewritten under them.
+      if (checkOut > win.maxCheckOut) setCheckOut(win.maxCheckOut);
       return;
     }
     if (!firstOpen) return;
@@ -133,6 +147,23 @@ export default function ReservationCard({
 
   const earliest = win ? win.firstDate : fallbackEarliest;
 
+  // Today, once this villa's check-in time has gone by. `min` alone would grey
+  // it out like any date outside the window, which reads as "not open yet" —
+  // but the day IS the guest's own, it has simply been taken off the board.
+  // Shown with the booked treatment instead: struck through, and "Already
+  // booked" on hover.
+  //
+  // The server's date decides while the window is here (the browser's can be a
+  // whole day out at the boundary); the browser's is only the fallback for when
+  // the window never arrived and the calendar is running on its own.
+  const checkInBlocked = useMemo(() => {
+    const taken = win?.unavailableDates ?? [];
+    if (!now || !earliest) return win ? taken : undefined;
+    const today = win ? serverDate(win, now.getTime()) : iso(now);
+    if (!today || today >= earliest) return win ? taken : undefined;
+    return [...taken, today];
+  }, [win, now, earliest]);
+
   // Nothing left in the window — every open date is booked or closed.
   const windowFull = !!win && !firstOpen;
 
@@ -147,27 +178,38 @@ export default function ReservationCard({
   const isOwner = !!user && !!ownerId && String(user.id) === String(ownerId);
   // False until the mount effect above has resolved the local date.
   const datesReady = !!checkIn && !!checkOut;
-  const nights = !datesReady
-    ? 0
-    : Math.max(
-        0,
-        Math.round(
-          (new Date(checkOut + "T00:00:00").getTime() -
-            new Date(checkIn + "T00:00:00").getTime()) /
-            86_400_000
-        )
-      );
-  // The latest check-out this stay may have: the end of the host's window, or
-  // the next night somebody else holds — whichever comes first. No night cap of
-  // our own, so the whole of a two-month window really is bookable.
-  const latestCheckOut = datesReady ? maxCheckOutFor(checkIn, win) : undefined;
 
-  // Keep check-out inside that whenever check-in moves.
+  // The stay as the guest will actually get it. A booking somebody else holds
+  // in the middle of the chosen range doesn't refuse it — the range breaks into
+  // runs around that booking, and only the nights slept are counted (and
+  // charged). `createBooking` splits it exactly the same way for real.
+  const split = useMemo(
+    () => (datesReady ? splitStay(checkIn, checkOut, win) : null),
+    [datesReady, checkIn, checkOut, win]
+  );
+  const nights = split?.nights ?? 0;
+  const isSplit = (split?.segments.length ?? 0) > 1;
+  // The check-out calendar offers the host's whole window, closing only the
+  // dates that can't END a stay.
+  //
+  // That is NOT the same list the check-in side uses. A check-out day is not a
+  // night: leaving on the 30th means you slept on the 29th, so the 30th being
+  // booked by somebody else doesn't stop you checking out on it. What stops you
+  // is the night BEFORE — so the taken nights are shifted a day forward here.
+  //
+  //   30 & 31 Jul taken  →  check-in closes 30, 31
+  //                      →  check-out closes 31, 1 Aug (30 stays open)
+  const checkOutBlocked = useMemo(
+    () => win?.unavailableDates.map((d) => addDays(d, 1)),
+    [win]
+  );
+
+  // Keep check-out after check-in, and inside the host's window, whenever
+  // check-in moves. A taken night in between is left to the message below.
   function onCheckInChange(next: string) {
     setCheckIn(next);
-    const latest = maxCheckOutFor(next, win);
     if (checkOut <= next) setCheckOut(addDays(next, 1));
-    else if (checkOut > latest) setCheckOut(latest);
+    else if (win && checkOut > win.maxCheckOut) setCheckOut(win.maxCheckOut);
   }
   // Everything below the Reserve button is derived from the chosen dates.
   const stay = computeStayPricing(pricing.price, nights);
@@ -189,6 +231,12 @@ export default function ReservationCard({
   // final authority and re-checks everything at the moment of booking.
   const blocked = isOwner || !!dateError || !datesReady || windowFull;
 
+  // Every night of the range is somebody else's. That is a different refusal
+  // from "check-out must be after check-in", and the button says so: the stay
+  // isn't unbookable, it is already reserved. A range with only SOME nights
+  // taken is not this — it splits around them and books fine.
+  const datesTaken = !!win && datesReady && nights < 1;
+
   function onReserve() {
     if (!villaId) return; // demo page — nothing to book
     if (!user) {
@@ -202,10 +250,94 @@ export default function ReservationCard({
     );
   }
 
+  // ── Staying inside one screenful ─────────────────────────────────────────
+  // The card is pinned, so `.sticky-panel` bounds it to the space under the
+  // page header and scrolls whatever doesn't fit. A scrollbar appearing over a
+  // line or two of overflow is a poor trade — it hides the total and Reserve
+  // behind a scroll nobody looks for — so the card first gives that much back
+  // out of its own bottom block: the price breakdown's row spacing, which is
+  // the one part of the card carrying slack. Padding and type stay exactly as
+  // they are, and nothing is hidden; `data-fit` only tightens spacing, in two
+  // small steps (see globals.css). Past what those absorb, the panel scrolls as
+  // before — this is a nudge, not a replacement for it.
+  const cardRef = useRef<HTMLDivElement>(null);
+  // The least room the panel has ever offered. Its height moves as the page
+  // header collapses on scroll; sizing off the live value would re-tighten the
+  // card under the guest's eyes, so the worst case decides once.
+  const leastRoom = useRef(Infinity);
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el) return;
+
+    // "" first: the roomiest fit that works, wins.
+    const STEPS = ["", "snug", "tight"];
+    let queued = false;
+
+    function fit() {
+      queued = false;
+      const panel = el!.closest<HTMLElement>(".sticky-panel");
+      if (!panel) return;
+      const cs = getComputedStyle(panel);
+      // The panel's own ceiling, already resolved to px — and only set while it
+      // is actually pinned, so on a narrow screen (max-height: none) there is
+      // nothing to fit into and the card is left alone.
+      const cap = parseFloat(cs.maxHeight);
+      if (!Number.isFinite(cap)) {
+        el!.dataset.fit = "";
+        return;
+      }
+      const room =
+        cap - (parseFloat(cs.paddingTop) || 0) - (parseFloat(cs.paddingBottom) || 0);
+      leastRoom.current = Math.min(leastRoom.current, room);
+
+      for (const step of STEPS) {
+        el!.dataset.fit = step;
+        // offsetHeight, read back after the write, is what applies the step —
+        // and it is the card's own height, not the scroll container's.
+        if (el!.offsetHeight <= leastRoom.current) return;
+      }
+      // Still over even at `tight`: leave it there and let the panel scroll the
+      // remainder, which is now a smaller remainder than it would have been.
+    }
+
+    function schedule() {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(fit);
+    }
+
+    fit();
+    // The card's own height changing (a split-stay breakdown appearing, an
+    // error line, the booking-window text arriving)...
+    const ro = new ResizeObserver(schedule);
+    ro.observe(el);
+    // ...and the page header settling, which rewrites `--sticky-top` inline and
+    // with it the panel's ceiling.
+    const panel = el.closest<HTMLElement>(".sticky-panel");
+    const mo = panel ? new MutationObserver(schedule) : null;
+    if (panel && mo) mo.observe(panel, { attributeFilter: ["style"] });
+
+    function onResize() {
+      // A new viewport is a new worst case — measure it from scratch.
+      leastRoom.current = Infinity;
+      schedule();
+    }
+    window.addEventListener("resize", onResize);
+    return () => {
+      ro.disconnect();
+      mo?.disconnect();
+      window.removeEventListener("resize", onResize);
+    };
+  }, []);
+
   return (
     // Kept deliberately tight vertically: the card is sticky, so anything past
     // roughly one viewport height gets cut off at the bottom — the total was.
-    <div className="rounded-2xl border border-line bg-white p-5 shadow-[0_8px_30px_rgba(0,0,0,0.06)]">
+    <div
+      ref={cardRef}
+      data-fit=""
+      className="rc-card rounded-2xl border border-line bg-white p-5 shadow-[0_8px_30px_rgba(0,0,0,0.06)]"
+    >
       {/* Price. The rating used to sit opposite it, but this card is about one
           thing — what a stay costs and booking it — and the score is already
           told by the page header and the reviews section below. */}
@@ -240,7 +372,7 @@ export default function ReservationCard({
           value={checkIn}
           min={earliest}
           max={win?.lastDate}
-          disabledDates={win?.unavailableDates}
+          disabledDates={checkInBlocked}
           onChange={onCheckInChange}
           className="border-r border-line"
         />
@@ -249,7 +381,8 @@ export default function ReservationCard({
           label="Check - Out"
           value={checkOut}
           min={datesReady ? addDays(checkIn, 1) : undefined}
-          max={latestCheckOut}
+          max={win?.maxCheckOut}
+          disabledDates={checkOutBlocked}
           onChange={setCheckOut}
         />
       </div>
@@ -265,19 +398,69 @@ export default function ReservationCard({
         </p>
       )}
 
+      {/* A stay booked around somebody else's nights: they are leaving and
+          coming back, and finding that out at the property would be a nasty
+          surprise. The parts ARE the explanation — a paragraph naming which
+          nights are taken and what is charged said, at length, what the dates
+          underneath it show at a glance. The booking page still spells it out
+          in full, which is where a guest reads carefully. */}
+      {isSplit && !dateError && split && (
+        <div
+          className="mt-2 rounded-xl border border-amber-200 bg-amber-50/70 px-3 py-2"
+          // The long form, for anyone who wants the years and the full dates.
+          title={split.segments
+            .map(
+              (s, i) =>
+                `Part ${i + 1}: ${prettyDate(s.checkIn)} → ${prettyDate(s.checkOut)}` +
+                ` (${s.nights} night${s.nights === 1 ? "" : "s"})`
+            )
+            .join("\n")}
+        >
+          <p className="text-[11px] font-semibold leading-snug text-amber-900">
+            Split into {split.segments.length} parts · {nights} night
+            {nights === 1 ? "" : "s"}
+          </p>
+          {/* One wrapped row of short spans rather than a line per part: on a
+              stay cut into three or four, a list was several lines of the card's
+              height, and the card is pinned to one screenful. Compressed to
+              "P1 11–12 Aug (1n)" it says the same in a fraction of the room. */}
+          <div className="mt-1 flex flex-wrap gap-x-2.5 gap-y-0.5 text-[10.5px] leading-snug text-amber-900">
+            {split.segments.map((s, i) => (
+              <span key={s.checkIn} className="whitespace-nowrap">
+                <span className="font-semibold">P{i + 1}</span>{" "}
+                {shortRange(s.checkIn, s.checkOut)}
+                <span className="text-amber-800/75"> ({s.nights}n)</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Capacity — stated, not chosen: the whole villa is booked either way,
-          so a picker here would only look like it changed the price. */}
+          so a picker here would only look like it changed the price.
+          One line, not two: "the whole villa is yours for the stay" was a
+          sentence where a clause would do, and the second line cost the card
+          height it doesn't have to spare. */}
       <div className="mt-2.5 flex items-center gap-3 rounded-xl bg-page px-4 py-3">
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-primary shadow-sm">
           <Users size={17} strokeWidth={1.8} aria-hidden />
         </span>
-        <span className="min-w-0">
-          <span className="block text-[14px] font-semibold text-ink">
-            Sleeps up to {guestCount} guest{guestCount === 1 ? "" : "s"}
+        {/* The capacity always reads in full; only the "whole ___" clause gives
+            way, since a host may have typed a property type of any length
+            ("combinative villa") and the tile's height is fixed by the icon
+            beside it either way. */}
+        <span className="flex min-w-0 items-baseline gap-1 text-[13px] font-semibold text-ink">
+          <span className="whitespace-nowrap">
+            Sleeps {guestCount} guest{guestCount === 1 ? "" : "s"}
           </span>
-          <span className="block text-[12.5px] text-muted">
-            The whole villa is yours for the stay.
-          </span>
+          {noun && (
+            <span
+              className="min-w-0 truncate font-normal text-muted"
+              title={`The whole ${noun} is yours for the stay`}
+            >
+              · whole {noun}
+            </span>
+          )}
         </span>
       </div>
 
@@ -290,7 +473,13 @@ export default function ReservationCard({
           blocked ? "cursor-not-allowed bg-muted/60" : "bg-primary hover:bg-primary-dark"
         }`}
       >
-        {isOwner ? "This is your villa" : windowFull ? "Fully booked" : "Reserve"}
+        {isOwner
+          ? `This is your ${noun || "property"}`
+          : windowFull
+            ? "Fully booked"
+            : datesTaken
+              ? "Reserved"
+              : "Reserve"}
       </button>
       {isOwner ? (
         <p className="mt-2 text-center text-[12px] text-muted">
@@ -306,7 +495,11 @@ export default function ReservationCard({
 
       {/* Price breakdown — recomputed from the dates above, not a fixed
           template, so it always matches what checkout will charge. */}
-      <div className="mt-4 space-y-2 text-[14px]">
+      {/* Smaller and closer together than the rest of the card on purpose: four
+          line items and a total is the longest block here, and it is reference
+          detail — the guest reads the total, and checks the rest only if a
+          number surprises them. */}
+      <div className="rc-breakdown mt-3 space-y-1.5 text-[12.5px] leading-snug">
         <div className="flex items-center justify-between text-body">
           <span>
             {money(pricing.price)} x {nights} night{nights === 1 ? "" : "s"}
@@ -327,11 +520,10 @@ export default function ReservationCard({
         </div>
       </div>
 
-      <div className="mt-3 flex items-center justify-between border-t border-line pt-3 text-[16px] font-bold text-ink">
+      <div className="rc-total mt-2.5 flex items-center justify-between border-t border-line pt-2.5 text-[15px] font-bold leading-tight text-ink">
         <span>Total</span>
         <span>{money(stay.total)}</span>
       </div>
     </div>
   );
 }
-

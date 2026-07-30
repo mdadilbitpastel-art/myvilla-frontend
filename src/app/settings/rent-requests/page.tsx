@@ -10,12 +10,24 @@ import { useToast } from "@/lib/toast";
 import SettingsSidebar from "@/components/settings/SettingsSidebar";
 import BookingDetails, { StayActionButton } from "@/components/settings/BookingDetails";
 import CountPill from "@/components/ui/CountPill";
+import StayPartChips from "@/components/ui/StayPartChips";
 import Img from "@/components/ui/Img";
-import { fetchVillaBookings, checkInBooking, checkOutBooking, type Booking } from "@/lib/api";
+import {
+  fetchVillaBookings,
+  startCheckIn,
+  verifyCheckIn,
+  allowLateCheckIn,
+  startCheckOut,
+  verifyCheckOut,
+  type Booking,
+} from "@/lib/api";
+import StayPinDialog, { type StayPinMode } from "@/components/settings/StayPinDialog";
 import {
   bookingStatus,
   lifecycleOf,
   useServerWallClock,
+  stayAction,
+  stayProgress,
   STATUS_TONE_CLASS,
 } from "@/lib/booking";
 
@@ -77,6 +89,7 @@ function RequestRow({
   expanded,
   onToggle,
   onCheckIn,
+  onAllowLate,
   onCheckOut,
   working,
 }: {
@@ -84,6 +97,7 @@ function RequestRow({
   expanded: boolean;
   onToggle: (id: string) => void;
   onCheckIn: (id: string) => void;
+  onAllowLate: (id: string) => void;
   onCheckOut: (id: string) => void;
   working: boolean;
 }) {
@@ -91,6 +105,9 @@ function RequestRow({
   // so without the host reloading, and on the SERVER's hour, not the browser's.
   const now = useServerWallClock(req.serverNow);
   const status = bookingStatus(req, now);
+  // How far through a split stay this guest is, so the host can see at a glance
+  // that the property is theirs in parts and which part is running.
+  const progress = stayProgress(req, now);
   const rowRef = useRef<HTMLDivElement>(null);
 
   // On expand, bring the newly revealed details into view — after the open
@@ -106,8 +123,16 @@ function RequestRow({
   return (
     <div
       ref={rowRef}
-      className={`${ROW_MINW} overflow-hidden rounded-lg border transition-colors ${
-        expanded ? "border-primary/40 bg-primary/[0.015]" : "border-line"
+      // Same scroll margins as the guest's booking rows: the sticky navbar and
+      // "Manage Account" bar float over the page, and `scrollIntoView` would
+      // otherwise park the opened panel's top edge underneath them.
+      // Open, the row draws its own edge clearly — a darkened neutral hairline
+      // over white on a soft shadow, never the brand colour. Same treatment as
+      // the guest's booking rows, which these sit alongside in one account.
+      className={`${ROW_MINW} scroll-mt-[132px] scroll-mb-6 overflow-hidden rounded-lg border transition-all duration-300 ${
+        expanded
+          ? "border-ink/25 bg-white shadow-[0_6px_22px_-10px_rgba(20,20,45,0.28)]"
+          : "border-line"
       }`}
     >
       {/* Collapsed: the compact table row. It collapses away as the detail
@@ -141,7 +166,14 @@ function RequestRow({
                 {req.villaTitle}
               </span>
             </Link>
-            <span className="text-body">{fmtStay(req.checkIn, req.checkOut)}</span>
+            <span className="flex min-w-0 flex-col text-body">
+              <span>{fmtStay(req.checkIn, req.checkOut)}</span>
+              {/* This guest booked around nights another booking holds, so the
+                  two dates only bracket their stay — the host needs to see that
+                  the property is theirs in parts, not straight through, and
+                  which part they are on. */}
+              <StayPartChips progress={progress} />
+            </span>
             <span className="text-body">
               {req.guests} {req.guests === 1 ? "guest" : "guests"}
             </span>
@@ -171,6 +203,7 @@ function RequestRow({
                 booking={req}
                 onCheckIn={onCheckIn}
                 onCheckOut={onCheckOut}
+                onAllowLate={onAllowLate}
                 busy={working}
               />
               <button
@@ -205,6 +238,7 @@ function RequestRow({
               onCollapse={() => onToggle(req.id)}
               onCheckIn={onCheckIn}
               onCheckOut={onCheckOut}
+              onAllowLate={onAllowLate}
               working={working}
             />
           </div>
@@ -225,6 +259,13 @@ export default function RentRequestsPage() {
   // check-in/out request in flight.
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [workingId, setWorkingId] = useState<string | null>(null);
+  // Which booking's PIN dialog is open, which end of the stay it is verifying,
+  // and how that dialog is doing. Arrival and departure share one dialog and one
+  // piece of state: a booking is only ever at one of them.
+  const [pinBookingId, setPinBookingId] = useState<string | null>(null);
+  const [pinMode, setPinMode] = useState<StayPinMode>("in");
+  const [pinBusy, setPinBusy] = useState(false);
+  const [pinError, setPinError] = useState("");
   const toggleExpand = useCallback(
     (id: string) => setExpandedId((cur) => (cur === id ? null : id)),
     []
@@ -262,14 +303,24 @@ export default function RentRequestsPage() {
     setRequests((prev) => (prev ?? []).map((r) => (r.id === updated.id ? updated : r)));
   }, []);
 
-  const doCheckIn = useCallback(
-    async (id: string) => {
+  // Both ends of the stay are two steps: pressing the button only issues a PIN,
+  // which shows up on the GUEST's booking page. The host then has to be told it
+  // and type it into the dialog — that is what makes a check-in proof the guest
+  // was here, and a check-out proof they were here to leave.
+  const openPin = useCallback(
+    async (id: string, mode: StayPinMode) => {
       setWorkingId(id);
+      setPinError("");
       try {
-        applyUpdate(await checkInBooking(id));
-        toast.success("Guest checked in.");
+        applyUpdate(await (mode === "in" ? startCheckIn(id) : startCheckOut(id)));
+        setPinMode(mode);
+        setPinBookingId(id);
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not check the guest in.");
+        toast.error(
+          e instanceof Error
+            ? e.message
+            : `Could not start check-${mode === "in" ? "in" : "out"}.`
+        );
       } finally {
         setWorkingId(null);
       }
@@ -277,20 +328,99 @@ export default function RentRequestsPage() {
     [applyUpdate, toast]
   );
 
-  const doCheckOut = useCallback(
+  const doCheckIn = useCallback((id: string) => openPin(id, "in"), [openPin]);
+  const doCheckOut = useCallback((id: string) => openPin(id, "out"), [openPin]);
+
+  // Step 2. A refusal (wrong digits, expired code, locked after three tries)
+  // stays inside the dialog, next to the boxes it is about — the host is
+  // mid-conversation with the guest and shouldn't have to hunt for it.
+  const doVerifyPin = useCallback(
+    async (pin: string) => {
+      if (!pinBookingId) return;
+      const leaving = pinMode === "out";
+      setPinBusy(true);
+      setPinError("");
+      try {
+        const updated = await (leaving
+          ? verifyCheckOut(pinBookingId, pin)
+          : verifyCheckIn(pinBookingId, pin));
+        applyUpdate(updated);
+        setPinBookingId(null);
+        // An early departure is worth saying out loud: the host has just given
+        // nights back to their own calendar, and that is the point of it.
+        toast.success(
+          !leaving
+            ? "PIN verified — guest checked in."
+            : updated.releasedNights > 0
+              ? `Guest checked out ${updated.releasedNights} night${
+                  updated.releasedNights === 1 ? "" : "s"
+                } early — those nights are back on your calendar.`
+              : "PIN verified — guest checked out."
+        );
+      } catch (e) {
+        setPinError(e instanceof Error ? e.message : "Could not verify that PIN.");
+        // Re-read the booking so the dialog's attempts-left counter is the
+        // server's, not a guess made from the error text.
+        load(true);
+      } finally {
+        setPinBusy(false);
+      }
+    },
+    [applyUpdate, load, pinBookingId, pinMode, toast]
+  );
+
+  // A fresh PIN, after one expires or locks. The old one dies server-side the
+  // moment this lands, so there is never more than one live code.
+  const doResendPin = useCallback(async () => {
+    if (!pinBookingId) return;
+    setPinBusy(true);
+    setPinError("");
+    try {
+      applyUpdate(
+        await (pinMode === "in" ? startCheckIn(pinBookingId) : startCheckOut(pinBookingId))
+      );
+      toast.success("New PIN sent to the guest's booking.");
+    } catch (e) {
+      setPinError(e instanceof Error ? e.message : "Could not issue a new PIN.");
+    } finally {
+      setPinBusy(false);
+    }
+  }, [applyUpdate, pinBookingId, pinMode, toast]);
+
+  // The host taking a no-show guest in anyway. Re-opens the check-in button;
+  // the booking stays a no-show and the refund stays 0%.
+  const doAllowLate = useCallback(
     async (id: string) => {
       setWorkingId(id);
       try {
-        applyUpdate(await checkOutBooking(id));
-        toast.success("Guest checked out.");
+        applyUpdate(await allowLateCheckIn(id));
+        toast.success("Late check-in allowed — you can now verify the guest's PIN.");
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not check the guest out.");
+        toast.error(e instanceof Error ? e.message : "Could not allow a late check-in.");
       } finally {
         setWorkingId(null);
       }
     },
     [applyUpdate, toast]
   );
+
+  // The booking the PIN dialog is about, read back out of the list rather than
+  // held separately: a poll or a mutation that refreshes the row must refresh
+  // the dialog with it (that's where its countdown and attempts-left come from).
+  //
+  // It closes on its own once the stay has moved past the point it was for —
+  // judged on the SAME question the button asked, so a split stay's second
+  // arrival re-opens it rather than finding the booking "already checked in".
+  const pinBooking = useMemo(() => {
+    const b = (requests ?? []).find((r) => r.id === pinBookingId);
+    if (!b) return null;
+    const wanted = pinMode === "in" ? "check_in" : "check_out";
+    return stayAction(b) === wanted ? b : null;
+  }, [requests, pinBookingId, pinMode]);
+
+  // The server's clock for the list itself, so the split below is judged on the
+  // same time as every row's own status.
+  const listNow = useServerWallClock(requests?.[0]?.serverNow ?? "");
 
   // Active = a live stay (upcoming, awaiting check-in, or under way); History =
   // settled — checked out, no-show, or cancelled (it belongs to the record).
@@ -298,8 +428,17 @@ export default function RentRequestsPage() {
     const active: Booking[] = [];
     const history: Booking[] = [];
     for (const r of requests ?? []) {
+      // Cancelled, or over with nothing outstanding — those are the only two
+      // ways a stay reaches the record. On a split stay "over" means every
+      // part: one still to come keeps it here even when the lifecycle reports
+      // `no_show` for a part that was missed, because the guest is still due
+      // back and the host still has a check-in to run.
       const life = lifecycleOf(r);
-      if (life === "upcoming" || life === "awaiting_checkin" || life === "staying") {
+      const live =
+        life === "upcoming" || life === "awaiting_checkin" || life === "staying";
+      const partsLeft =
+        !Number.isNaN(listNow) && stayProgress(r, listNow).remaining > 0;
+      if (life !== "cancelled" && (live || partsLeft)) {
         active.push(r);
       } else {
         history.push(r);
@@ -312,7 +451,7 @@ export default function RentRequestsPage() {
     active.sort(byCreated(sort));
     history.sort(byCreated(historySort));
     return { active, history };
-  }, [requests, sort, historySort]);
+  }, [requests, sort, historySort, listNow]);
 
   function retryLoad() {
     setError("");
@@ -325,7 +464,7 @@ export default function RentRequestsPage() {
 
   if (!user) {
     return (
-      <div className="mx-auto flex min-h-[60vh] w-full max-w-[1320px] flex-col items-center justify-center px-5 text-center">
+      <div className="mx-auto flex min-h-[60vh] w-full max-w-body flex-col items-center justify-center px-5 text-center">
         <h1 className="text-[22px] font-bold text-ink">You&apos;re signed out</h1>
         <p className="mt-2 text-[14px] text-body">
           Please sign in to view your rent requests.
@@ -344,7 +483,7 @@ export default function RentRequestsPage() {
   // hides this section too, but a direct link could still land here.)
   if (count !== null && !hasProperty) {
     return (
-      <div className="mx-auto flex min-h-[60vh] w-full max-w-[1320px] flex-col items-center justify-center px-5 text-center">
+      <div className="mx-auto flex min-h-[60vh] w-full max-w-body flex-col items-center justify-center px-5 text-center">
         <h1 className="text-[22px] font-bold text-ink">List a property first</h1>
         <p className="mt-2 text-[14px] text-body">
           Rent requests come from guests booking your villas — add a property to start.
@@ -363,8 +502,8 @@ export default function RentRequestsPage() {
   const toggleHistorySort = () => setHistorySort((s) => (s === "desc" ? "asc" : "desc"));
 
   return (
-    <div className="mx-auto w-full max-w-[1320px] px-5 pb-16 pt-4 lg:px-7">
-      <div className="grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
+    <div className="mx-auto w-full max-w-body px-5 pb-16 pt-4 lg:px-7">
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-[200px_1fr]">
         {/* Left sidebar */}
         <aside>
           <SettingsSidebar />
@@ -434,6 +573,7 @@ export default function RentRequestsPage() {
                   expanded={expandedId === req.id}
                   onToggle={toggleExpand}
                   onCheckIn={doCheckIn}
+                  onAllowLate={doAllowLate}
                   onCheckOut={doCheckOut}
                   working={workingId === req.id}
                 />
@@ -476,6 +616,7 @@ export default function RentRequestsPage() {
                     expanded={expandedId === req.id}
                     onToggle={toggleExpand}
                     onCheckIn={doCheckIn}
+                    onAllowLate={doAllowLate}
                     onCheckOut={doCheckOut}
                     working={workingId === req.id}
                   />
@@ -485,6 +626,33 @@ export default function RentRequestsPage() {
           </div>
         </div>
       </div>
+
+      {/* The PIN dialog — one for both ends of the stay, green on the way in and
+          blue on the way out. Driven by the booking it belongs to, so its
+          countdown and attempts-left re-base themselves whenever a fresh PIN
+          lands, and it closes itself once the stay has moved on. */}
+      {pinBooking && (
+        <StayPinDialog
+          booking={pinBooking}
+          mode={pinMode}
+          busy={pinBusy}
+          error={pinError}
+          // The server's own line about what closing this stay right now means.
+          // Only worth showing when it changes the decision — an ordinary
+          // departure on the booked day says nothing the host doesn't know.
+          notice={
+            pinMode === "out" && pinBooking.checkoutEarlyNow
+              ? pinBooking.checkoutMessage
+              : ""
+          }
+          onVerify={doVerifyPin}
+          onResend={doResendPin}
+          onClose={() => {
+            setPinBookingId(null);
+            setPinError("");
+          }}
+        />
+      )}
     </div>
   );
 }

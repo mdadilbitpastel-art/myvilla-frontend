@@ -78,6 +78,30 @@ export default function Navbar() {
   const pathname = usePathname();
   const menuRef = useRef<HTMLDivElement>(null);
 
+  // While its menu is open the account pill holds the look hover gave it — the
+  // deepened fill, and the glint parked off the right edge — instead of
+  // tracking the pointer: replaying either one under the pill's own open panel
+  // reads as the trigger fidgeting. Closing the menu returns both, in reverse.
+  //
+  // That return has to survive :hover, or a cursor still resting on the button
+  // would hold it deep and fling the glint straight back out. So on close it's
+  // pinned at rest until the pointer actually leaves — and only when the
+  // pointer is on it, since a menu closed from elsewhere isn't hovered anyway.
+  const [restHeld, setRestHeld] = useState(false);
+  const pillHoverRef = useRef(false);
+  useEffect(() => {
+    if (!menuOpen) return;
+    return () => setRestHeld(pillHoverRef.current);
+  }, [menuOpen]);
+
+  // How deep the pill's fill sits. `bg-primary` is on the element; this only
+  // says when it darkens, and whether hover is what asks for it.
+  const pillTone = menuOpen
+    ? "bg-primary-dark"
+    : restHeld
+      ? ""
+      : "hover:bg-primary-dark";
+
   // Close the account dropdown on Escape (returning focus to its trigger) or on
   // any press outside it. A click-away <div> overlay can't do the latter job:
   // it renders inside the header's z-50 stacking context, so anything on the
@@ -194,23 +218,48 @@ export default function Navbar() {
               <button
                 type="button"
                 onClick={() => setMenuOpen((v) => !v)}
+                onMouseEnter={() => {
+                  pillHoverRef.current = true;
+                }}
+                onMouseLeave={() => {
+                  pillHoverRef.current = false;
+                  setRestHeld(false);
+                }}
                 aria-expanded={menuOpen}
                 aria-haspopup="menu"
-                className={`group relative flex cursor-pointer items-center gap-2 overflow-hidden rounded-full bg-gradient-to-r from-primary to-[#8a7dff] py-1 pl-1 pr-3.5 text-[14px] font-semibold text-white ring-1 ring-white/25 transition-all duration-200 hover:brightness-[1.06] active:translate-y-0 active:scale-[0.98] ${
+                // The plain brand fill every other button in the app uses,
+                // deepening to primary-dark on hover exactly as "Edit profile"
+                // does. It was a two-stop gradient running out to #8a7dff,
+                // which pulled it violet — next to the solid primary buttons
+                // it read as a different colour rather than the same one.
+                className={`group relative flex items-center gap-2 overflow-hidden rounded-full bg-primary py-1 pl-1 pr-3.5 text-[14px] font-semibold text-white transition-all duration-200 active:translate-y-0 active:scale-[0.98] ${pillTone} ${
                   // Open, the pill stays raised — it's the menu's anchor, and
                   // dropping back down while the panel is still there read as
-                  // the two coming apart. It settles when the menu closes.
+                  // the two coming apart. It settles when the menu closes,
+                  // alongside the colour rather than hanging up there alone.
+                  // Ordinary neutral shadows: the purple glow they replace was
+                  // the other half of what made this control shout.
                   menuOpen
-                    ? "-translate-y-0.5 shadow-[0_8px_20px_rgba(99,91,255,0.45)]"
-                    : "shadow-[0_4px_14px_rgba(99,91,255,0.32)] hover:-translate-y-0.5 hover:shadow-[0_6px_18px_rgba(99,91,255,0.42)]"
+                    ? "-translate-y-0.5 shadow-md"
+                    : restHeld
+                      ? "shadow-sm"
+                      : "shadow-sm hover:-translate-y-0.5 hover:shadow-md"
                 }`}
               >
                 {/* A light bar that sweeps across the pill on hover. Parked off
                     the left edge and slid clear of the right one, so it only
-                    ever reads as a glint travelling over the gradient. */}
+                    ever reads as a glint travelling over the fill. Softened to
+                    white/20 with the gradient gone: at /25 it was a bright band
+                    crossing a flat colour rather than a highlight. */}
                 <span
                   aria-hidden
-                  className="pointer-events-none absolute inset-y-0 -left-1/2 w-1/2 -skew-x-12 bg-white/25 blur-[3px] transition-transform duration-700 ease-out group-hover:translate-x-[400%]"
+                  className={`pointer-events-none absolute inset-y-0 -left-1/2 w-1/2 -skew-x-12 bg-white/20 blur-[3px] transition-transform duration-700 ease-out ${
+                    menuOpen
+                      ? "translate-x-[400%]"
+                      : restHeld
+                        ? ""
+                        : "group-hover:translate-x-[400%]"
+                  }`}
                 />
                 {/* The contents sit above the sheen — a positioned sibling would
                     otherwise paint over unpositioned ones. */}

@@ -402,7 +402,16 @@ export default function VillaAvailabilityPanel({
                 className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-page px-3 py-2 text-[12px]"
               >
                 <span className="font-medium text-ink">
-                  {prettyDate(b.checkIn)} → {prettyDate(b.checkOut)}
+                  {/* A guest who booked around nights another booking holds is
+                      here in parts, and the calendar above already shows the
+                      gap as free — so name each run rather than let the two
+                      outer dates claim the whole stretch. */}
+                  {(b.segments?.length > 1 ? b.segments : [b]).map((s, i) => (
+                    <span key={s.checkIn} className="whitespace-nowrap">
+                      {i > 0 && <span className="text-muted"> + </span>}
+                      {prettyDate(s.checkIn)} → {prettyDate(s.checkOut)}
+                    </span>
+                  ))}
                 </span>
                 <span className="flex items-center gap-3 text-muted">
                   <span>

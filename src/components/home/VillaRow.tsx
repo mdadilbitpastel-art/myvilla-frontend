@@ -13,15 +13,17 @@ export default function VillaRow({
   title: string;
   highlight?: string;
   data: VillaCardData[];
-  variant?: "overlay" | "card";
+  variant?: "overlay" | "card" | "showcase" | "featured";
   // While the real villas are still loading, show placeholders instead of the
   // mock list, so the row never flashes stand-in data before the real data.
   loading?: boolean;
 }) {
   return (
-    <section className="mx-auto max-w-[1320px] px-6 py-8">
+    <section className="mx-auto max-w-page px-6 py-8">
       <SectionHeading title={title} highlight={highlight} />
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+      {/* Wider gutters than a results grid: these cards lift on hover, and at
+          gap-4 the raised one grazed its neighbour. */}
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4 md:gap-6">
         {loading
           ? Array.from({ length: 4 }, (_, i) => (
               <VillaCardSkeleton key={`skeleton-${i}`} variant={variant} />
@@ -42,10 +44,38 @@ export default function VillaRow({
 
 // Placeholder shaped like a real VillaCard (same ratio + text block), so the
 // row holds its exact height and layout doesn't jump when the villas arrive.
-function VillaCardSkeleton({ variant }: { variant: "overlay" | "card" }) {
-  const ratio = variant === "card" ? "aspect-[4/3]" : "aspect-[4/5]";
+function VillaCardSkeleton({
+  variant,
+}: {
+  variant: "overlay" | "card" | "showcase" | "featured";
+}) {
+  const featured = variant === "featured";
+  const showcase = variant === "showcase";
+  const ratio = variant === "overlay" ? "aspect-[4/5]" : "aspect-[4/3]";
+  // The featured placeholder carries the ring already — the row is lit before
+  // its villas land, so nothing about the shelf changes when they do.
+  if (featured) {
+    return (
+      <div className="villa-featured relative flex h-full flex-col rounded-[24px] p-[2px] shadow-[0_8px_24px_-12px_rgba(160,112,16,0.45)]">
+        <div className="flex h-full flex-col overflow-hidden rounded-[22px] bg-white">
+          <div className={`skeleton w-full ${ratio}`} />
+          <div className="flex flex-1 flex-col gap-2 p-4">
+            <div className="skeleton h-4 w-3/4 rounded" />
+            <div className="skeleton h-3 w-1/2 rounded" />
+            <div className="skeleton mt-1 h-3 w-2/3 rounded" />
+          </div>
+        </div>
+      </div>
+    );
+  }
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-2xl bg-white shadow-sm">
+    <div
+      className={`flex h-full flex-col overflow-hidden bg-white ${
+        showcase
+          ? "rounded-[22px] shadow-[0_2px_10px_rgba(20,20,45,0.05)] ring-1 ring-black/[0.05]"
+          : "rounded-2xl shadow-sm"
+      }`}
+    >
       <div className={`skeleton w-full ${ratio}`} />
       <div className="flex flex-1 flex-col gap-2 p-4">
         <div className="skeleton h-4 w-3/4 rounded" />

@@ -45,7 +45,7 @@ export default function CheckInReminder() {
           hrs >= 1 ? `about ${hrs} hour${hrs === 1 ? "" : "s"} ago` : "already";
         const ok = await confirm({
           title: "You're not checked in yet",
-          message: `Your stay at "${awaiting.villaTitle}" started ${when}, but the host hasn't checked you in. Head to the property or reach out to your host.`,
+          message: `Your stay at "${awaiting.villaTitle}" started ${when}, but the host hasn't checked you in. When you're at the property, open this booking — it shows a 4-digit PIN to read out to the host, which is how they check you in.`,
           confirmLabel: "View booking",
           cancelLabel: "Dismiss",
           tone: "primary",

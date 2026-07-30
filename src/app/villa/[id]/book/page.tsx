@@ -14,7 +14,20 @@ import {
   validateCoupon,
   type Villa,
 } from "@/lib/api";
-import { slideWindow, stayProblem, type BookingWindow } from "@/lib/bookingWindow";
+import {
+  slideWindow,
+  splitStay,
+  skippedNightsText,
+  stayProblem,
+  maxCheckOutFor,
+  firstBookableDate,
+  prettyDate,
+  prettyTime,
+  addDays as addIsoDays,
+  type BookingWindow,
+} from "@/lib/bookingWindow";
+import DateField from "@/components/ui/DateField";
+import { villaCover } from "@/lib/home";
 import { computeStayPricing, TAX_RATE } from "@/lib/pricing";
 import { DIAL_CODES, splitContact, joinContact } from "@/lib/phone";
 import PageHeader, { pageHeaderAction } from "@/components/ui/PageHeader";
@@ -183,12 +196,6 @@ function BookVillaContent() {
   }, [urlDates, qNights]);
 
   const dates = urlDates ?? fallbackDates;
-  const trip = {
-    guests,
-    nights: dates
-      ? Math.max(1, Math.round((dates.end.getTime() - dates.start.getTime()) / 86_400_000))
-      : 0,
-  };
 
   // Both results are tagged with the id they belong to, so a slow response for
   // a previous id can neither win nor leak into the next one.
@@ -274,6 +281,19 @@ function BookVillaContent() {
     () => (bookingWindow && nowTick ? slideWindow(bookingWindow, nowTick.getTime()) : null),
     [bookingWindow, nowTick]
   );
+
+  // The stay as the guest actually gets it. Nights somebody else holds inside
+  // the chosen range don't refuse it — the range breaks into runs around them,
+  // and only the nights slept are counted and charged (see splitStay). Before
+  // the window lands there is nothing known to be taken, so this is simply the
+  // whole range, which is what the page used to assume outright.
+  const split = useMemo(
+    () => (dates ? splitStay(isoDate(dates.start), isoDate(dates.end), win) : null),
+    [dates, win]
+  );
+  const trip = { guests, nights: split?.nights ?? 0 };
+  const isSplit = (split?.segments.length ?? 0) > 1;
+
   const errorRef = useRef<HTMLParagraphElement>(null);
 
   useEffect(() => {
@@ -333,7 +353,10 @@ function BookVillaContent() {
   // whether it applies and the exact amount off — the same figure the booking
   // will freeze, so the summary never quotes a discount the payment won't honour.
   const applyCoupon = useCallback(
-    async (rawCode: string) => {
+    // `nightsOverride`: when the guest edits the stay, the coupon has to be
+    // re-checked against the NEW night count, and this callback still closes
+    // over the old one at that moment.
+    async (rawCode: string, nightsOverride?: number) => {
       const code = rawCode.trim();
       if (!code) {
         setApplied(null);
@@ -343,7 +366,7 @@ function BookVillaContent() {
       setApplying(true);
       setCouponMsg(null);
       try {
-        const res = await validateCoupon(code, id, Math.max(1, trip.nights));
+        const res = await validateCoupon(code, id, Math.max(1, nightsOverride ?? trip.nights));
         if (res.valid) {
           setApplied({ code: res.code, discount: res.discount, label: res.label });
           setCouponInput(res.code);
@@ -373,6 +396,43 @@ function BookVillaContent() {
     autoApplied.current = true;
     applyCoupon(code);
   }, [v, dates, searchParams, applyCoupon]);
+
+  // --- Editing the stay, in place ---
+  //
+  // The dates live in the URL (that is where the Reserve button put them), so
+  // changing them is a `replace` of those two params: everything on the page —
+  // the nights, the price rows, the total, the cancellation dates — is derived
+  // from them and re-renders on its own. No navigation, no state to keep in
+  // step, and the back button still holds the stay the guest arrived with.
+  const [editingDates, setEditingDates] = useState(false);
+  // The panel sits high on a long page — opening it from the alert at the
+  // bottom has to bring it into view.
+  const dateEditRef = useRef<HTMLDivElement>(null);
+  const openDateEditor = useCallback(() => {
+    setEditingDates(true);
+    // A frame late: the panel has to exist before it can be scrolled to.
+    requestAnimationFrame(() =>
+      dateEditRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })
+    );
+  }, []);
+  const setStay = useCallback(
+    (checkIn: string, checkOut: string) => {
+      const q = new URLSearchParams(searchParams.toString());
+      q.set("checkIn", checkIn);
+      q.set("checkOut", checkOut);
+      // An explicit pair supersedes the older "N nights from today" form.
+      q.delete("nights");
+      router.replace(`/villa/${id}/book?${q.toString()}`, { scroll: false });
+
+      // A coupon is validated for a specific number of nights, and the amount
+      // it takes off can change with them — re-check it rather than carry a
+      // discount the payment wouldn't honour. Nights the stay skips over don't
+      // count: they are not slept in and not paid for.
+      const nights = splitStay(checkIn, checkOut, win).nights;
+      if (applied && nights > 0) applyCoupon(applied.code, nights);
+    },
+    [applied, applyCoupon, id, router, searchParams, win]
+  );
 
   // The payment methods THIS host accepts, in a stable known order — EXACTLY
   // what the host ticked, nothing more. No fallback to "all four": if the host
@@ -459,16 +519,54 @@ function BookVillaContent() {
     welcomeWins ? welcomeDiscount : couponDiscount,
     extrasPerNight
   );
-  const cover = v.photos[0]?.url || v.coverImage || "";
+  const cover = villaCover(v, "");
   // Narrowed once here — closures below can't see the `!dates` guard above.
   const stay = dates;
   // Why these nights can no longer be taken, or "" while they still can. Same
   // checks the server runs at Confirm, worded the same way.
   const windowProblem = stayProblem(isoDate(stay.start), isoDate(stay.end), win);
-  // Free cancellation until noon the day before arrival; partial refund until
-  // noon on the arrival day itself.
+
+  // The hours every part of the stay opens and closes on — the villa's own,
+  // which is exactly what the booking freezes when it's taken. "" when the host
+  // stated none, in which case the parts show their dates alone rather than
+  // inventing a time the guest would then plan around.
+  const arriveAt = v.checkInTime ? prettyTime(v.checkInTime) : "";
+  const departAt = v.checkOutTime ? prettyTime(v.checkOutTime) : "";
+
+  // --- The inline date editor's own rules, the same ones the villa page's
+  // reservation card applies, so a stay that can be picked there can be picked
+  // here and nowhere else. ---
+  const checkInIso = isoDate(stay.start);
+  const checkOutIso = isoDate(stay.end);
+  // Before the window lands, fall back to the villa's own check-in time so the
+  // calendar still can't open on a date that has already gone.
+  const earliest = win
+    ? win.firstDate
+    : nowTick
+      ? firstBookableDate(v.checkInTime, nowTick)
+      : undefined;
+  // Without a window there is nothing to cap the stay with — leaving these
+  // undefined keeps the calendar open rather than pinning it to one night.
+  const latestCheckOut = win ? maxCheckOutFor(checkInIso, win) : undefined;
+
+  function onCheckInPick(next: string) {
+    let out = checkOutIso;
+    // Check-out always stays after check-in, and inside what the host opened.
+    if (out <= next) out = addIsoDays(next, 1);
+    if (win) {
+      const cap = maxCheckOutFor(next, win);
+      if (out > cap) out = cap;
+    }
+    setStay(next, out);
+  }
+
+  // The flexible cancellation policy, in this stay's own terms: free right up
+  // to the end of the day before arrival, half back on the arrival day itself,
+  // and nothing once the check-in hour arrives. Mirrors the server's rule (see
+  // Booking.cancellation_policy) — the same three tiers, named in dates.
   const freeUntil = fmtShort(addDays(stay.start, -1));
   const partialUntil = fmtShort(stay.start);
+  const checkInAtText = prettyTime(v?.checkInTime || "14:00");
 
   function validate(): { field: FieldKey; message: string } | null {
     if (!method) return { field: "method", message: "Please choose a payment method." };
@@ -532,6 +630,12 @@ function BookVillaContent() {
         checkIn: isoDate(stay.start),
         checkOut: isoDate(stay.end),
         guests: trip.guests,
+        // What this page priced. The range can contain nights somebody else
+        // holds — those are skipped and not charged — so the server can't get
+        // the count from the two dates alone, and if availability moved while
+        // the form was being filled in it re-quotes instead of charging for a
+        // stay the guest never saw.
+        expectedNights: trip.nights,
         // The actual method the guest chose (e.g. "PayPal"), not the card type.
         paymentMethod: method,
         // Card fields only for a card payment; the PayPal / Google Pay account
@@ -555,7 +659,12 @@ function BookVillaContent() {
       // re-ask, so the placard stops appearing and the landing page hands its
       // on-load slot back to the host offers.
       welcome.refresh();
-      router.push("/settings/bookings?booked=1");
+      // REPLACE, never push: the payment has gone through, so this page must
+      // not be somewhere Back can return to. Pushing left the filled-in card
+      // form one tap behind the confirmation, where pressing Confirm again
+      // would try to buy the same nights twice. Replacing drops it from the
+      // history entirely — Back from here goes to the villa, as it should.
+      router.replace("/settings/bookings?booked=1");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Payment could not be completed.");
       setSubmitting(false);
@@ -585,7 +694,7 @@ function BookVillaContent() {
         }
       />
 
-      <div className="mx-auto max-w-[1320px] px-5 lg:px-7">
+      <div className="mx-auto max-w-body px-5 lg:px-7">
       <div className="mt-5 grid grid-cols-1 gap-10 lg:grid-cols-[1fr_440px]">
         {/* ---------- Left: payment form ---------- */}
         <div>
@@ -616,13 +725,107 @@ function BookVillaContent() {
           <h2 className="text-[15px] font-bold text-ink">Your Trip Details</h2>
           <TripRow
             label="Duration"
-            value={`${trip.nights} Days (${fmtDate(dates.start)} to ${fmtDate(dates.end)})`}
-            editHref={`/villa/${id}`}
+            value={`${trip.nights} Night${trip.nights === 1 ? "" : "s"} (${fmtDate(dates.start)} to ${fmtDate(dates.end)})`}
+            onEdit={() => setEditingDates((o) => !o)}
+            editing={editingDates}
           />
+
+          {/* A stay booked around nights somebody else holds. Every arrival and
+              departure is spelled out here, before any card details are typed:
+              the guest is leaving the property and coming back, and that is not
+              something to discover on the day. Skipped nights aren't charged —
+              the price rows on the right count only what's listed here. */}
+          {isSplit && split && (
+            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50/70 p-4">
+              <p className="text-[13.5px] font-bold text-amber-900">
+                Your stay is split into {split.segments.length} parts
+              </p>
+              <p className="mt-0.5 text-[12.5px] leading-5 text-amber-800">
+                {skippedNightsText(split.skipped)}, so you check out and back in
+                around {split.skipped.length === 1 ? "it" : "them"}. You&apos;re
+                only charged for the {trip.nights} night
+                {trip.nights === 1 ? "" : "s"} listed below.
+              </p>
+              <ol className="mt-2.5 space-y-1.5">
+                {split.segments.map((s, i) => (
+                  <li
+                    key={s.checkIn}
+                    className="flex flex-wrap items-baseline gap-x-2 rounded-lg bg-white/70 px-3 py-2 text-[12.5px] text-amber-900"
+                  >
+                    <span className="font-bold">Part {i + 1}</span>
+                    {/* The hours, not just the dates: on a stay you have to
+                        vacate and come back to, "out by 11 AM, back in at
+                        2 PM" is the part the guest has to plan around. */}
+                    <span>
+                      Check-in{" "}
+                      <span className="font-semibold">
+                        {prettyDate(s.checkIn)}
+                        {arriveAt && `, ${arriveAt}`}
+                      </span>{" "}
+                      → Check-out{" "}
+                      <span className="font-semibold">
+                        {prettyDate(s.checkOut)}
+                        {departAt && `, ${departAt}`}
+                      </span>
+                    </span>
+                    <span className="ml-auto text-amber-800/80">
+                      {s.nights} night{s.nights === 1 ? "" : "s"}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+
+          {/* Change the stay without leaving the page: every price on the right
+              is derived from these two dates, so it re-quotes as they change —
+              there is nothing to save, and Done only folds the panel away. */}
+          {editingDates && (
+            <div
+              ref={dateEditRef}
+              className="animate-fade-in mt-3 rounded-xl border border-line bg-white p-4"
+            >
+              <div className="grid grid-cols-2 overflow-hidden rounded-xl border border-line">
+                <DateField
+                  variant="plain"
+                  label="Check - In"
+                  value={checkInIso}
+                  min={earliest}
+                  max={win?.lastDate}
+                  disabledDates={win?.unavailableDates}
+                  onChange={onCheckInPick}
+                  className="border-r border-line"
+                />
+                <DateField
+                  variant="plain"
+                  label="Check - Out"
+                  value={checkOutIso}
+                  min={addIsoDays(checkInIso, 1)}
+                  max={latestCheckOut}
+                  disabledDates={win?.unavailableDates.map((d) => addIsoDays(d, 1))}
+                  onChange={(next) => setStay(checkInIso, next)}
+                />
+              </div>
+
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-[12.5px] text-muted">
+                  {trip.nights} night{trip.nights === 1 ? "" : "s"} ·{" "}
+                  <span className="font-semibold text-ink">{money(total)}</span> total
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setEditingDates(false)}
+                  className="rounded-lg border border-primary/40 px-4 py-1.5 text-[13px] font-medium text-primary transition-colors hover:bg-primary/5"
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          )}
+          {/* No Edit here: it led to the same place as the one above it. */}
           <TripRow
             label="Guests"
             value={`${trip.guests} guest${trip.guests === 1 ? "" : "s"} (${trip.guests} adult${trip.guests === 1 ? "" : "s"})`}
-            editHref={`/villa/${id}`}
           />
 
           {/* Extra services — chosen here in the roomy left column so the sticky
@@ -907,8 +1110,10 @@ function BookVillaContent() {
           {/* Cancellation policy */}
           <h2 className="mt-8 text-[15px] font-bold text-ink">Cancellation Policy</h2>
           <p className="mt-3 text-[13px] leading-6 text-body">
-            Free cancellation before 12:00 PM on {freeUntil}. After that, cancel before 12:00
-            PM on {partialUntil} and get a full refund, minus the first night and service fee.
+            Cancel any time up to the end of {freeUntil} for a <strong>100% refund</strong>.
+            On {partialUntil}, the check-in day itself, cancelling before {checkInAtText}{" "}
+            refunds <strong>50%</strong>. From {checkInAtText} on {partialUntil} the booking
+            can no longer be cancelled and no refund is due.
             <br />
             {/* TODO: link to the cancellation-policy page once it exists. */}
             <button type="button" className="font-semibold text-ink underline underline-offset-2">
@@ -950,12 +1155,15 @@ function BookVillaContent() {
             <div role="alert" className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-[13px] text-red-600">
               <p className="font-semibold">These dates are no longer available</p>
               <p className="mt-0.5">{windowProblem}</p>
-              <Link
-                href={`/villa/${id}`}
+              {/* Straight to the calendar above, not back to the villa page —
+                  nothing the guest has typed into this form is worth losing. */}
+              <button
+                type="button"
+                onClick={openDateEditor}
                 className="mt-1.5 inline-block font-medium underline underline-offset-2"
               >
                 Pick new dates
-              </Link>
+              </button>
             </div>
           )}
 
@@ -978,7 +1186,10 @@ function BookVillaContent() {
         <aside>
           {/* Above the collapsed heading (z-30): the two sticky boxes overlap by
               a few pixels once the header shrinks, and the summary should win. */}
-          <div className="lg:-mt-[30px] lg:sticky lg:top-[150px] lg:z-40">
+          <div
+            className="sticky-panel lg:-mt-[30px] lg:sticky lg:top-[150px] lg:z-40"
+            style={{ ["--sticky-top" as string]: "150px" }}
+          >
             <div className="rounded-2xl border border-line bg-white p-5 shadow-[0_8px_30px_rgba(0,0,0,0.06)]">
               <div className="flex gap-4">
                 <div className="img-frame h-[74px] w-[92px] flex-shrink-0 overflow-hidden rounded-xl">
@@ -1261,19 +1472,30 @@ function SelectBox({
 function TripRow({
   label,
   value,
-  editHref,
+  onEdit,
+  editing = false,
 }: {
   label: string;
   value: string;
-  editHref: string;
+  /** Omit on a row with nothing to change (the guest count is fixed here). */
+  onEdit?: () => void;
+  /** Whether this row's editor is open — the control says so and reads as a toggle. */
+  editing?: boolean;
 }) {
   return (
     <div className="mt-4">
       <div className="flex items-center justify-between">
         <span className="text-[14px] font-semibold text-ink">{label}</span>
-        <Link href={editHref} className="text-[13px] text-ink underline underline-offset-2 hover:text-primary">
-          Edit
-        </Link>
+        {onEdit && (
+          <button
+            type="button"
+            onClick={onEdit}
+            aria-expanded={editing}
+            className="text-[13px] text-ink underline underline-offset-2 hover:text-primary"
+          >
+            {editing ? "Done" : "Edit"}
+          </button>
+        )}
       </div>
       <p className="mt-0.5 text-[12px] text-muted">{value}</p>
     </div>
@@ -1295,7 +1517,7 @@ function Centered({
   onRetry?: () => void;
 }) {
   return (
-    <div className="mx-auto flex min-h-[60vh] max-w-[1320px] flex-col items-center justify-center px-5 text-center">
+    <div className="mx-auto flex min-h-[60vh] max-w-body flex-col items-center justify-center px-5 text-center">
       <h1 className="text-[22px] font-bold text-ink">{title}</h1>
       <p className="mt-2 text-[14px] text-body">{note}</p>
       {onRetry ? (
@@ -1321,7 +1543,7 @@ function Centered({
 /* Mirrors the real two-column layout so the form/summary don't snap in. */
 function BookSkeleton() {
   return (
-    <div className="mx-auto max-w-[1320px] px-5 pb-20 pt-5 lg:px-7">
+    <div className="mx-auto max-w-body px-5 pb-20 pt-5 lg:px-7">
       {/* Same rhythm as the real header: breadcrumb, then the 30px title. */}
       <div className="skeleton h-4 w-64" />
       <div className="skeleton mt-2 h-8 w-56" />

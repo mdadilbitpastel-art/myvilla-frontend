@@ -163,7 +163,7 @@ export default function ProfileSettingsPage() {
 
   if (!user) {
     return (
-      <div className="mx-auto flex min-h-[60vh] w-full max-w-[1320px] flex-col items-center justify-center px-5 text-center">
+      <div className="mx-auto flex min-h-[60vh] w-full max-w-body flex-col items-center justify-center px-5 text-center">
         <h1 className="text-[22px] font-bold text-ink">You&apos;re signed out</h1>
         <p className="mt-2 text-[14px] text-body">Please sign in to view your profile settings.</p>
         <Link
@@ -287,8 +287,8 @@ export default function ProfileSettingsPage() {
   const id = (key: string) => `${fieldId}-${key}`;
 
   return (
-    <div className="mx-auto w-full max-w-[1320px] px-5 pb-16 pt-4 lg:px-7">
-      <div className="grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
+    <div className="mx-auto w-full max-w-body px-5 pb-16 pt-4 lg:px-7">
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-[200px_1fr]">
         <aside>
           <SettingsSidebar />
         </aside>
@@ -469,7 +469,7 @@ export default function ProfileSettingsPage() {
                     onClick={() => fileRef.current?.click()}
                     disabled={avatarBusy}
                     aria-label={user.avatar ? "Change profile photo" : "Add profile photo"}
-                    className="absolute bottom-0 right-0 flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border-2 border-white bg-primary text-white shadow-sm transition-colors hover:bg-primary-dark disabled:opacity-70"
+                    className="absolute bottom-0 right-0 flex h-9 w-9 items-center justify-center rounded-full border-2 border-white bg-primary text-white shadow-sm transition-colors hover:bg-primary-dark disabled:opacity-70"
                   >
                     <Camera size={16} aria-hidden />
                   </button>
@@ -487,7 +487,7 @@ export default function ProfileSettingsPage() {
                     type="button"
                     onClick={removePhoto}
                     disabled={avatarBusy}
-                    className="mt-3 cursor-pointer text-[13px] font-semibold text-red-600 underline underline-offset-2 transition-colors hover:text-red-700 disabled:opacity-70"
+                    className="mt-3 text-[13px] font-semibold text-red-600 underline underline-offset-2 transition-colors hover:text-red-700 disabled:opacity-70"
                   >
                     Remove
                   </button>
@@ -497,7 +497,7 @@ export default function ProfileSettingsPage() {
                       type="button"
                       onClick={() => fileRef.current?.click()}
                       disabled={avatarBusy}
-                      className="mt-3 cursor-pointer text-[13px] font-semibold text-primary underline underline-offset-2 disabled:opacity-70"
+                      className="mt-3 text-[13px] font-semibold text-primary underline underline-offset-2 disabled:opacity-70"
                     >
                       Add photo
                     </button>
@@ -597,8 +597,8 @@ function Field({
 // arrives.
 function ProfileSkeleton() {
   return (
-    <div className="mx-auto w-full max-w-[1320px] px-5 pb-16 pt-4 lg:px-7">
-      <div className="grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
+    <div className="mx-auto w-full max-w-body px-5 pb-16 pt-4 lg:px-7">
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-[200px_1fr]">
         <aside>
           <SettingsSidebar />
         </aside>

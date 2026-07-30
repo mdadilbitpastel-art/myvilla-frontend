@@ -13,7 +13,36 @@
      brand purple made ratings look like links rather than scores. */
   --color-star: #f5b301;
 
+  /* The featured shelf's own colour. Gold, not the brand purple: the one row
+     on the landing page meant to be *looked at* was wearing the same colour as
+     every link and button on the site, so its ring, flag and call-to-action
+     read as more UI rather than as the shelf being lit. Gold carries none of
+     that meaning — nothing else on the page is clickable-gold — so the row
+     stands out by being a different kind of thing, not a louder one.
+     `deep` is the only one dark enough for text on white. */
+  --color-gold: #e0b13a;
+  --color-gold-light: #f6d97a;
+  --color-gold-dark: #c48f1e;
+  --color-gold-deep: #8f6710;
+  /* Text sitting *on* gold — near-black with the gold's own warmth in it. */
+  --color-gold-ink: #3a2708;
+
   --font-sans: var(--font-poppins), ui-sans-serif, system-ui, sans-serif;
+
+  /* The width of the page itself — the landing page, and the chrome that
+     frames every page (navbar, offer bar, footer) is `max-w-page`.
+     It was the literal 1320px repeated across 41 files, so widening the site
+     by a few percent meant finding all of them; now it's this one line.
+     1320 → 1426 (+8%). A further +5% to 1497 was tried and rolled back. */
+  --container-page: 1426px;
+
+  /* The width of everything *below* the header on every page but the landing
+     one — `max-w-body`. The landing page is a shopfront and wants the full
+     width, while a villa, a booking form or a settings screen is something to
+     be read, and reads better held in from the header and footer that frame
+     it. Settled at ~7.4% inside `--container-page` (1426 → 1321) after being
+     taken in and let back out a few times by eye. */
+  --container-body: 1321px;
 }
 
 :root {
@@ -68,6 +97,46 @@ body {
   button {
     font: inherit;
     color: inherit;
+  }
+
+  /* Anything you can press says so. Tailwind's reset gives <button> a default
+     cursor, and the custom controls built on <div role="button"> never had one
+     at all, so this had to be repeated by hand all over the app.
+
+     In @layer base for two reasons: a `cursor-*` utility on the element still
+     wins (so a locked date field can say `cursor-default`), and the disabled
+     rule further down — which is unlayered — outranks the whole layer, so a
+     disabled control keeps its not-allowed cursor.
+
+     Labels are matched only when they actually wrap a toggle: a label sitting
+     above a text field is not a target, and a hand cursor there reads as a
+     broken link. */
+  a[href],
+  button,
+  summary,
+  select,
+  input[type="checkbox"],
+  input[type="radio"],
+  input[type="file"],
+  input[type="range"],
+  input[type="submit"],
+  input[type="reset"],
+  input[type="button"],
+  label:has(input[type="checkbox"]),
+  label:has(input[type="radio"]),
+  label:has(input[type="file"]),
+  [role="button"],
+  [role="link"],
+  [role="tab"],
+  [role="option"],
+  [role="menuitem"],
+  [role="menuitemcheckbox"],
+  [role="menuitemradio"],
+  [role="checkbox"],
+  [role="radio"],
+  [role="switch"],
+  [role="combobox"] {
+    cursor: pointer;
   }
 }
 
@@ -504,6 +573,152 @@ textarea:disabled {
   animation: kenBurns 8.5s linear forwards;
 }
 
+/* ------------------------------------------------------------------ */
+/* Featured villa cards                                                 */
+/* ------------------------------------------------------------------ */
+
+/* The landing page's featured shelf. These four are the only cards on the site
+   that move on their own: each one sits inside a gradient ring that turns
+   slowly and forever, so the row reads as lit from behind rather than as four
+   more panels. The ring is a real conic gradient whose ANGLE is animated (not
+   a rotating box), so nothing is transformed and nothing spills past the
+   corners. Browsers without @property simply hold the ring still at 0deg —
+   the card still looks the same, it just doesn't turn. */
+@property --villa-halo {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes villaHalo {
+  to {
+    --villa-halo: 360deg;
+  }
+}
+
+.villa-featured {
+  --villa-halo: 0deg;
+}
+
+.villa-featured::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  /* All gold, but four of them — a flat gold ring turning looks like a bug,
+     whereas pale → deep → pale reads as light travelling round metal. */
+  background: conic-gradient(
+    from var(--villa-halo),
+    rgba(246, 217, 122, 0.95),
+    rgba(224, 177, 58, 0.95),
+    rgba(143, 103, 16, 0.9),
+    rgba(255, 240, 196, 0.95),
+    rgba(246, 217, 122, 0.95)
+  );
+  opacity: 0.65;
+  animation: villaHalo 9s linear infinite;
+  transition: opacity 0.45s ease;
+}
+
+/* Hovering brings the ring up to full strength. */
+.villa-featured:hover::before,
+.villa-featured:focus-visible::before {
+  opacity: 1;
+}
+
+/* A band of light drawn once across the photo as the pointer arrives — the
+   glint off something on a shelf, not a loop. */
+@keyframes villaSheen {
+  from {
+    transform: translateX(-160%) skewX(-18deg);
+  }
+  to {
+    transform: translateX(260%) skewX(-18deg);
+  }
+}
+
+.villa-sheen {
+  transform: translateX(-160%) skewX(-18deg);
+}
+
+.villa-featured:hover .villa-sheen,
+.villa-featured:focus-visible .villa-sheen {
+  animation: villaSheen 0.95s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* The "Featured" flag catches its own highlight every few seconds. */
+.villa-flag::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.55),
+    transparent
+  );
+  animation: shimmer 3.6s ease-in-out infinite;
+}
+
+/* A pinned side panel — the reservation card on a villa, the summary on the
+   payment page. Sticky pins the panel's TOP, so anything taller than the space
+   under it simply hangs off the bottom of the window with no way to reach it:
+   add an extra service, a coupon line and a split-stay breakdown and the guest
+   loses the total and the Reserve button entirely.
+   Bounding it to the space it actually has lets the overflow scroll inside the
+   panel instead, so the whole card is always reachable however long it gets.
+   Only where the panel is pinned — stacked under the content on a narrow
+   screen it is an ordinary block and must grow freely.
+   `--sticky-top` is how far down the panel parks; the villa page sets it live,
+   since its header collapses as you scroll. */
+@media (min-width: 1024px) {
+  .sticky-panel {
+    /* dvh, not vh: on a laptop with a collapsing browser toolbar, vh is the
+       tallest the viewport ever gets, which is exactly the case that clips. */
+    max-height: calc(100dvh - var(--sticky-top, 88px) - 12px);
+    overflow-y: auto;
+    /* Scrolling to the end of the card mustn't then drag the page behind it. */
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    /* A scroll container clips on BOTH axes, and the card inside sits on a
+       wide soft shadow — without this gutter its edges are shaved off. The
+       negative margin gives the space back, so nothing moves. */
+    padding: 0 10px 10px;
+    margin: 0 -10px -10px;
+  }
+}
+
+/* Rather than hand the reservation card a scrollbar the moment it runs a line
+   or two past the space it is pinned in, it first takes that much out of its
+   own bottom block — the price breakdown and the total, which is where the
+   slack is. `data-fit` is set by ReservationCard once it has measured itself
+   (see there): `snug` gives back ~20px, `tight` ~40px.
+   Deliberately spacing only. No padding comes off the card, no type shrinks and
+   nothing is hidden — it simply stops spending 12px between rows it can afford
+   6px between, so at a glance the card is unchanged. `.sticky-panel` still
+   scrolls behind this for anything too long to absorb this way. */
+.rc-card[data-fit="snug"] .rc-breakdown {
+  margin-top: 9px;
+}
+.rc-card[data-fit="snug"] .rc-breakdown > * + * {
+  margin-top: 4px;
+}
+.rc-card[data-fit="snug"] .rc-total {
+  margin-top: 7px;
+  padding-top: 7px;
+}
+.rc-card[data-fit="tight"] .rc-breakdown {
+  margin-top: 6px;
+}
+.rc-card[data-fit="tight"] .rc-breakdown > * + * {
+  margin-top: 2px;
+}
+.rc-card[data-fit="tight"] .rc-total {
+  margin-top: 5px;
+  padding-top: 5px;
+}
+
 /* Continuous, seamless horizontal scroll for the testimonials marquee. The
    track holds the list TWICE, so translating it exactly -50% lands the second
    copy where the first began — an unbroken loop with no jump. Speed is set per
@@ -562,6 +777,17 @@ textarea:disabled {
   .skeleton::after,
   .spinner {
     animation: none !important;
+  }
+
+  /* Featured cards keep their gradient ring — it's the look — but it stops
+     turning, the flag stops glinting, and no light crosses the photo. */
+  .villa-featured::before,
+  .villa-flag::after,
+  .villa-sheen {
+    animation: none !important;
+  }
+  .villa-sheen {
+    opacity: 0 !important;
   }
 
   /* Hover lifts and image zooms are motion too. */

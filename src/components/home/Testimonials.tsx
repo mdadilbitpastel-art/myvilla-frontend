@@ -53,7 +53,7 @@ export default function Testimonials() {
   const duration = Math.max(24, ordered.length * 7);
 
   return (
-    <section className="mx-auto max-w-[1320px] px-6 py-14">
+    <section className="mx-auto max-w-page px-6 py-14">
       <h2 className="mb-10 text-center text-[20px] font-semibold text-heading sm:text-[22px]">
         What <span>My</span>
         <span className="text-primary">Villa</span> users are saying

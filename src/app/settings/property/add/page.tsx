@@ -54,7 +54,6 @@ const MAX_IMAGES = 10;
 const VILLA_TYPES = [
   "Villa Living",
   "Combinative Villa",
-  "Hotel",
   "Bungalow",
   "Others (specify)",
 ];
@@ -107,6 +106,10 @@ const OPTIONAL_STEPS = new Set<number>();
 // ordinary values in the form — changing them is one click.
 const DEFAULT_CHECK_IN = "14:00"; // 2:00 pm
 const DEFAULT_CHECK_OUT = "11:00"; // 11:00 am
+// How long after check-in time a late guest can still be checked in. Mirrors
+// DEFAULT_GRACE_MINUTES in properties/models.py.
+const DEFAULT_GRACE_MINUTES = 120;
+const GRACE_CHOICES = [30, 60, 90, 120, 180, 240, 360];
 
 // How far ahead a new listing is open for booking. The host moves it from the
 // calendar on the edit page; five days is only where it starts.
@@ -256,6 +259,7 @@ function Wizard() {
     availabilityDays: DEFAULT_AVAILABILITY_DAYS,
     checkInTime: DEFAULT_CHECK_IN,
     checkOutTime: DEFAULT_CHECK_OUT,
+    gracePeriodMinutes: DEFAULT_GRACE_MINUTES,
     petsAllowed: false,
     smokingAllowed: false,
     eventsAllowed: false,
@@ -311,6 +315,7 @@ function Wizard() {
           // field they never left blank.
           checkInTime: v.checkInTime || DEFAULT_CHECK_IN,
           checkOutTime: v.checkOutTime || DEFAULT_CHECK_OUT,
+          gracePeriodMinutes: v.gracePeriodMinutes || DEFAULT_GRACE_MINUTES,
           petsAllowed: v.petsAllowed,
           smokingAllowed: v.smokingAllowed,
           eventsAllowed: v.eventsAllowed,
@@ -463,6 +468,7 @@ function Wizard() {
         blockedDates,
         checkInTime: villa.checkInTime,
         checkOutTime: villa.checkOutTime,
+        gracePeriodMinutes: villa.gracePeriodMinutes || DEFAULT_GRACE_MINUTES,
         petsAllowed: villa.petsAllowed,
         smokingAllowed: villa.smokingAllowed,
         eventsAllowed: villa.eventsAllowed,
@@ -494,7 +500,7 @@ function Wizard() {
   // a blank "Add your Property" form.
   if (loadFailed) {
     return (
-      <div className="mx-auto flex min-h-[60vh] w-full max-w-[1320px] flex-col items-center justify-center px-5 text-center">
+      <div className="mx-auto flex min-h-[60vh] w-full max-w-body flex-col items-center justify-center px-5 text-center">
         <h1 className="text-[22px] font-bold text-ink">Couldn&apos;t load this property</h1>
         <p className="mt-2 text-[14px] text-body">{loadFailed}</p>
         <div className="mt-5 flex items-center gap-4">
@@ -548,8 +554,8 @@ function Wizard() {
         }
       />
 
-      <div className="mx-auto w-full max-w-[1320px] px-5 lg:px-7">
-      <div className="mt-3 grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
+      <div className="mx-auto w-full max-w-body px-5 lg:px-7">
+      <div className="mt-3 grid grid-cols-1 gap-8 lg:grid-cols-[200px_1fr]">
         {/* Stepper */}
         <Stepper step={step} complete={stepComplete} onSelect={goto} />
 
@@ -748,6 +754,7 @@ type VillaForm = {
   availabilityDays: number;
   checkInTime: string;
   checkOutTime: string;
+  gracePeriodMinutes: number;
   petsAllowed: boolean;
   smokingAllowed: boolean;
   eventsAllowed: boolean;
@@ -1132,6 +1139,30 @@ function VillaDetailsStep({
               invalid={invalidField === "checkOutTime"}
               hint="Guests must leave by this time."
             />
+          </div>
+
+          {/* How long a late guest can still be let in. Past this the booking
+              becomes a no-show on its own and the check-in button disappears,
+              so it is the host's own call on how much slack to leave. */}
+          <div className="mt-4 max-w-[420px]">
+            <FieldLabel>Late arrival grace period</FieldLabel>
+            <select
+              value={values.gracePeriodMinutes}
+              onChange={(e) => onChange("gracePeriodMinutes", Number(e.target.value))}
+              className="w-full rounded-lg border border-line px-3.5 py-2.5 text-[14px] text-ink transition-colors focus:border-primary focus:outline-none"
+            >
+              {GRACE_CHOICES.map((m) => (
+                <option key={m} value={m}>
+                  {m < 60
+                    ? `${m} minutes`
+                    : `${m / 60} hour${m === 60 ? "" : "s"} after check-in time`}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1.5 text-[12px] text-muted">
+              How long past your check-in time you can still check a guest in. After
+              that the booking is marked a no-show and no refund is due.
+            </p>
           </div>
 
           <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -1870,11 +1901,11 @@ function RuleToggle({
 /* Approximates the stepper + card so the two-column layout doesn't snap in. */
 function WizardSkeleton() {
   return (
-    <div className="mx-auto w-full max-w-[1320px] px-5 pb-20 pt-5 lg:px-7">
+    <div className="mx-auto w-full max-w-body px-5 pb-20 pt-5 lg:px-7">
       {/* Same rhythm as the real header: breadcrumb, then the 30px title. */}
       <div className="skeleton h-4 w-72" />
       <div className="skeleton mt-2 h-8 w-64" />
-      <div className="mt-7 grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
+      <div className="mt-7 grid grid-cols-1 gap-8 lg:grid-cols-[200px_1fr]">
         <div className="lg:pt-1">
           {STEPS.map((label) => (
             <div key={label} className="flex items-start gap-4 pb-8 last:pb-0">

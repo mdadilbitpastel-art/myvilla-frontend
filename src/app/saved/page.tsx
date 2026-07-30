@@ -8,13 +8,13 @@ import { useFavorites } from "@/lib/favorites";
 import VillaCard from "@/components/home/VillaCard";
 import PageHeader from "@/components/ui/PageHeader";
 import { fetchMyFavorites, type Villa } from "@/lib/api";
-import { villaGallery, type VillaCardData } from "@/lib/home";
+import { villaCover, villaGallery, type VillaCardData } from "@/lib/home";
 
 const FALLBACK_IMG =
   "https://images.unsplash.com/photo-1571896349842-33c89424de2d?auto=format&fit=crop&w=600&q=80";
 
 function villaToCard(v: Villa): VillaCardData {
-  const image = v.photos[0]?.url || v.coverImage || FALLBACK_IMG;
+  const image = villaCover(v, FALLBACK_IMG);
   return {
     id: v.id,
     image,
@@ -87,7 +87,7 @@ export default function SavedPage() {
         subtitle="Villas you've added to your wishlist."
       />
 
-      <div className="mx-auto w-full max-w-[1320px] px-5 lg:px-7">
+      <div className="mx-auto w-full max-w-body px-5 lg:px-7">
       {loading ? (
         /* Placeholders sit in the real grid so nothing shifts when data lands. */
         <div className={gridClass}>

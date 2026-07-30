@@ -160,14 +160,16 @@ export default function Home() {
         title="Top picks by myVilla"
         data={picks ?? []}
         loading={picks === null}
-        variant="card"
+        variant="showcase"
       />
       <PromoGrid offers={offers} />
+      {/* The one row on the page that is meant to be looked at rather than
+          scanned — its own card variant, ringed and lit and moving. */}
       <VillaRow
         title="Featured villas"
         data={featured ?? []}
         loading={featured === null}
-        variant="card"
+        variant="featured"
       />
       <PropertyMap />
       <UniqueStays />

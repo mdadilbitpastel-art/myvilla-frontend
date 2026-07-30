@@ -36,6 +36,14 @@ type BookingLike = {
   // Scheduled wall-clock start/end, for the live "how late is this?" reading.
   checkInAt?: string;
   checkOutAt?: string;
+  // When the check-in window shuts, and the host's decision to reopen it.
+  graceEndsAt?: string;
+  lateCheckInAllowed?: boolean;
+  // The server's own reading of the check-in button, at the moment the payload
+  // was built. `checkInGate` re-derives it live from the clock instead of
+  // trusting it forever, but falls back to it when the times are missing.
+  buttonState?: string;
+  checkinMessage?: string;
 };
 
 /**
@@ -56,15 +64,20 @@ export function lifecycleOf(b: BookingLike): Lifecycle {
   if (co < today) return "no_show";
   if (ci <= today) return "awaiting_checkin";
   return "upcoming";
+  // (A payload old enough to lack `lifecycleStatus` also predates the check-in
+  // window, so the day-level reading above is the best it can support.)
 }
 
 const STATUS_BY_LIFECYCLE: Record<Lifecycle, BookingStatus> = {
   cancelled: { label: "Cancelled", tone: "red" },
   completed: { label: "Checked out", tone: "muted" },
-  staying: { label: "Staying", tone: "blue" },
-  no_show: { label: "No-show", tone: "red" },
-  awaiting_checkin: { label: "Awaiting check-in", tone: "orange" },
-  upcoming: { label: "Booked", tone: "green" },
+  staying: { label: "Checked in", tone: "blue" },
+  no_show: { label: "No show", tone: "red" },
+  // "awaiting_checkin" is the check-in WINDOW: from the check-in time until the
+  // grace period runs out. It's a good state, not a late one — being late is
+  // what the sharper reading in `bookingStatus` below says.
+  awaiting_checkin: { label: "Check-in window open", tone: "green" },
+  upcoming: { label: "Confirmed", tone: "green" },
 };
 
 /**
@@ -77,13 +90,14 @@ export function bookingStatus(b: BookingLike, nowMs?: number): BookingStatus {
   const life = lifecycleOf(b);
   if (life === "awaiting_checkin" && nowMs !== undefined) {
     const gate = checkInGate(b, nowMs);
-    if (gate.tone === "urgent") {
-      return { label: `Not checked in · ${gate.badge}`, tone: "red" };
+    // The window's closing stretch: say how long is left, not just that it's
+    // open — after this the booking becomes a no-show on its own.
+    if (gate.tone === "yellow") {
+      return { label: `Check-in closes in ${gate.minutesLeft}m`, tone: "orange" };
     }
-    if (gate.tone === "late") {
-      const h = gate.hoursLate;
-      return { label: `Not checked in · ${h} hr${h === 1 ? "" : "s"} late`, tone: "orange" };
-    }
+  }
+  if (life === "no_show" && b.lateCheckInAllowed) {
+    return { label: "No show · late check-in allowed", tone: "orange" };
   }
   return STATUS_BY_LIFECYCLE[life];
 }
@@ -100,32 +114,54 @@ export function bookingStatusDetail(
 ): { text: string; tone: BookingStatusTone } | null {
   const life = lifecycleOf(b);
   const hrs = Math.floor(b.hoursLate ?? 0);
-  const late = hrs >= 1 ? `${hrs} hr${hrs === 1 ? "" : "s"} late` : "Check-in time has passed";
+  // How long the window has been open, phrased as an opening rather than as a
+  // deadline missed. While it IS open, check-in is simply available — saying
+  // "check-in time has passed" made a perfectly normal arrival read as a
+  // failure. Only once the guest is genuinely overdue does the elapsed time
+  // become the point.
+  const openFor =
+    hrs >= 1
+      ? `Check-in has been open ${hrs} hr${hrs === 1 ? "" : "s"}`
+      : "Check-in is open now";
 
   switch (life) {
     case "awaiting_checkin":
       return {
-        tone: "orange",
+        // Green while the guest is roughly on time — this is the state a stay
+        // is supposed to be in when they arrive; amber once they're overdue.
+        tone: hrs >= 1 ? "orange" : "green",
         text:
           role === "owner"
-            ? `${late} — guest not checked in yet.`
-            : `${late} — the host hasn't checked you in yet.`,
+            ? `${openFor} — press Check in, then ask the guest for the 4-digit PIN showing on their booking.`
+            : `${openFor} — show the host the 4-digit PIN on this booking and they'll check you in.`,
       };
     case "no_show":
+      if (b.lateCheckInAllowed) {
+        return {
+          tone: "orange",
+          text:
+            role === "owner"
+              ? "Marked a no-show, but you've allowed a late check-in — verify the guest's PIN when they arrive."
+              : "You missed the check-in window, but the host has allowed a late check-in. No refund is due.",
+        };
+      }
       return {
         tone: "red",
         text:
           role === "owner"
-            ? "Guest didn't arrive — the check-out time passed with no check-in."
-            : "Marked as a no-show — the stay's check-out time passed without a check-in.",
+            ? "Guest didn't arrive — the check-in window closed with no check-in."
+            : "Marked as a no-show — the check-in window closed without a check-in. No refund is due.",
       };
     case "staying":
+      // Leaving is verified the same way arriving was, so both sides are told
+      // now rather than discovering it at the door: a departure needs the guest
+      // there with a code, not the host pressing a button after they've gone.
       return {
         tone: "blue",
         text:
           role === "owner"
-            ? `Guest is staying${b.checkedInAt ? ` — checked in ${fmtDateTime(b.checkedInAt)}` : ""}.`
-            : "You're checked in — enjoy your stay.",
+            ? `Guest is staying${b.checkedInAt ? ` — checked in ${fmtDateTime(b.checkedInAt)}` : ""}. When they leave, press Check out and ask for the PIN on their booking.`
+            : "You're checked in — enjoy your stay. When you leave, show the host the check-out PIN on this booking.",
       };
     case "completed":
       return {
@@ -147,6 +183,58 @@ export const STATUS_TONE_CLASS: Record<BookingStatusTone, string> = {
   orange: "text-orange-500",
 };
 
+/* ------------------------------------------------------------------ */
+/* How long until a confirmed stay starts                              */
+/* ------------------------------------------------------------------ */
+
+export type CheckInCountdown = {
+  /** "In 12 days" / "Tomorrow" / "Today" — how long the guest has left to
+   *  wait, said in their own terms. Not "arriving": that is how the HOST
+   *  talks about a guest, and this is the guest reading their own booking. */
+  label: string;
+  /** Today or tomorrow — near enough that the guest should act on it. */
+  imminent: boolean;
+  /** Whole days until the stay begins (0 = today). */
+  days: number;
+};
+
+/** Midnight at the start of the day `ms` falls in. */
+function dayStart(ms: number): number {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+/**
+ * How long a confirmed booking has left before it starts. Null for anything not
+ * still waiting to begin — a stay under way, finished, cancelled or missed —
+ * so a caller can render whatever it gets back without asking twice.
+ *
+ * Counted in whole days on the SERVER's wall clock (pass `useServerWallClock`),
+ * never the browser's: a guest in IST reading a booking the server timed in UTC
+ * is five and a half hours out, which is a whole day's difference either side
+ * of midnight — and "1 day left" being wrong is exactly the kind of wrong a
+ * guest plans a flight around.
+ */
+export function checkInCountdown(b: BookingLike, nowMs: number): CheckInCountdown | null {
+  if (Number.isNaN(nowMs) || lifecycleOf(b) !== "upcoming") return null;
+
+  // The scheduled arrival hour when the payload carries it, the check-in date
+  // at midnight otherwise. Either way it is read at day granularity, so the
+  // two agree — the hour only ever decides which day it lands on.
+  const wall = parseWall(b.checkInAt || "");
+  const startsAt = Number.isNaN(wall) ? new Date(b.checkIn + "T00:00:00").getTime() : wall;
+  if (Number.isNaN(startsAt)) return null;
+
+  const days = Math.round((dayStart(startsAt) - dayStart(nowMs)) / 86_400_000);
+  // Already here or behind us: the lifecycle says the stay hasn't started, so
+  // there is nothing useful to count and nothing worth guessing at.
+  if (days < 0) return null;
+  if (days === 0) return { label: "Today", imminent: true, days };
+  if (days === 1) return { label: "Tomorrow", imminent: true, days };
+  return { label: `In ${days} days`, imminent: false, days };
+}
+
 /**
  * The single stay action available to the HOST on a booking, as a small state
  * machine: check the guest in → then out → then it's done. A cancelled booking
@@ -154,14 +242,40 @@ export const STATUS_TONE_CLASS: Record<BookingStatusTone, string> = {
  */
 export type StayAction = "check_in" | "check_out" | "done" | null;
 
+/**
+ * The part of a split stay the host is working on: the first one not yet
+ * checked out. `null` once every part is closed — the only moment the whole
+ * stay is over. An unbroken stay (no segments) has no part to find, and the
+ * booking's own two stamps answer for it.
+ */
+function currentPartStamps(b: {
+  checkedInAt?: string;
+  checkedOutAt?: string;
+  segments?: { checkedInAt?: string; checkedOutAt?: string }[];
+}): { checkedInAt?: string; checkedOutAt?: string } | null {
+  const parts = b.segments ?? [];
+  if (parts.length < 2) return { checkedInAt: b.checkedInAt, checkedOutAt: b.checkedOutAt };
+  return parts.find((p) => !p.checkedOutAt) ?? null;
+}
+
 export function stayAction(b: {
   status: string;
   checkedInAt?: string;
   checkedOutAt?: string;
+  segments?: { checkedInAt?: string; checkedOutAt?: string }[];
 }): StayAction {
   if (b.status === "cancelled") return null;
-  if (b.checkedOutAt) return "done";
-  if (b.checkedInAt) return "check_out";
+  // Per PART: closing part one of a split stay ends that part, not the stay —
+  // the guest is due back, so the button has to return to "check in" for the
+  // next part instead of settling on "done".
+  const part = currentPartStamps(b);
+  if (!part) return "done";
+  // This part is closed — the guest checked in and back out again. Only the
+  // unbroken-stay path can land here (a split stay's `currentPartStamps`
+  // already skips closed parts), and without this a finished booking offered
+  // "Check out" a second time from the history table.
+  if (part.checkedOutAt) return "done";
+  if (part.checkedInAt) return "check_out";
   return "check_in";
 }
 
@@ -169,16 +283,19 @@ export function stayAction(b: {
 /* When the host may check a guest in                                  */
 /* ------------------------------------------------------------------ */
 
-/** Past this many hours without a check-in, the button starts warning. */
-const LATE_AFTER_HOURS = 1;
-/** Inside this many hours of check-out, it goes urgent and counts down. */
-const URGENT_WITHIN_HOURS = 8;
+/**
+ * The closing stretch of the check-in window, where the button goes yellow.
+ * Mirrors GRACE_WARNING_MINUTES in properties/models.py — change both together;
+ * the two are meant to colour the button identically.
+ */
+const GRACE_WARNING_MINUTES = 60;
 
 /**
- * `check_in_at` / `check_out_at` / `server_now` all arrive as NAIVE wall-clock
- * ISO strings — deliberately, so they compare to each other directly and none
- * of them is shifted into the viewer's time zone. Parsed as local components
- * purely to get comparable numbers; the value is only ever used in differences.
+ * `check_in_at` / `check_out_at` / `grace_ends_at` / `server_now` all arrive as
+ * NAIVE wall-clock ISO strings — deliberately, so they compare to each other
+ * directly and none of them is shifted into the viewer's time zone. Parsed as
+ * local components purely to get comparable numbers; the value is only ever
+ * used in differences.
  */
 function parseWall(value: string): number {
   const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/.exec(value || "");
@@ -201,80 +318,511 @@ function fmtWall(value: string): string {
   return `${date} at ${time}`;
 }
 
-export type CheckInTone = "ready" | "late" | "urgent";
+/** Grey before the hour, green inside the window, yellow through its closing
+ *  stretch, hidden once it has shut. */
+export type CheckInTone = "grey" | "green" | "yellow" | "hidden";
 
 export type CheckInGate = {
-  /** May the host press Check in right now? */
+  /** Is there a check-in button at all? False once the window has shut with
+   *  nobody checked in — the stay is a no-show and the host has to decide. */
+  visible: boolean;
+  /** May the host press it right now? */
   open: boolean;
-  /** Why not — shown on hover while the button is disabled. "" when open. */
-  reason: string;
-  /** How the button should look once it IS open. */
+  /** How it should look. */
   tone: CheckInTone;
+  /** What to say about it: why it's locked, or that time is running out. */
+  reason: string;
+  /** Whole minutes left of the check-in window (0 once it's shut). */
+  minutesLeft: number;
   /** Whole hours past the booking's check-in time (0 when not late yet). */
   hoursLate: number;
-  /** Whole hours left before check-out (only meaningful when urgent). */
-  hoursToCheckOut: number;
-  /** Short countdown shown inside the button when urgent, e.g. "6h left". */
+  /** Short countdown for inside the button while the window closes, e.g.
+   *  "42m left". "" when there's nothing pressing to say. */
   badge: string;
+  /** The window shut without a check-in. The host may still allow a late one. */
+  noShow: boolean;
+  /**
+   * The stay's own check-out has passed with nobody ever checked in — so there
+   * is nothing left to arrive for, and not even the host's late-check-in
+   * decision applies. Distinct from `noShow`, which is true from the moment the
+   * window shuts: both are "hidden" gates, but only one of them is still
+   * offerable. (Mirrors the server, which refuses a late check-in past
+   * `check_out_datetime()` before it ever consults `late_check_in_allowed`.)
+   */
+  stayEnded: boolean;
 };
 
 /**
  * Whether — and how loudly — the host can check this guest in, at `nowMs` on
  * the server's wall clock (see `useServerWallClock`).
  *
+ * This mirrors Booking.check_in_gate on the server, and deliberately re-derives
+ * the state from the clock rather than trusting the `buttonState` that came
+ * with the payload: a dashboard is left open for hours, and the button has to
+ * turn green at the check-in time and vanish when the window shuts without
+ * anyone reloading the page. The server re-checks every rule at the mutation
+ * anyway — this is the same rule, kept honest on both sides.
+ *
  * The hour comes from the BOOKING, not the villa: `check_in_at` is built from
  * the check-in time snapshotted when the guest booked, so a host who re-times
  * the property afterwards doesn't move an existing guest's arrival.
- *
- * Three stages once it opens: plain while the guest is roughly on time, a
- * warning an hour past it, and an urgent countdown in the last stretch before
- * check-out — the point after which the stay becomes a no-show.
  */
+/**
+ * Has this booking stopped being live — checked out, cancelled, or a no-show?
+ * Deliberately tolerant of the partial booking shapes `checkInGate` is handed:
+ * it answers from whatever the payload actually carries, and says "no" only
+ * when there is genuinely nothing to go on.
+ */
+function isSettled(b: {
+  status?: string;
+  checkIn?: string;
+  checkOut?: string;
+  lifecycleStatus?: string;
+  checkedOutAt?: string;
+}): boolean {
+  if (b.status === "cancelled" || b.checkedOutAt) return true;
+  if (!b.status || !b.checkIn || !b.checkOut) return false;
+  const life = lifecycleOf(b as BookingLike);
+  return life === "completed" || life === "no_show" || life === "cancelled";
+}
+
 export function checkInGate(
-  b: { checkInAt?: string; checkOutAt?: string },
+  b: {
+    checkInAt?: string;
+    checkOutAt?: string;
+    graceEndsAt?: string;
+    lateCheckInAllowed?: boolean;
+    checkinMessage?: string;
+    // Enough of the booking to tell whether it is still live. Only consulted
+    // when there is no scheduled check-in hour to reason from — see below.
+    status?: string;
+    checkIn?: string;
+    checkOut?: string;
+    lifecycleStatus?: string;
+    checkedInAt?: string;
+    checkedOutAt?: string;
+  },
   nowMs: number
 ): CheckInGate {
   const opensAt = parseWall(b.checkInAt || "");
-  const endsAt = parseWall(b.checkOutAt || "");
+  const graceEnds = parseWall(b.graceEndsAt || "");
+  const stayEndsAt = parseWall(b.checkOutAt || "");
   const base: CheckInGate = {
+    visible: true,
     open: true,
-    reason: "",
-    tone: "ready",
+    tone: "green",
+    reason: b.checkinMessage || "",
+    minutesLeft: 0,
     hoursLate: 0,
-    hoursToCheckOut: 0,
     badge: "",
+    noShow: false,
+    stayEnded: false,
   };
-  // No clock yet (first paint, before the list lands) or no scheduled time —
-  // leave the button alone rather than guessing; the server refuses an early
-  // check-in regardless.
-  if (Number.isNaN(nowMs) || Number.isNaN(opensAt)) return base;
+  // No clock yet (first paint, before the list lands) or no scheduled times.
+  if (Number.isNaN(nowMs) || Number.isNaN(opensAt)) {
+    // A booking with no check-in hour on it is data from before the check-in
+    // window existed. Left at `base` it came back wide open, which is how a
+    // booking sitting in Booking History — finished, cancelled, or never
+    // arrived for, sometimes months ago — still offered a green Check in.
+    // Nothing about a settled booking is still arriving, whatever fields it
+    // happens to be missing.
+    if (isSettled(b)) {
+      return {
+        ...base,
+        visible: false,
+        open: false,
+        tone: "hidden",
+        noShow: true,
+        stayEnded: true,
+        reason: "This booking is closed — there is no check-in left to take.",
+      };
+    }
+    // Otherwise leave the button alone rather than guessing; the server
+    // refuses an out-of-window check-in regardless.
+    return base;
+  }
 
+  const minutesLeft = Number.isNaN(graceEnds)
+    ? 0
+    : Math.max(0, Math.ceil((graceEnds - nowMs) / 60_000));
+
+  // Before the hour: visible but locked, so the host can see that check-in
+  // exists and when it opens rather than wondering where the button is.
   if (nowMs < opensAt) {
     return {
       ...base,
       open: false,
+      tone: "grey",
+      minutesLeft,
       reason: `Check-in opens ${fmtWall(b.checkInAt || "")} — the time this guest booked.`,
     };
   }
 
   const hoursLate = Math.floor((nowMs - opensAt) / 3_600_000);
-  const hoursToCheckOut = Number.isNaN(endsAt)
-    ? Number.POSITIVE_INFINITY
-    : Math.max(0, Math.ceil((endsAt - nowMs) / 3_600_000));
 
-  if (hoursToCheckOut <= URGENT_WITHIN_HOURS) {
+  if (Number.isNaN(graceEnds) || nowMs < graceEnds) {
+    // Yellow through the closing stretch — an hour of warning where the window
+    // is long enough to spare it, half of it where it isn't (as on the server).
+    const graceMinutes = Number.isNaN(graceEnds)
+      ? 0
+      : Math.round((graceEnds - opensAt) / 60_000);
+    const warnAfter = Math.max(
+      graceMinutes - GRACE_WARNING_MINUTES,
+      Math.floor(graceMinutes / 2)
+    );
+    const warning = graceMinutes > 0 && nowMs >= opensAt + warnAfter * 60_000;
     return {
       ...base,
-      tone: "urgent",
+      tone: warning ? "yellow" : "green",
+      minutesLeft,
       hoursLate,
-      hoursToCheckOut,
-      badge: hoursToCheckOut <= 0 ? "last chance" : `${hoursToCheckOut}h left`,
+      badge: warning ? `${minutesLeft}m left` : "",
+      reason: warning
+        ? "Guest check-in is within the grace period."
+        : "Check-in available — ask the guest for the PIN on their booking.",
     };
   }
-  if (hoursLate >= LATE_AFTER_HOURS) {
-    return { ...base, tone: "late", hoursLate, hoursToCheckOut };
+
+  // Past the stay's own check-out with nobody ever checked in: there is nothing
+  // left to arrive for, so not even the host's late-check-in decision applies.
+  // A late check-in is taking a guest in hours late, not days later.
+  //
+  // A payload carrying a check-in hour but no check-out hour can't be read that
+  // way, so it falls back to the booking's own state: if it has already settled,
+  // treat the stay as ended rather than offering a late arrival on it forever.
+  const stayOver = Number.isNaN(stayEndsAt) ? isSettled(b) : nowMs >= stayEndsAt;
+  if (stayOver) {
+    return {
+      ...base,
+      visible: false,
+      open: false,
+      tone: "hidden",
+      hoursLate,
+      noShow: true,
+      stayEnded: true,
+      reason: "The guest never checked in and the stay has now ended.",
+    };
   }
-  return { ...base, hoursToCheckOut };
+
+  // The window has shut but the stay is still running. The host can take the
+  // guest in, but that is now a decision they make rather than the normal flow.
+  if (b.lateCheckInAllowed) {
+    return {
+      ...base,
+      hoursLate,
+      noShow: true,
+      reason: "Late check-in allowed — verify the guest's PIN to check them in.",
+    };
+  }
+  return {
+    ...base,
+    visible: false,
+    open: false,
+    tone: "hidden",
+    hoursLate,
+    noShow: true,
+    reason: "The guest did not check in within the allowed check-in window.",
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Whether the guest may still cancel                                  */
+/* ------------------------------------------------------------------ */
+
+/** The three tiers, worded exactly as the backend words them. */
+export const CANCEL_MSG_FREE = "Free cancellation available.";
+export const CANCEL_MSG_PARTIAL = "50% cancellation charge applies.";
+export const CANCEL_MSG_EXPIRED = "Cancellation period has expired.";
+
+export type CancellationGate = {
+  /** May the guest press Cancel booking right now? */
+  open: boolean;
+  /** Of the total: how much comes back, and how much is kept. */
+  refundPercentage: number;
+  penaltyPercentage: number;
+  /** The line to show — the server's wording when it sent one. */
+  message: string;
+  /** Closed because the check-in moment came and went (rather than because the
+   *  stay was already cancelled) — this is what earns the "expired" note. */
+  expired: boolean;
+};
+
+type CancellableBooking = BookingLike & {
+  canCancel?: boolean;
+  refundPercentage?: number;
+  penaltyPercentage?: number;
+  cancellationMessage?: string;
+};
+
+/**
+ * The flexible cancellation policy, re-read against the ticking server clock.
+ *
+ * The SERVER decides this — `canCancel` and the percentages arrive with the
+ * booking. This only re-runs the same rule locally so a page left open across
+ * the boundary keeps up: the button disappears the moment check-in time
+ * arrives, and a full refund quietly becomes a half one at midnight, without
+ * waiting for a reload. It can only ever close a gate the server left open,
+ * never open one the server closed.
+ *
+ * `nowMs` is the server's wall clock (see `useServerWallClock`), not the
+ * browser's — the two can be whole time zones apart, and the guest's own clock
+ * must not decide whether their refund window is shut.
+ */
+export function cancellationGate(b: CancellableBooking, nowMs: number): CancellationGate {
+  const serverOpen = b.canCancel !== false;
+  const gate: CancellationGate = {
+    open: serverOpen,
+    refundPercentage: b.refundPercentage ?? 100,
+    penaltyPercentage: b.penaltyPercentage ?? 0,
+    message: b.cancellationMessage || CANCEL_MSG_FREE,
+    expired: false,
+  };
+
+  const opensAt = parseWall(b.checkInAt || "");
+  // No clock or no scheduled time yet: take the server's word as it stands.
+  if (Number.isNaN(nowMs) || Number.isNaN(opensAt)) return gate;
+
+  // Past the check-in moment — closed, whatever the payload said when it left.
+  if (nowMs >= opensAt) {
+    return {
+      open: false,
+      refundPercentage: 0,
+      penaltyPercentage: 100,
+      // Keep the server's phrasing when it has a more specific reason than
+      // "expired" (already cancelled, guest already checked in).
+      message: serverOpen ? CANCEL_MSG_EXPIRED : gate.message,
+      expired: b.status !== "cancelled",
+    };
+  }
+
+  if (!serverOpen) return gate;
+
+  // Before the check-in time, on the check-in day itself — half back.
+  const now = new Date(nowMs);
+  const opens = new Date(opensAt);
+  const sameDay =
+    now.getFullYear() === opens.getFullYear() &&
+    now.getMonth() === opens.getMonth() &&
+    now.getDate() === opens.getDate();
+  if (sameDay) {
+    return {
+      open: true,
+      refundPercentage: 50,
+      penaltyPercentage: 50,
+      message: CANCEL_MSG_PARTIAL,
+      expired: false,
+    };
+  }
+
+  return { ...gate, refundPercentage: 100, penaltyPercentage: 0, message: CANCEL_MSG_FREE };
+}
+
+/* ------------------------------------------------------------------ */
+/* Where a split stay has got to                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A stay booked around nights somebody else holds runs in parts: the guest
+ * leaves and comes back. Each part is one of these.
+ */
+export type StayPartStatus =
+  | "upcoming" // hasn't opened yet
+  | "awaiting" // its hour has come, but the check-in PIN isn't confirmed yet
+  | "current" // the guest is verifiably in this part right now
+  | "completed" // ran its course with the guest checked in
+  | "missed" // nobody ever arrived — the whole stay was a no-show
+  | "cancelled";
+
+export type StayPart = {
+  /** 1-based, as shown: "Part 2 of 3". */
+  index: number;
+  checkIn: string; // "YYYY-MM-DD"
+  checkOut: string;
+  /** Naive wall-clock at the property — compare only against the server clock. */
+  checkInAt: string;
+  checkOutAt: string;
+  nights: number;
+  status: StayPartStatus;
+};
+
+export type StayProgress = {
+  parts: StayPart[];
+  /** True only when there is more than one part — an ordinary stay has none. */
+  isSplit: boolean;
+  completed: number;
+  /** Parts whose hours ran out with nobody ever arriving for them. */
+  missed: number;
+  /** Parts still to come, INCLUDING the one under way. Zero is what makes a
+   *  stay settled: nothing left to arrive for, vacate, or wait on. */
+  remaining: number;
+  /** 1-based index of the part happening now, 0 when between parts or done.
+   *  Only ever set once the check-in PIN has been confirmed. */
+  currentIndex: number;
+  /** 1-based index of a part whose hour has come with no verified arrival —
+   *  0 when none. This is what "waiting for check-in" hangs off. */
+  awaitingIndex: number;
+  /** True once every part has run its course. */
+  allDone: boolean;
+  /** One line for a header: "Part 2 of 3 · 1 done, 1 to go". */
+  label: string;
+};
+
+type SegmentLike = {
+  index?: number;
+  checkIn: string;
+  checkOut: string;
+  checkInAt?: string;
+  checkOutAt?: string;
+  nights: number;
+  /** What the host actually recorded for this part — the truth about it. */
+  checkedInAt?: string;
+  checkedOutAt?: string;
+};
+
+/**
+ * How far through a split stay the guest is, at `nowMs` on the SERVER's wall
+ * clock (see `useServerWallClock`).
+ *
+ * Derived live rather than stored: a part ends by the hour arriving, not by
+ * anyone pressing a button, so reading it off the clock keeps the panel honest
+ * between refetches — and keeps it in step with `checkInGate`, which judges the
+ * host's button the same way.
+ *
+ * The host's own stamps still win where they exist: a stay they closed out is
+ * done whatever the clock says, and one nobody ever arrived for is missed in
+ * every part rather than quietly "completing" as its hours roll by.
+ */
+export function stayProgress(
+  b: BookingLike & { nights?: number; segments?: SegmentLike[] },
+  nowMs: number
+): StayProgress {
+  // No segments on the payload (an older response, or an unbroken stay that
+  // carries none) — the booking's own dates ARE the single part.
+  const raw: SegmentLike[] =
+    b.segments && b.segments.length
+      ? b.segments
+      : [
+          {
+            checkIn: b.checkIn,
+            checkOut: b.checkOut,
+            checkInAt: b.checkInAt,
+            checkOutAt: b.checkOutAt,
+            nights: b.nights ?? 0,
+            checkedInAt: b.checkedInAt,
+            checkedOutAt: b.checkedOutAt,
+          },
+        ];
+
+  const life = lifecycleOf(b);
+  const cancelled = life === "cancelled";
+  const noShow = life === "no_show";
+  // A recorded departure closes the whole stay, however many parts it had.
+  const closedOut = life === "completed";
+  const clockKnown = !Number.isNaN(nowMs);
+
+  const parts: StayPart[] = raw.map((s, i) => {
+    const opensAt = parseWall(s.checkInAt || "");
+    const endsAt = parseWall(s.checkOutAt || "");
+    // What the host RECORDED for this part — a PIN-verified arrival and a
+    // checklist-confirmed departure. These outrank the clock in both
+    // directions: an hour arriving never means the guest came, and an hour
+    // passing never means they left.
+    const arrived = !!s.checkedInAt;
+    const departed = !!s.checkedOutAt;
+    let status: StayPartStatus;
+    if (cancelled) status = "cancelled";
+    else if (departed) status = "completed";
+    else if (arrived) status = "current";
+    else if (!clockKnown || Number.isNaN(opensAt) || Number.isNaN(endsAt)) {
+      // Before the first clock reading lands there is nothing to judge
+      // against; call it upcoming rather than invent progress — unless the
+      // server has already declared the whole stay closed off.
+      status = closedOut ? "completed" : "upcoming";
+    } else if (nowMs < opensAt) status = "upcoming";
+    // Nobody arrived and the hour to leave has passed: this part is gone. Only
+    // THIS part — a missed part says nothing about the ones after it, which the
+    // guest is still due for. (The booking-wide no-show lifecycle is not used
+    // here for the same reason: on a split stay it is a verdict on the part in
+    // front of the host, not on the whole stay.)
+    else if (nowMs >= endsAt) status = "missed";
+    // Its hour has come and nobody has verified an arrival — neither "staying"
+    // nor quietly "done", so it stays visibly outstanding.
+    else status = "awaiting";
+
+    return {
+      index: s.index ?? i + 1,
+      checkIn: s.checkIn,
+      checkOut: s.checkOut,
+      checkInAt: s.checkInAt || "",
+      checkOutAt: s.checkOutAt || "",
+      nights: s.nights,
+      status,
+    };
+  });
+
+  const completed = parts.filter((p) => p.status === "completed").length;
+  const missed = parts.filter((p) => p.status === "missed").length;
+  const remaining = parts.filter(
+    (p) =>
+      p.status === "current" || p.status === "upcoming" || p.status === "awaiting"
+  ).length;
+  const currentIndex = parts.find((p) => p.status === "current")?.index ?? 0;
+  const awaitingIndex = parts.find((p) => p.status === "awaiting")?.index ?? 0;
+  const total = parts.length;
+  const allDone = completed === total && total > 0;
+
+  let label = "";
+  if (cancelled) label = "Cancelled";
+  else if (missed === total)
+    label = total > 1 ? `No-show — all ${total} parts missed` : "No-show";
+  else if (allDone) label = `All ${total} parts complete`;
+  // Nothing outstanding, but it didn't all go to plan: some parts were stayed
+  // and some were never arrived for. Saying "complete" would paper over that.
+  else if (!remaining)
+    label = `${completed} of ${total} parts stayed · ${missed} missed`;
+  else if (currentIndex) {
+    const left = remaining - 1;
+    label =
+      `Part ${currentIndex} of ${total} under way` +
+      (left ? ` · ${left} more to come` : " · final part");
+  } else if (awaitingIndex) {
+    // Its hour has come and gone unverified — the thing to say is that the
+    // check-in hasn't happened, not that the stay is under way.
+    label = `Part ${awaitingIndex} of ${total} · check-in not confirmed yet`;
+  } else {
+    // Between parts: away from the property, with more still booked.
+    const next = parts.find((p) => p.status === "upcoming");
+    label =
+      `${completed} of ${total} parts complete` +
+      (missed ? ` · ${missed} missed` : "") +
+      (next ? ` · Part ${next.index} next` : "");
+  }
+
+  return {
+    parts,
+    isSplit: total > 1,
+    completed,
+    missed,
+    remaining,
+    currentIndex,
+    awaitingIndex,
+    allDone,
+    label,
+  };
+}
+
+/** "Fri, 29 Jul · 2:00 PM" — a part's arrival or departure moment. */
+export function fmtPartMoment(wall: string): string {
+  const t = parseWall(wall);
+  if (Number.isNaN(t)) return "";
+  const d = new Date(t);
+  const date = d.toLocaleDateString(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  });
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return `${date} · ${time}`;
 }
 
 /**
@@ -295,6 +843,47 @@ export function useServerWallClock(serverNow: string, tickMs = 30_000): number {
   }, [tickMs]);
   if (Number.isNaN(base.wall)) return NaN;
   return base.wall + (Date.now() - base.at);
+}
+
+/**
+ * Seconds left on a check-in PIN — the one countdown, used by both sides of it.
+ *
+ * Anchored to a deadline and re-read from the clock on every tick, never
+ * decremented. A counter that subtracts 1 per interval loses whatever each tick
+ * costs above 1000ms — the timer itself, the re-render, a backgrounded tab — and
+ * over a 60-second PIN that adds up to seconds of imaginary time. The host's
+ * dialog and the guest's card had drifted apart exactly that way: the guest's
+ * card re-based on every poll and stayed honest, while the host's counted on
+ * undisturbed and went on showing time that was already spent. So the guest's
+ * PIN died first, and the host was still looking at a code they thought was
+ * live. Both now read the same number, because both read the same clock.
+ *
+ * `expiresIn` is the server's own reading, and every refetch carries a fresh
+ * one; taking each of them re-anchors the deadline rather than letting local
+ * ticks define the truth.
+ */
+export function usePinCountdown(expiresIn: number): number {
+  const [left, setLeft] = useState(expiresIn);
+
+  useEffect(() => {
+    // Read once, here: the effect re-runs on every new server value, so this is
+    // exactly as fresh as the number it is anchoring.
+    const deadline = Date.now() + expiresIn * 1000;
+    const tick = () => setLeft(Math.max(0, Math.round((deadline - Date.now()) / 1000)));
+    // The first reading lands on the next turn of the event loop rather than
+    // inline — setting state synchronously in an effect only buys a number the
+    // interval produces a quarter-second later anyway, at the price of a second
+    // render pass. Four ticks a second after that, so the displayed second
+    // turns over when it actually does rather than up to a second late.
+    const first = setTimeout(tick, 0);
+    const timer = setInterval(tick, 250);
+    return () => {
+      clearTimeout(first);
+      clearInterval(timer);
+    };
+  }, [expiresIn]);
+
+  return left;
 }
 
 /** "12 Feb 2026, 3:40 PM" from an ISO timestamp, or "" when unset. */

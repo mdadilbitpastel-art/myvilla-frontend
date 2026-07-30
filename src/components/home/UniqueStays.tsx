@@ -7,7 +7,7 @@ import Reveal from "@/components/ui/Reveal";
 
 export default function UniqueStays() {
   return (
-    <section className="mx-auto max-w-[1320px] px-6 py-10">
+    <section className="mx-auto max-w-page px-6 py-10">
       <SectionHeading title="Explore unique" highlight="places to stay" actionLabel="All" />
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-3">

@@ -102,7 +102,7 @@ export default function Hero() {
       <div className="absolute inset-0 bg-black/30" />
 
       {/* Content */}
-      <div className="relative z-10 mx-auto flex h-full max-w-[1320px] flex-col items-center px-5 pt-24 text-center sm:pt-28">
+      <div className="relative z-10 mx-auto flex h-full max-w-page flex-col items-center px-5 pt-24 text-center sm:pt-28">
         <h1 className="animate-fade-up text-[34px] font-extrabold leading-tight text-white drop-shadow-sm sm:text-[46px]">
           Vacation feels like home
         </h1>
@@ -115,7 +115,7 @@ export default function Hero() {
 
         {/* Search widget */}
         <div
-          className="animate-fade-up mt-9 w-full max-w-[1320px]"
+          className="animate-fade-up mt-9 w-full max-w-page"
           style={{ animationDelay: "240ms" }}
         >
           {/* Tabs — rounded box centered above the bar */}

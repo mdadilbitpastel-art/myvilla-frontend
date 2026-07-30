@@ -4,7 +4,6 @@
 // listing can ever have.
 export const PROPERTY_TYPES = [
   "Villa Living",
-  "Hotel",
   "Bungalow",
   "Combinative Villa",
 ] as const;
@@ -19,6 +18,24 @@ export const SEARCH_CATEGORIES: string[] = [
   ...PROPERTY_TYPES,
   OTHERS_CATEGORY,
 ];
+
+/**
+ * What a listing calls itself in prose — "the whole ___ is yours for the stay".
+ *
+ * "" for a hotel, deliberately: you take a room in a hotel, not the building,
+ * so the sentence has no true form and the line is dropped instead of being
+ * reworded into something that isn't the case. Hotel is no longer a category a
+ * host can pick, but one can still type it under "Others", so the case stays.
+ * Host-typed types are used as written, just lowercased.
+ */
+export function propertyNoun(propertyType: string): string {
+  const type = (propertyType || "").trim();
+  if (!type) return "property";
+  if (type.toLowerCase() === "hotel") return "";
+  // "Villa Living" is the category's name, not the thing itself.
+  if (type === "Villa Living") return "villa";
+  return type.toLowerCase();
+}
 
 /**
  * Does a listing's own property type fall under the picked categories?

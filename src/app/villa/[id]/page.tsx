@@ -224,7 +224,7 @@ export default function VillaDetailPage() {
 
   if (failed) {
     return (
-      <div className="mx-auto flex min-h-[60vh] max-w-[1320px] flex-col items-center justify-center px-5 text-center">
+      <div className="mx-auto flex min-h-[60vh] max-w-body flex-col items-center justify-center px-5 text-center">
         <h1 className="text-[22px] font-bold text-ink">Couldn&apos;t load this property</h1>
         <p className="mt-2 text-[14px] text-body">
           Check your connection and try again.
@@ -244,7 +244,7 @@ export default function VillaDetailPage() {
     // Mirror the loaded layout so the page fills in rather than snapping in.
     return (
       <div
-        className="mx-auto max-w-[1320px] px-5 pb-20 pt-5 lg:px-7"
+        className="mx-auto max-w-body px-5 pb-20 pt-5 lg:px-7"
         aria-busy="true"
         aria-label="Loading villa"
       >
@@ -274,7 +274,7 @@ export default function VillaDetailPage() {
 
   if (v === null) {
     return (
-      <div className="mx-auto flex min-h-[60vh] max-w-[1320px] flex-col items-center justify-center px-5 text-center">
+      <div className="mx-auto flex min-h-[60vh] max-w-body flex-col items-center justify-center px-5 text-center">
         <h1 className="text-[22px] font-bold text-ink">Villa not found</h1>
         <p className="mt-2 text-[14px] text-body">This listing may have been removed.</p>
         <Link
@@ -370,7 +370,7 @@ export default function VillaDetailPage() {
           collapsed ? "border-line py-2.5" : "border-transparent pb-4 pt-5"
         }`}
       >
-        <div className="mx-auto w-full max-w-[1320px] px-5 lg:px-7">
+        <div className="mx-auto w-full max-w-body px-5 lg:px-7">
           <Breadcrumb items={breadcrumb} compact={collapsed} />
           <PropertyHeader
             title={v.title}
@@ -392,7 +392,7 @@ export default function VillaDetailPage() {
         </div>
       </div>
 
-      <div className="mx-auto max-w-[1320px] px-5 pt-4 lg:px-7">
+      <div className="mx-auto max-w-body px-5 pt-4 lg:px-7">
       {/* The full gallery stays in normal flow so it scrolls away like any
           other content; its height eases to zero as the strip takes over — same
           duration and easing, so the two read as one movement. */}
@@ -430,7 +430,12 @@ export default function VillaDetailPage() {
             phone={v.hostPhone}
           />
           {/* The host's own rules — check-in/out times and what's allowed. */}
-          <HouseRules rules={v.houseRules} additional={v.additionalRules} />
+          <HouseRules
+            rules={v.houseRules}
+            additional={v.additionalRules}
+            checkInTime={v.checkInTime}
+            graceMinutes={v.gracePeriodMinutes}
+          />
         </div>
 
         {/* Reservation sidebar */}
@@ -444,8 +449,17 @@ export default function VillaDetailPage() {
             // a bare `top` swap makes the card jump as the header settles.
             // z-40 puts the card ABOVE that header (which is z-30): where the
             // two meet, the card is the one that stays whole.
-            className="relative z-40 pt-6 transition-[top] duration-300 ease-out lg:sticky lg:top-[43px]"
-            style={headerHeight ? { top: NAV_HEIGHT + headerHeight - 33 } : undefined}
+            className="sticky-panel relative z-40 pt-6 transition-[top] duration-300 ease-out lg:sticky lg:top-[43px]"
+            // `--sticky-top` has to track the same moving offset, or the card
+            // is bounded to the wrong height the moment the header collapses.
+            style={
+              headerHeight
+                ? {
+                    top: NAV_HEIGHT + headerHeight - 33,
+                    ["--sticky-top" as string]: `${NAV_HEIGHT + headerHeight - 33}px`,
+                  }
+                : { ["--sticky-top" as string]: "43px" }
+            }
           >
             <ReservationCard
               pricing={pricing}
@@ -454,6 +468,7 @@ export default function VillaDetailPage() {
               maxGuests={v.guests}
               checkInTime={v.checkInTime}
               coupon={coupon}
+              propertyType={v.propertyType}
             />
           </div>
         </aside>

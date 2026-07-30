@@ -129,7 +129,7 @@ export default function OfferBar() {
 
 /** Shared geometry, so the two messages occupy the strip identically. */
 const ROW =
-  "group relative mx-auto flex h-[30px] w-full max-w-[1320px] items-center justify-center gap-2.5 px-5 text-[12.5px] lg:px-7";
+  "group relative mx-auto flex h-[30px] w-full max-w-page items-center justify-center gap-2.5 px-5 text-[12.5px] lg:px-7";
 
 function WelcomeMessage({ percent }: { percent: number }) {
   const { openAuth } = useAuth();

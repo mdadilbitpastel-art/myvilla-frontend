@@ -70,7 +70,7 @@ export default function PageHeader({
           scrolled ? "border-line py-2.5" : "border-transparent pb-4 pt-5"
         }`}
       >
-        <div className="mx-auto w-full max-w-[1320px] px-5 lg:px-7">
+        <div className="mx-auto w-full max-w-body px-5 lg:px-7">
           <div>
             <div className="min-w-0">
               {/* Nothing is rendered without crumbs — an empty nav would still
@@ -144,4 +144,4 @@ export default function PageHeader({
 
 /** The one style for a header's right-hand link, so they all match. */
 export const pageHeaderAction =
-  "text-[14px] text-ink underline underline-offset-2 hover:text-primary";
+  "text-[15.5px] font-medium text-ink underline underline-offset-2 hover:text-primary";

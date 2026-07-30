@@ -274,8 +274,8 @@ export default function CouponsPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1320px] px-5 pb-16 pt-4 lg:px-7">
-      <div className="grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
+    <div className="mx-auto w-full max-w-body px-5 pb-16 pt-4 lg:px-7">
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-[200px_1fr]">
         <aside>
           <SettingsSidebar />
         </aside>
@@ -730,7 +730,7 @@ function Guard({
   actionLabel?: string;
 }) {
   return (
-    <div className="mx-auto flex min-h-[60vh] w-full max-w-[1320px] flex-col items-center justify-center px-5 text-center">
+    <div className="mx-auto flex min-h-[60vh] w-full max-w-body flex-col items-center justify-center px-5 text-center">
       <h1 className="text-[22px] font-bold text-ink">{title}</h1>
       <p className="mt-2 text-[14px] text-body">{note}</p>
       <Link

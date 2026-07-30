@@ -47,6 +47,26 @@ export function prettyDate(date: string): string {
 }
 
 /**
+ * "11–12 Aug", or "30 Jul – 2 Aug" across a month boundary — one span of dates
+ * in as little room as it can be said in.
+ *
+ * The year is left off deliberately: this is for spans sitting next to the
+ * dates the guest just picked, where the year is never in question and repeating
+ * it four times costs a line of height. `prettyDate` remains the full form.
+ */
+export function shortRange(from: string, to: string): string {
+  const a = from.split("-").map(Number);
+  const b = to.split("-").map(Number);
+  if (!a[0] || !b[0]) return `${from} → ${to}`;
+  const month = (p: number[]) =>
+    new Date(p[0], p[1] - 1, p[2]).toLocaleDateString(undefined, { month: "short" });
+  const sameMonth = a[0] === b[0] && a[1] === b[1];
+  return sameMonth
+    ? `${a[2]}–${b[2]} ${month(b)}`
+    : `${a[2]} ${month(a)} – ${b[2]} ${month(b)}`;
+}
+
+/**
  * The first date a guest can still check in: today while the villa's check-in
  * time is ahead of us, tomorrow once it has passed. A villa with no stated time
  * uses the standard 2 PM, the same default the backend applies.
@@ -107,6 +127,20 @@ export function slideWindow(w: BookingWindow, nowMs: number = Date.now()): Booki
   return { ...w, firstDate, lastDate, maxCheckOut: addDays(lastDate, 1) };
 }
 
+/**
+ * The date it is right now on the SERVER's clock — the day the guest is living
+ * in as far as booking is concerned. "" when the stamp is missing.
+ *
+ * Not the browser's date: the two can be a whole day apart at the boundary, and
+ * everything about the window is judged server-side (see slideWindow).
+ */
+export function serverDate(w: BookingWindow | null, nowMs: number = Date.now()): string {
+  if (!w) return "";
+  const stamped = parseWallClock(w.serverNow);
+  if (!stamped) return "";
+  return iso(new Date(stamped.getTime() + Math.max(0, nowMs - w.fetchedAt)));
+}
+
 /** Can a stay start on this date? */
 export function isDateOpen(date: string, w: BookingWindow | null): boolean {
   if (!w) return true;
@@ -115,39 +149,102 @@ export function isDateOpen(date: string, w: BookingWindow | null): boolean {
 }
 
 /**
- * The first taken date on or after `from` — where a stay starting at `from` has
- * to end, since a booking can't run through a night somebody else holds.
- * Returns "" when the rest of the window is clear.
- */
-export function nextTakenDate(from: string, w: BookingWindow | null): string {
-  if (!w) return "";
-  for (const d of [...w.unavailableDates].sort()) {
-    if (d >= from) return d;
-  }
-  return "";
-}
-
-/**
  * The latest check-out for a stay starting on `checkIn`.
  *
  * There is no fixed night cap: a guest may stay for as much of the window as
- * the host opened — two months open means two months bookable. Only two things
- * cut it short: the end of the window itself (one day past the last open
- * night, since a check-out day is not a night), and the next night somebody
- * else already holds.
+ * the host opened — two months open means two months bookable. Only the end of
+ * the window itself cuts it short (one day past the last open night, since a
+ * check-out day is not a night).
+ *
+ * A night somebody else holds no longer cuts it short — it used to, back when
+ * a clash refused the whole range. The stay now splits around it instead (see
+ * `splitStay`), so the guest keeps the far side of the booking they're
+ * reaching over; what they can't do is END on a date whose previous night is
+ * taken, and that is closed on the calendar date by date, not by a cap.
  */
 export function maxCheckOutFor(checkIn: string, w: BookingWindow | null): string {
   // Without a window all we know is that a stay is at least one night.
   if (!w) return addDays(checkIn, 1);
-  const blocked = nextTakenDate(addDays(checkIn, 1), w);
-  const limits = [w.maxCheckOut, ...(blocked ? [blocked] : [])];
-  return limits.reduce((a, b) => (b < a ? b : a));
+  return w.maxCheckOut;
+}
+
+/** One unbroken run of a stay: arrive, sleep `nights`, leave. */
+export type StaySegment = {
+  checkIn: string;
+  checkOut: string;
+  nights: number;
+};
+
+export type SplitStay = {
+  /** The runs the guest actually gets, in date order. Empty when none are free. */
+  segments: StaySegment[];
+  /** Nights slept — and charged. NOT the days between the outer dates. */
+  nights: number;
+  /** The nights inside the range that belong to somebody else, in date order. */
+  skipped: string[];
+};
+
+/**
+ * Break a chosen range into the runs of nights this villa can actually take.
+ *
+ * A booking somebody else holds in the middle no longer refuses the whole
+ * range: the villa is genuinely free either side of it, so the stay splits —
+ * the guest checks out the morning the other booking starts and checks back in
+ * the morning it ends, and only the nights they sleep are charged.
+ *
+ *   want 29 Jul → 2 Aug, 30 & 31 Jul taken
+ *     →  29 Jul → 30 Jul  (1 night)
+ *        1 Aug  → 2 Aug   (1 night)
+ *        30, 31 Jul skipped, and not paid for
+ *
+ * The mirror of `availability.split_stay` on the server, which is the one that
+ * decides for real when the booking is taken.
+ */
+export function splitStay(
+  checkIn: string,
+  checkOut: string,
+  w: BookingWindow | null
+): SplitStay {
+  const span = daysBetween(checkIn, checkOut);
+  if (!checkIn || !checkOut || span < 1) {
+    return { segments: [], nights: 0, skipped: [] };
+  }
+  // Without a window nothing is known to be taken, so the range stands whole.
+  const taken = new Set(w?.unavailableDates ?? []);
+
+  const segments: StaySegment[] = [];
+  const skipped: string[] = [];
+  let runStart = "";
+  const close = (end: string) => {
+    if (!runStart) return;
+    segments.push({ checkIn: runStart, checkOut: end, nights: daysBetween(runStart, end) });
+    runStart = "";
+  };
+  for (let d = checkIn; d < checkOut; d = addDays(d, 1)) {
+    if (taken.has(d)) {
+      skipped.push(d);
+      close(d);
+    } else if (!runStart) {
+      runStart = d;
+    }
+  }
+  close(checkOut);
+
+  return {
+    segments,
+    nights: segments.reduce((sum, s) => sum + s.nights, 0),
+    skipped,
+  };
 }
 
 /**
  * Why these dates can't be booked, or "" when they can. The same checks the
  * server runs, so the page can say so before the guest reaches payment —
  * `createBooking` still repeats every one of them.
+ *
+ * A night somebody else holds inside the range is NOT a problem: it is skipped
+ * and the stay splits around it (see `splitStay`). The only date clash left to
+ * refuse is a range with no free night in it at all.
  */
 export function stayProblem(
   checkIn: string,
@@ -170,13 +267,26 @@ export function stayProblem(
   if (checkOut > w.maxCheckOut) {
     return `This villa is only open for bookings up to ${prettyDate(w.lastDate)}. Please shorten your stay.`;
   }
-  // Every night of the stay must be free — the check-out day is not a night.
-  for (let d = checkIn; d < checkOut; d = addDays(d, 1)) {
-    if (w.unavailableDates.includes(d)) {
-      return `${prettyDate(d)} is no longer available. Please choose different dates.`;
-    }
+  if (splitStay(checkIn, checkOut, w).nights < 1) {
+    return "Every night in those dates is already taken. Please choose different dates.";
   }
   return "";
+}
+
+/**
+ * How a split stay reads in one line — "30 Jul 2026 and 31 Jul 2026 are
+ * already booked", or "" when nothing was skipped. Long runs are summarised
+ * rather than listed out.
+ */
+export function skippedNightsText(skipped: string[]): string {
+  if (!skipped.length) return "";
+  if (skipped.length === 1) return `${prettyDate(skipped[0])} is already booked`;
+  if (skipped.length === 2) {
+    return `${prettyDate(skipped[0])} and ${prettyDate(skipped[1])} are already booked`;
+  }
+  return `${skipped.length} nights between ${prettyDate(skipped[0])} and ${prettyDate(
+    skipped[skipped.length - 1]
+  )} are already booked`;
 }
 
 /** "14:00" → "2:00 PM". */

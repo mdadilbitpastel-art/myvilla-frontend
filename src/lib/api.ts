@@ -282,6 +282,9 @@ export type VillaInput = {
   // House rules. Times are "HH:MM" (an <input type="time"> value); "" = unset.
   checkInTime?: string;
   checkOutTime?: string;
+  /** Minutes of grace after check-in time before a stay becomes a no-show.
+   *  Omit / 0 to keep the platform default. */
+  gracePeriodMinutes?: number;
   petsAllowed?: boolean;
   smokingAllowed?: boolean;
   eventsAllowed?: boolean;
@@ -335,6 +338,9 @@ export type Villa = {
   extraServices: ExtraService[];
   checkInTime: string;
   checkOutTime: string;
+  /** Minutes after check-in time that a late guest can still be checked in;
+   *  past it the booking becomes a no-show. */
+  gracePeriodMinutes: number;
   petsAllowed: boolean;
   smokingAllowed: boolean;
   eventsAllowed: boolean;
@@ -371,7 +377,7 @@ const VILLA_SELECTION = `
   bedrooms guests singleBedRooms doubleBedRooms services pricePerNight
   extraServices { name price }
   availabilityDays bookableUntil blockedDates
-  checkInTime checkOutTime petsAllowed smokingAllowed eventsAllowed
+  checkInTime checkOutTime gracePeriodMinutes petsAllowed smokingAllowed eventsAllowed
   additionalRules houseRules
   acceptedPayments payoutAccountName payoutBankName payoutIfsc payoutMethod payoutAccount
   images photos { id url isCover } coverImage createdAt
@@ -715,6 +721,10 @@ export type BookedRange = {
   nights: number;
   guests: number;
   guestName: string;
+  /** The runs this stay really occupies. Several when the guest booked around
+   *  nights that were already taken, leaving that gap open for whoever holds
+   *  it — checkIn/checkOut above only bracket them. */
+  segments: StaySegment[];
 };
 
 export type VillaAvailability = {
@@ -747,7 +757,8 @@ export async function fetchVillaAvailability(
          villaId windowStart windowEnd availabilityDays bookableUntil
          isAvailableNow freeFrom
          bookedDates blockedDates maxBookedGuests
-         upcoming { bookingId checkIn checkOut nights guests guestName }
+         upcoming { bookingId checkIn checkOut nights guests guestName
+                    segments { index checkIn checkOut nights checkInAt checkOutAt checkedInAt checkedOutAt } }
        }
      }`,
     { villaId, days }
@@ -757,11 +768,38 @@ export async function fetchVillaAvailability(
 
 /* ---- Bookings ---- */
 
+/**
+ * One unbroken run of a stay: arrive, sleep `nights`, leave. A stay booked
+ * around nights another guest holds has several — the guest checks out the
+ * morning the other booking starts and back in the morning it ends.
+ */
+export type StaySegment = {
+  /** 1-based, as shown: "Part 2 of 3". */
+  index: number;
+  checkIn: string; // "YYYY-MM-DD"
+  checkOut: string; // "YYYY-MM-DD"
+  nights: number;
+  /** When this part opens and closes, as wall-clock moments at the property —
+   *  NAIVE (no offset), so they show the hours the host set and compare
+   *  directly against `serverNow`. Never parse these as real instants. */
+  checkInAt: string;
+  checkOutAt: string;
+  /** When the host actually recorded this part's arrival and departure — a
+   *  PIN-verified check-in and a checklist-confirmed check-out. "" until each
+   *  happens. Real instants, so unlike the scheduled pair these do localise. */
+  checkedInAt: string;
+  checkedOutAt: string;
+};
+
 export type BookingInput = {
   villaId: string;
   checkIn: string; // "YYYY-MM-DD"
   checkOut: string; // "YYYY-MM-DD"
   guests: number;
+  /** How many nights the page priced. A range can contain nights somebody else
+   *  holds — those are skipped and not charged — so this is not checkOut minus
+   *  checkIn, and the server re-quotes rather than charge a different stay. */
+  expectedNights?: number;
   paymentMethod: string;
   cardNumber: string;
   expiration: string;
@@ -796,6 +834,11 @@ export type Booking = {
   checkIn: string;
   checkOut: string;
   nights: number;
+  /** The runs this stay is actually made of. One entry for an ordinary stay;
+   *  several when the guest booked around nights somebody else held, in which
+   *  case checkIn/checkOut only bracket them and `nights` counts what was
+   *  slept — not the days between the two. */
+  segments: StaySegment[];
   guests: number;
   pricePerNight: number;
   subtotal: number;
@@ -841,30 +884,96 @@ export type Booking = {
   /** Hours past the scheduled check-in with the guest still not checked in
    *  (0 unless awaiting_checkin). */
   hoursLate: number;
-  /** Whether the guest may still cancel, and the fine a cancellation right now
-   *  would carry (0 when free). For cancelled bookings, cancellationFee is what
-   *  was charged and refundAmount what's returned. */
+  /** The flexible cancellation policy, read on the server at `serverNow`:
+   *  free before the check-in day, a 50% charge on the day itself, and closed
+   *  from the check-in time onward. `cancellationMessage` is the line to show
+   *  ("Free cancellation available." / "50% cancellation charge applies." /
+   *  "Cancellation period has expired."), and cancelFeeNow / refundAmountNow
+   *  are that split in currency. */
   canCancel: boolean;
+  refundPercentage: number;
+  penaltyPercentage: number;
+  cancellationMessage: string;
   cancelFeeNow: number;
+  refundAmountNow: number;
+  /** For CANCELLED bookings: what was actually charged, and what went back. */
   cancellationFee: number;
   refundAmount: number;
+  /** The host's check-in button, decided on the server (see Booking.
+   *  check_in_gate): "grey" before the check-in time, "green" once the window
+   *  opens, "yellow" through its closing stretch, "hidden" after it shuts. */
+  bookingStatus: string;
+  checkinAvailable: boolean;
+  buttonState: string;
+  buttonVisible: boolean;
+  gracePeriodRemainingMinutes: number;
+  otpRequired: boolean;
+  checkinMessage: string;
+  /** When the check-in window shuts — naive wall-clock, like checkInAt. */
+  graceEndsAt: string;
+  /** Stamped when that window closed with nobody checked in ("" until then),
+   *  and whether the host has since chosen to take the guest in regardless. */
+  noShowAt: string;
+  lateCheckInAllowed: boolean;
+  /** The live check-in PIN. `checkinPin` / `checkinPinExpiresIn` are filled in
+   *  for the GUEST alone — the host reading the same booking gets "" and 0, by
+   *  design: they have to be told the code. The host's half is the two below. */
+  checkinPin: string;
+  checkinPinExpiresIn: number;
+  checkinPinPending: boolean;
+  checkinPinAttemptsLeft: number;
+  /** The departure, decided on the server (see Booking.check_out_gate): whether
+   *  the host may close this stay right now, and the line both sides are shown
+   *  about what leaving at this moment would mean — including that it would be
+   *  early and how many nights that hands back. */
+  checkoutAvailable: boolean;
+  checkoutMessage: string;
+  /** Whether closing the stay right now would be an early departure — what
+   *  turns `checkoutMessage` from a reminder into a warning worth showing. */
+  checkoutEarlyNow: boolean;
+  /** And what a departure actually did. A guest who left before the booked
+   *  check-out gets no refund, and the nights they didn't use go back on the
+   *  calendar for other guests. 0 / false until that happens. */
+  earlyCheckOut: boolean;
+  releasedNights: number;
+  /** The live check-out PIN — the same arrangement as the check-in one above,
+   *  and never both at once: a booking has one live code, for whichever end of
+   *  the stay it is at. */
+  checkoutPin: string;
+  checkoutPinExpiresIn: number;
+  checkoutPinPending: boolean;
+  checkoutPinAttemptsLeft: number;
   /** Reviews: whether the guest may review this (completed) stay, and their
    *  review if they've left one (rating 0 / "" comment when not). */
   canReview: boolean;
   reviewRating: number;
   reviewComment: string;
+  /** When the review was posted (ISO instant, "" when there isn't one) —
+   *  shown to guest and host alike. */
+  reviewCreatedAt: string;
+  /** Whether the guest may still change it: editing closes 24 hours after
+   *  posting, and the Edit control goes with it. */
+  canEditReview: boolean;
+  reviewEditableUntil: string;
 };
 
 const BOOKING_SELECTION = `
   id villaId villaTitle villaCover villaCity villaCountry
   guestName guestAvatar guestEmail
-  checkIn checkOut nights guests
+  checkIn checkOut nights segments { index checkIn checkOut nights checkInAt checkOutAt checkedInAt checkedOutAt } guests
   pricePerNight subtotal discount couponCode discountLabel serviceFee tax
   extraServices { name price } extrasTotal total
   hostName hostEmail hostPhone hostAvatar hostGender guestPhone
   checkInAt checkOutAt serverNow lifecycleStatus hoursLate
-  canCancel cancelFeeNow cancellationFee refundAmount
-  canReview reviewRating reviewComment
+  canCancel refundPercentage penaltyPercentage cancellationMessage
+  cancelFeeNow refundAmountNow cancellationFee refundAmount
+  bookingStatus checkinAvailable buttonState buttonVisible
+  gracePeriodRemainingMinutes otpRequired checkinMessage graceEndsAt
+  noShowAt lateCheckInAllowed
+  checkinPin checkinPinExpiresIn checkinPinPending checkinPinAttemptsLeft
+  checkoutAvailable checkoutMessage checkoutEarlyNow earlyCheckOut releasedNights
+  checkoutPin checkoutPinExpiresIn checkoutPinPending checkoutPinAttemptsLeft
+  canReview reviewRating reviewComment reviewCreatedAt canEditReview reviewEditableUntil
   paymentMethod cardLast4 status checkedInAt checkedOutAt createdAt`;
 
 export async function createBooking(input: BookingInput): Promise<Booking> {
@@ -904,25 +1013,83 @@ export async function cancelBooking(id: string): Promise<Booking> {
   return data.cancelBooking;
 }
 
-// Host-side: mark the guest as arrived / departed on one of their villas.
-export async function checkInBooking(id: string): Promise<Booking> {
-  const data = await gql<{ checkInBooking: Booking }>(
-    `mutation CheckInBooking($id: ID!) {
-       checkInBooking(id: $id) { ${BOOKING_SELECTION} }
+/**
+ * Host-side check-in, step 1: ask the server for a PIN.
+ *
+ * The digits are NOT in this response — they appear on the GUEST's own booking
+ * page, and the host has to ask for them. Any PIN the booking already had stops
+ * working here, so calling this again is how a host recovers from an expired or
+ * locked code.
+ */
+export async function startCheckIn(id: string): Promise<Booking> {
+  const data = await gql<{ startCheckIn: Booking }>(
+    `mutation StartCheckIn($id: ID!) {
+       startCheckIn(id: $id) { ${BOOKING_SELECTION} }
      }`,
     { id }
   );
-  return data.checkInBooking;
+  return data.startCheckIn;
 }
 
-export async function checkOutBooking(id: string): Promise<Booking> {
-  const data = await gql<{ checkOutBooking: Booking }>(
-    `mutation CheckOutBooking($id: ID!) {
-       checkOutBooking(id: $id) { ${BOOKING_SELECTION} }
+/**
+ * Step 2: the host types back the PIN the guest read out. Correct → the guest
+ * is checked in and the code is spent. Three wrong tries lock that code and
+ * email the guest a security alert; `startCheckIn` issues a fresh one.
+ */
+export async function verifyCheckIn(id: string, pin: string): Promise<Booking> {
+  const data = await gql<{ verifyCheckIn: Booking }>(
+    `mutation VerifyCheckIn($id: ID!, $pin: String!) {
+       verifyCheckIn(id: $id, pin: $pin) { ${BOOKING_SELECTION} }
+     }`,
+    { id, pin }
+  );
+  return data.verifyCheckIn;
+}
+
+/**
+ * Take a no-show guest in anyway. Re-opens the (still PIN-verified) check-in
+ * button; the booking stays a no-show on the record and the refund stays 0%.
+ */
+export async function allowLateCheckIn(id: string): Promise<Booking> {
+  const data = await gql<{ allowLateCheckIn: Booking }>(
+    `mutation AllowLateCheckIn($id: ID!) {
+       allowLateCheckIn(id: $id) { ${BOOKING_SELECTION} }
      }`,
     { id }
   );
-  return data.checkOutBooking;
+  return data.allowLateCheckIn;
+}
+
+/**
+ * Host-side check-out, step 1 — the mirror of `startCheckIn`.
+ *
+ * The digits are NOT in this response: they appear on the GUEST's own booking
+ * page, so a stay can only be closed with the guest there to read them out.
+ * Refused unless somebody is actually checked in.
+ */
+export async function startCheckOut(id: string): Promise<Booking> {
+  const data = await gql<{ startCheckOut: Booking }>(
+    `mutation StartCheckOut($id: ID!) {
+       startCheckOut(id: $id) { ${BOOKING_SELECTION} }
+     }`,
+    { id }
+  );
+  return data.startCheckOut;
+}
+
+/**
+ * Step 2: the host types back the PIN the guest read out, and the stay closes.
+ * A guest leaving before their booked check-out also hands the unused nights
+ * back to the calendar — with no refund, since the stay was paid for in full.
+ */
+export async function verifyCheckOut(id: string, pin: string): Promise<Booking> {
+  const data = await gql<{ verifyCheckOut: Booking }>(
+    `mutation VerifyCheckOut($id: ID!, $pin: String!) {
+       verifyCheckOut(id: $id, pin: $pin) { ${BOOKING_SELECTION} }
+     }`,
+    { id, pin }
+  );
+  return data.verifyCheckOut;
 }
 
 /* ---- Reviews ---- */

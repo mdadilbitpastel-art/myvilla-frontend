@@ -9,7 +9,7 @@ import VillaCard from "@/components/home/VillaCard";
 import Avatar from "@/components/ui/Avatar";
 import PageHeader from "@/components/ui/PageHeader";
 import { fetchMyVillas, type Villa } from "@/lib/api";
-import { villaGallery, type VillaCardData } from "@/lib/home";
+import { villaCover, villaGallery, type VillaCardData } from "@/lib/home";
 import {
   accountProfile,
   accountReviews,
@@ -20,7 +20,7 @@ const FALLBACK_IMG =
   "https://images.unsplash.com/photo-1571896349842-33c89424de2d?auto=format&fit=crop&w=600&q=80";
 
 function villaToCard(v: Villa): VillaCardData {
-  const image = v.photos[0]?.url || v.coverImage || FALLBACK_IMG;
+  const image = villaCover(v, FALLBACK_IMG);
   return {
     id: v.id,
     image,
@@ -42,7 +42,7 @@ export default function AccountPage() {
 
   if (!user) {
     return (
-      <div className="mx-auto flex min-h-[60vh] w-full max-w-[1320px] flex-col items-center justify-center px-5 text-center">
+      <div className="mx-auto flex min-h-[60vh] w-full max-w-body flex-col items-center justify-center px-5 text-center">
         <h1 className="text-[22px] font-bold text-ink">You&apos;re signed out</h1>
         <p className="mt-2 text-[14px] text-body">
           Please sign in to view your account.
@@ -69,7 +69,7 @@ export default function AccountPage() {
         title="My Account"
       />
 
-      <div className="mx-auto w-full max-w-[1320px] px-5 pt-4 lg:px-7">
+      <div className="mx-auto w-full max-w-body px-5 pt-4 lg:px-7">
         {/* Top: profile (left) + My Villas (right) */}
         <div className="grid grid-cols-1 gap-x-12 gap-y-12 lg:grid-cols-[360px_1fr]">
           <ProfileCard user={user} />
@@ -100,7 +100,7 @@ function AccountSkeleton() {
         ]}
         title="My Account"
       />
-      <div className="mx-auto w-full max-w-[1320px] px-5 pt-4 lg:px-7">
+      <div className="mx-auto w-full max-w-body px-5 pt-4 lg:px-7">
         <div className="grid grid-cols-1 gap-x-12 gap-y-12 lg:grid-cols-[360px_1fr]">
           {/* Profile card */}
           <div>

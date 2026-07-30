@@ -99,7 +99,7 @@ export default function PromoGrid({ offers = [] }: { offers?: Offer[] }) {
   const [a, b, c] = offers;
 
   return (
-    <Reveal className="mx-auto max-w-[1320px] px-6 py-10">
+    <Reveal className="mx-auto max-w-page px-6 py-10">
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {/* Big left card — first real offer, else the static resorts promo. */}
         {a ? (

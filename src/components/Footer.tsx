@@ -44,7 +44,7 @@ const COLUMNS = [
 export default function Footer() {
   return (
     <footer className="bg-white">
-      <div className="mx-auto max-w-[1320px] px-6 pt-14 pb-8">
+      <div className="mx-auto max-w-page px-6 pt-14 pb-8">
         <div className="grid grid-cols-2 gap-x-8 gap-y-10 md:grid-cols-[1.4fr_repeat(4,1fr)]">
           {/* Brand */}
           <div className="col-span-2 md:col-span-1">
@@ -138,17 +138,23 @@ function StoreBadge({
   return (
     // No store listings yet — see the social buttons above. Hovering says so
     // rather than leaving the badge looking like a link that does nothing.
-    <span className="group relative inline-block">
+    <span className="group relative block">
       <button
         type="button"
         title="Coming soon"
         aria-label={`${top} ${bottom} — coming soon`}
-        className="flex w-[150px] items-center gap-3 rounded-lg bg-black px-3 py-2 text-white transition-transform hover:scale-[1.02]"
+        // 150px where there's room, narrower where there isn't. A fixed width
+        // here was the one thing on the whole site that pushed the page wider
+        // than a 320px phone: the footer drops to two columns at that size, and
+        // the badge didn't fit the one it landed in.
+        className="flex w-full max-w-[150px] items-center gap-3 rounded-lg bg-black px-3 py-2 text-white transition-transform hover:scale-[1.02]"
       >
         <span className="shrink-0">{glyph}</span>
-        <span className="flex flex-col leading-tight">
-          <span className="text-[9px] uppercase tracking-wide text-white/80">{top}</span>
-          <span className="text-[15px] font-semibold">{bottom}</span>
+        <span className="flex min-w-0 flex-col leading-tight">
+          <span className="truncate text-[9px] uppercase tracking-wide text-white/80">
+            {top}
+          </span>
+          <span className="truncate text-[15px] font-semibold">{bottom}</span>
         </span>
       </button>
       <span

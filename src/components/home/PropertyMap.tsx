@@ -389,7 +389,7 @@ export default function PropertyMap() {
   const above = !!hover && hover.midY > hover.boxH / 2;
 
   return (
-    <Reveal className="mx-auto max-w-[1320px] px-6 py-10">
+    <Reveal className="mx-auto max-w-page px-6 py-10">
       <SectionHeading title="Find a stay" highlight="on the map" actionLabel="Browse all" />
       {/* `isolate`: Leaflet's panes sit at z-index 400+, which would otherwise
           paint straight over the sticky header as the page scrolls past. The

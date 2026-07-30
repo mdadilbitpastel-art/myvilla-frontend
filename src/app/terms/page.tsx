@@ -20,7 +20,7 @@ export default function TermsPage() {
     <div className="pb-20">
       <LegalHeader title="Terms of Service" />
 
-      <div className="mx-auto max-w-[1320px] px-5 pt-4 lg:px-7">
+      <div className="mx-auto max-w-body px-5 pt-4 lg:px-7">
         {/* Lead */}
         <p className="max-w-[680px] text-[14px] leading-7 text-body">
           A binding agreement between you and MyVilla that governs your use of our

@@ -23,6 +23,22 @@ export type VillaCardData = {
 };
 
 /**
+ * The photo a villa leads with.
+ *
+ * `coverImage` is the host's own choice — the shot they ticked as the cover in
+ * "Add your Villa". `photos` is merely the gallery in display order, so its
+ * first entry is only the cover by coincidence, and reaching for it first
+ * overrode the host on every listing whose cover isn't the leading photo. It
+ * stays as a fallback for a villa the backend answered with no cover at all.
+ */
+export function villaCover(
+  v: Pick<Villa, "coverImage" | "photos">,
+  fallback: string
+): string {
+  return v.coverImage || v.photos[0]?.url || fallback;
+}
+
+/**
  * Every photo a villa has, in the order a card should play them: the cover the
  * page already picked first, then the gallery. The two photo fields overlap
  * (the cover is usually also a gallery entry), so duplicates are dropped —

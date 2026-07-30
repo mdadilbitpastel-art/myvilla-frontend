@@ -20,7 +20,7 @@ import {
   type Offer,
   type VillaFilters,
 } from "@/lib/api";
-import { villaGallery, type VillaCardData } from "@/lib/home";
+import { villaCover, villaGallery, type VillaCardData } from "@/lib/home";
 import GuestSelect from "@/components/ui/GuestSelect";
 
 /** Tailwind `gap-6` between result rows, needed to measure one row's height. */
@@ -37,7 +37,7 @@ const FALLBACK_IMG =
 // red discount pill it has on the landing page — a villa shouldn't look like a
 // worse deal here than it does on the home page.
 function toCard(v: Villa, offers: Map<string, Offer>): VillaCardData {
-  const image = v.photos[0]?.url || v.coverImage || FALLBACK_IMG;
+  const image = villaCover(v, FALLBACK_IMG);
   const offer = offers.get(v.id);
   return {
     id: v.id,
@@ -54,7 +54,7 @@ function toCard(v: Villa, offers: Map<string, Offer>): VillaCardData {
   };
 }
 
-// `?category=Hotel,Bungalow` → the chips to light up. Unknown names are
+// `?category=Bungalow,Others` → the chips to light up. Unknown names are
 // dropped rather than shown as a filter nothing can match.
 function parseCategories(raw: string | null): string[] {
   const picked = (raw || "")
@@ -255,7 +255,7 @@ function SearchPageContent() {
   }
 
   // Only "All" stands alone. Everything else — the property types and
-  // "Others" — combines freely: "Hotel or something the host named himself"
+  // "Others" — combines freely: "Bungalow or something the host named himself"
   // is a search worth being able to make.
   function pickCategory(cat: string) {
     const cur = state.categories;
@@ -308,7 +308,7 @@ function SearchPageContent() {
   const count = shown?.length ?? 0;
 
   return (
-    <div className="mx-auto max-w-[1320px] px-5 pb-20 pt-4">
+    <div className="mx-auto max-w-body px-5 pb-20 pt-4">
       <div
         ref={stickyWrapRef}
         className="relative"

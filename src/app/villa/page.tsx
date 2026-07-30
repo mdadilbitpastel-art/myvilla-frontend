@@ -14,7 +14,7 @@ import ReservationCard from "@/components/property/ReservationCard";
 
 export default function VillaViewPage() {
   return (
-    <div className="mx-auto max-w-[1320px] px-5 pb-20 pt-5 lg:px-7">
+    <div className="mx-auto max-w-body px-5 pb-20 pt-5 lg:px-7">
       {/* Same heading block as the live villa page (breadcrumb + title), just
           not pinned — this route is the static layout reference. */}
       <div className="pb-4">
@@ -66,7 +66,10 @@ export default function VillaViewPage() {
 
         {/* Reservation sidebar */}
         <aside className="lg:col-start-2 lg:row-start-1">
-          <div className="pt-6 lg:sticky lg:top-[88px]">
+          <div
+            className="sticky-panel pt-6 lg:sticky lg:top-[88px]"
+            style={{ ["--sticky-top" as string]: "88px" }}
+          >
             <ReservationCard pricing={villa.pricing} />
           </div>
         </aside>

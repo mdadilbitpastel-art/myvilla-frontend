@@ -62,7 +62,10 @@ function villaToRow(v: Villa): Row {
     id: v.id,
     title: v.title,
     image: v.coverImage || PLACEHOLDER_IMG,
-    city: v.city || v.title,
+    // The city only. It used to fall back to the title, which printed the
+    // property's name a second time directly under itself on any listing with
+    // no city set — the line simply goes quiet instead.
+    city: v.city || "",
     country: v.country || "",
     price: v.pricePerNight,
     // The villa's real review aggregate. No reviews yet → null, which the card
@@ -168,7 +171,7 @@ export default function MyPropertyPage() {
 
   if (!user) {
     return (
-      <div className="mx-auto flex min-h-[60vh] w-full max-w-[1320px] flex-col items-center justify-center px-5 text-center">
+      <div className="mx-auto flex min-h-[60vh] w-full max-w-body flex-col items-center justify-center px-5 text-center">
         <h1 className="text-[22px] font-bold text-ink">You&apos;re signed out</h1>
         <p className="mt-2 text-[14px] text-body">
           Please sign in to view your properties.
@@ -187,8 +190,8 @@ export default function MyPropertyPage() {
   const rows: Row[] | null = villas ? villas.map(villaToRow) : null;
 
   return (
-    <div className="mx-auto w-full max-w-[1320px] px-5 pb-16 pt-4 lg:px-7">
-      <div className="grid grid-cols-1 gap-10 lg:grid-cols-[220px_1fr]">
+    <div className="mx-auto w-full max-w-body px-5 pb-16 pt-4 lg:px-7">
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-[200px_1fr]">
         {/* Left sidebar */}
         <aside>
           <SettingsSidebar />
@@ -303,15 +306,17 @@ export default function MyPropertyPage() {
                       <p className="truncate text-[14px] font-bold text-ink" title={p.title}>
                         {p.title}
                       </p>
-                      <p className="mt-0.5 truncate text-[13px] text-body">
-                        {p.city}
-                        {p.country && (
-                          <>
-                            ,{" "}
-                            <span className="text-primary">{p.country}</span>
-                          </>
-                        )}
-                      </p>
+                      {/* Where it is. Either half can be missing, so the comma
+                          belongs to the pair and the whole line goes away when
+                          there is no location at all — rather than leaving a
+                          stray ", India" or an empty row. */}
+                      {(p.city || p.country) && (
+                        <p className="mt-0.5 truncate text-[13px] text-body">
+                          {p.city}
+                          {p.city && p.country ? ", " : ""}
+                          {p.country && <span className="text-primary">{p.country}</span>}
+                        </p>
+                      )}
                       <p className="mt-0.5 text-[13px] text-muted">
                         ${p.price}/night
                       </p>
