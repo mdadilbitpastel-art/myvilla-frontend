@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { ChevronDown, Check, PartyPopper } from "lucide-react";
+import { ChevronDown, Check, Pencil, PartyPopper, ArrowRight, Moon } from "lucide-react";
 import Img from "@/components/ui/Img";
 import { useAuth } from "@/lib/auth";
 import { useWelcomeOffer } from "@/lib/welcome";
@@ -26,6 +26,7 @@ import {
   addDays as addIsoDays,
   type BookingWindow,
 } from "@/lib/bookingWindow";
+import { REFUND_TIERS } from "@/lib/booking";
 import DateField from "@/components/ui/DateField";
 import { villaCover } from "@/lib/home";
 import { computeStayPricing, TAX_RATE } from "@/lib/pricing";
@@ -45,11 +46,15 @@ const COUNTRIES = [
 
 const money = (n: number) => `$${n.toFixed(2)}`;
 
-function fmtDate(d: Date) {
-  const p = (x: number) => String(x).padStart(2, "0");
-  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}`;
-}
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+// The day of the week an ISO date falls on — "Tue". From a fixed table for the
+// same reason as MONTHS: it must read identically wherever the page renders.
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+function fmtWeekday(iso: string) {
+  const [y, m, d] = iso.split("-").map(Number);
+  if (!y) return "";
+  return WEEKDAYS[new Date(y, m - 1, d).getDay()];
+}
 // "Feb 01" — spelled out from a fixed table rather than toLocaleDateString,
 // whose output depends on the locale of whoever renders it.
 function fmtShort(d: Date) {
@@ -113,6 +118,9 @@ function expiryError(value: string): string {
 
 // Which field a validation message belongs to, so it can be marked invalid.
 type FieldKey =
+  // Not an input: the open date editor, which has to be closed with Done
+  // before the stay it would change can be paid for.
+  | "dates"
   | "method"
   | "cardType"
   | "cardNumber"
@@ -345,9 +353,13 @@ function BookVillaContent() {
   }, [ready, user, openAuth]);
 
   // The form error sits below a long form — bring it into view when it appears.
+  // The one exception is the "press Done" message: what the guest has to act on
+  // is the open editor at the top of the page, not the line above the button.
   useEffect(() => {
-    if (error) errorRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, [error]);
+    if (!error) return;
+    const target = errorField === "dates" ? dateEditRef.current : errorRef.current;
+    target?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [error, errorField]);
 
   // Validate + apply a coupon against this villa and stay. The server decides
   // whether it applies and the exact amount off — the same figure the booking
@@ -405,14 +417,38 @@ function BookVillaContent() {
   // from them and re-renders on its own. No navigation, no state to keep in
   // step, and the back button still holds the stay the guest arrived with.
   const [editingDates, setEditingDates] = useState(false);
+  // The dates as they are being CHOSEN, before they are applied. The editor
+  // writes here and nowhere else, so the summary on the right — the nights, the
+  // price rows, the total, the cancellation dates — holds still while the guest
+  // clicks around the calendar. Done is what moves them into the URL, and the
+  // whole page re-quotes from there in one step. Picking a check-in used to
+  // re-price the stay on the way to picking a check-out, so the total flickered
+  // through a one-night stay nobody had asked for and a coupon was re-validated
+  // against it. `null` means "not editing — the URL's dates are the dates".
+  const [draft, setDraft] = useState<{ checkIn: string; checkOut: string } | null>(null);
+  // Done has just re-priced the stay. The summary on the right is where the
+  // figure that will actually be charged lives, and on a long page it is easy
+  // to press Done and not notice the number that moved — so it lights up for a
+  // moment. Purely a signal that this is the new total; it fades on its own.
+  const [justPriced, setJustPriced] = useState(false);
+  useEffect(() => {
+    if (!justPriced) return;
+    // Long enough to outlast the coupon re-check Done kicks off, so the
+    // highlight is still on the number when the discount settles.
+    const t = setTimeout(() => setJustPriced(false), 2200);
+    return () => clearTimeout(t);
+  }, [justPriced]);
   // The panel sits high on a long page — opening it from the alert at the
   // bottom has to bring it into view.
   const dateEditRef = useRef<HTMLDivElement>(null);
   const openDateEditor = useCallback(() => {
     setEditingDates(true);
-    // A frame late: the panel has to exist before it can be scrolled to.
-    requestAnimationFrame(() =>
-      dateEditRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })
+    // After the panel has finished sliding open (see its 420ms transition), not
+    // a frame after the state change: mid-slide it is still a few pixels tall,
+    // and centring THAT lands the finished panel somewhere else entirely.
+    setTimeout(
+      () => dateEditRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }),
+      440
     );
   }, []);
   const setStay = useCallback(
@@ -433,6 +469,45 @@ function BookVillaContent() {
     },
     [applied, applyCoupon, id, router, searchParams, win]
   );
+
+  // --- What the dates in the open editor would COST, before Done applies them.
+  //
+  // The guest is choosing dates against a price, so the price has to be there
+  // while they choose. Everything in it is the same arithmetic the summary on
+  // the right runs — except the coupon, which the SERVER decides for a given
+  // number of nights (a percentage code takes a different amount off a longer
+  // stay). So the draft's coupon is quoted the same way the applied one was,
+  // read-only, and the panel says "working it out" until the answer lands
+  // rather than showing a total the coupon would change underneath it.
+  const draftQuoteNights = useMemo(
+    () => (draft ? splitStay(draft.checkIn, draft.checkOut, win).nights : 0),
+    [draft, win]
+  );
+  // Tagged with the night count it was quoted FOR — a figure is only ever used
+  // against its own draft, so an answer that arrives after the guest has picked
+  // again is simply never the one on screen.
+  const [draftCoupon, setDraftCoupon] = useState<{ nights: number; discount: number } | null>(null);
+  useEffect(() => {
+    let live = true;
+    const timer = setTimeout(async () => {
+      if (!applied?.code || draftQuoteNights <= 0) {
+        setDraftCoupon(null);
+        return;
+      }
+      try {
+        const res = await validateCoupon(applied.code, id, draftQuoteNights);
+        // A code that stops applying at this length takes nothing off — which
+        // is exactly what Done would find, so it is what the total shows.
+        if (live) setDraftCoupon({ nights: draftQuoteNights, discount: res.valid ? res.discount : 0 });
+      } catch {
+        if (live) setDraftCoupon({ nights: draftQuoteNights, discount: 0 });
+      }
+    }, 200);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [applied?.code, draftQuoteNights, id]);
 
   // The payment methods THIS host accepts, in a stable known order — EXACTLY
   // what the host ticked, nothing more. No fallback to "all four": if the host
@@ -545,30 +620,126 @@ function BookVillaContent() {
     : nowTick
       ? firstBookableDate(v.checkInTime, nowTick)
       : undefined;
+  // What the editor's two fields are showing: the draft while one is being
+  // made, the stay itself until then. No draft is created when the panel opens
+  // — only when a date is actually picked — so opening and closing it again
+  // changes nothing at all.
+  const draftIn = draft?.checkIn ?? checkInIso;
+  const draftOut = draft?.checkOut ?? checkOutIso;
+  const draftDirty = draftIn !== checkInIso || draftOut !== checkOutIso;
+  // Nights the draft would actually be charged for — the same split the real
+  // stay goes through, so the count under the calendar is the count Done buys.
+  const draftNights = draftDirty ? splitStay(draftIn, draftOut, win).nights : trip.nights;
+
+  // And what those nights come to. Priced exactly as the summary beside it is —
+  // same nightly rate, same extras, same fee and tax, same "welcome offer or
+  // coupon, whichever takes more off, never both" rule — so the figure the
+  // panel shows is the figure Done produces, not an estimate of it.
+  //
+  // The coupon is the one part that has to be asked for (see draftCoupon
+  // above); `null` here means the answer hasn't landed yet, and the panel says
+  // so rather than quoting a total that is about to move.
+  const draftCouponDiscount = !applied
+    ? 0
+    : !draftDirty
+      ? couponDiscount
+      : draftCoupon?.nights === draftNights
+        ? draftCoupon.discount
+        : null;
+  const draftRawSubtotal = Math.max(0, price * Math.max(0, draftNights));
+  const draftWelcomeDiscount = welcome.available
+    ? Math.round(draftRawSubtotal * (welcome.offer?.percentOff ?? 0)) / 100
+    : 0;
+  const draftPricing = computeStayPricing(
+    price,
+    draftNights,
+    Math.max(draftWelcomeDiscount, draftCouponDiscount ?? 0),
+    extrasPerNight
+  );
+  const draftTotal = draftPricing.total;
+  // What Done would add to (or take off) the bill, so the guest reads the change
+  // as well as the number — the summary on the right still holds the old total.
+  const draftDelta = Number((draftTotal - total).toFixed(2));
+  const draftPricePending = draftCouponDiscount === null;
+
   // Without a window there is nothing to cap the stay with — leaving these
   // undefined keeps the calendar open rather than pinning it to one night.
-  const latestCheckOut = win ? maxCheckOutFor(checkInIso, win) : undefined;
+  const latestCheckOut = win ? maxCheckOutFor(draftIn, win) : undefined;
 
   function onCheckInPick(next: string) {
-    let out = checkOutIso;
+    let out = draftOut;
     // Check-out always stays after check-in, and inside what the host opened.
     if (out <= next) out = addIsoDays(next, 1);
     if (win) {
       const cap = maxCheckOutFor(next, win);
       if (out > cap) out = cap;
     }
-    setStay(next, out);
+    setDraft({ checkIn: next, checkOut: out });
   }
 
-  // The flexible cancellation policy, in this stay's own terms: free right up
-  // to the end of the day before arrival, half back on the arrival day itself,
-  // and nothing once the check-in hour arrives. Mirrors the server's rule (see
-  // Booking.cancellation_policy) — the same three tiers, named in dates.
-  const freeUntil = fmtShort(addDays(stay.start, -1));
-  const partialUntil = fmtShort(stay.start);
+  // The Edit/Done control. Done is the only thing that applies a change — it
+  // hands the two dates to `setStay`, which puts them in the URL and re-quotes
+  // the page (and re-checks the coupon against the new night count).
+  function toggleDateEditor() {
+    if (!editingDates) {
+      setEditingDates(true);
+      return;
+    }
+    if (draft && draftDirty) {
+      setStay(draft.checkIn, draft.checkOut);
+      // Only when the dates actually moved: closing the panel on the stay it
+      // opened with changes no figure, so nothing on the right should flash.
+      setJustPriced(true);
+    }
+    setDraft(null);
+    setEditingDates(false);
+    // Done is what the "press Done first" message was asking for — clear it
+    // here rather than leaving a red line under a panel that has just closed.
+    if (errorField === "dates") {
+      setError("");
+      setErrorField("");
+    }
+  }
+
+  // Back to the listing, carrying the stay. `stay` — not the draft: an
+  // unapplied date change is exactly that, and Cancel is not a way to apply it.
+  const backToVilla =
+    `/villa/${id}?checkIn=${checkInIso}&checkOut=${checkOutIso}&guests=${trip.guests}` +
+    (applied?.code || searchParams.get("coupon")
+      ? `&coupon=${encodeURIComponent(applied?.code || searchParams.get("coupon") || "")}`
+      : "");
+
+  // The sliding cancellation scale, in this stay's own terms: the server's
+  // ladder (REFUND_TIERS, mirrored in lib/booking) with each band's threshold
+  // turned into the date it actually falls on for THESE dates. Every boundary
+  // is the check-in hour on its day, which is what the deadline column says —
+  // "15 days before check-in" is 2 PM that day, not midnight.
+  const checkInDay = fmtShort(stay.start);
   const checkInAtText = prettyTime(v?.checkInTime || "14:00");
+  const REFUND_LADDER = REFUND_TIERS.map(([hours, refund], i) => {
+    const days = hours / 24;
+    const prevDays = i === 0 ? 0 : REFUND_TIERS[i - 1][0] / 24;
+    const on = (d: number) => `${checkInAtText} on ${fmtShort(addDays(stay.start, -d))}`;
+    if (i === 0) return { refund, label: `${days} days ahead or more — up to ${on(days)}` };
+    if (hours === 0)
+      return { refund, label: `In the last 24 hours — after ${on(prevDays)}` };
+    return { refund, label: `${days} to ${prevDays} days ahead — until ${on(days)}` };
+  });
 
   function validate(): { field: FieldKey; message: string } | null {
+    // An open date editor is an unfinished decision: the draft in it is not the
+    // stay being charged, so paying now would buy the dates on screen while the
+    // guest is still looking at different ones in the calendar. Done is the only
+    // thing that applies a change, so Done is required before Confirm — even
+    // when nothing was picked, since closing it is what says "these are final".
+    if (editingDates)
+      return {
+        field: "dates",
+        message: draftDirty
+          ? "Press Done on your dates to apply them before confirming."
+          : "Press Done to finish editing your dates before confirming.",
+      };
+
     if (!method) return { field: "method", message: "Please choose a payment method." };
 
     // Each method validates only its own inputs — card fields for the card
@@ -688,14 +859,20 @@ function BookVillaContent() {
           </>
         }
         action={
-          <Link href={`/villa/${id}`} className={pageHeaderAction}>
+          // Cancel goes back to the listing with the stay still on it — the
+          // dates the guest picked, and the coupon they arrived with. Landing on
+          // a villa page whose calendar had reset to "tonight, one night" made
+          // backing out of payment cost them the whole choice they had just
+          // made; the reservation card seeds itself from these and scrolls
+          // itself into view, so they come back to exactly what they left.
+          <Link href={backToVilla} className={pageHeaderAction}>
             Cancel
           </Link>
         }
       />
 
       <div className="mx-auto max-w-body px-5 lg:px-7">
-      <div className="mt-5 grid grid-cols-1 gap-10 lg:grid-cols-[1fr_440px]">
+      <div className="mt-5 grid grid-cols-1 gap-10 lg:grid-cols-[1fr_400px]">
         {/* ---------- Left: payment form ---------- */}
         <div>
           {/* The welcome offer, already applied. Stated before the guest starts
@@ -725,10 +902,145 @@ function BookVillaContent() {
           <h2 className="text-[15px] font-bold text-ink">Your Trip Details</h2>
           <TripRow
             label="Duration"
-            value={`${trip.nights} Night${trip.nights === 1 ? "" : "s"} (${fmtDate(dates.start)} to ${fmtDate(dates.end)})`}
-            onEdit={() => setEditingDates((o) => !o)}
+            onEdit={toggleDateEditor}
             editing={editingDates}
+            value={
+              <StayStrip
+                checkIn={checkInIso}
+                checkOut={checkOutIso}
+                nights={trip.nights}
+                arriveAt={arriveAt}
+                departAt={departAt}
+              />
+            }
           />
+
+          {/* Change the stay without leaving the page, right under the row —
+              and under the control — that opened it: every price on the right
+              is derived from these two dates, so it re-quotes as they change.
+              There is nothing to save, so there is no button in here either;
+              the Edit control above turned into Done and closing it is its job.
+              A second Done down here was a second thing to hunt for, and it sat
+              below whatever the split-stay notice had grown to. */}
+          {/* It slides rather than appears: the panel is always in the page and
+              a 0fr→1fr grid row animates its real height, so it opens and — the
+              part a mount/unmount can never do — closes at the same measured
+              pace. Nothing here is a fixed height (the date fields wrap on a
+              narrow screen), which is exactly what the grid row handles and a
+              max-height guess doesn't. `inert` while closed keeps the two date
+              inputs out of the tab order when there is nothing to see. */}
+          <div
+            className={`grid transition-all duration-[420ms] ease-out ${
+              editingDates ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+            }`}
+            inert={!editingDates}
+          >
+            <div className="overflow-hidden">
+              <div
+                ref={dateEditRef}
+                className={`mt-3 rounded-xl border bg-white p-4 transition-colors ${
+                  errorField === "dates"
+                    ? "border-red-300 ring-2 ring-red-100"
+                    : "border-line"
+                }`}
+              >
+                <div className="grid grid-cols-2 overflow-hidden rounded-xl border border-line">
+                  <DateField
+                    variant="plain"
+                    label="Check - In"
+                    value={draftIn}
+                    min={earliest}
+                    max={win?.lastDate}
+                    disabledDates={win?.unavailableDates}
+                    onChange={onCheckInPick}
+                    className="border-r border-line"
+                  />
+                  <DateField
+                    variant="plain"
+                    label="Check - Out"
+                    value={draftOut}
+                    min={addIsoDays(draftIn, 1)}
+                    max={latestCheckOut}
+                    disabledDates={win?.unavailableDates.map((d) => addIsoDays(d, 1))}
+                    onChange={(next) => setDraft({ checkIn: draftIn, checkOut: next })}
+                  />
+                </div>
+
+                {/* What these two dates come to: the nights, and the money.
+                    Dates are chosen against a price, so the price is here while
+                    they are being chosen — the total Done would produce, what it
+                    changes by, and the label saying which of the two figures on
+                    screen is which. The summary on the right still holds the
+                    stay that is actually booked until Done applies these. */}
+                <div
+                  className={`mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border px-3.5 py-3 transition-colors ${
+                    draftDirty
+                      ? "border-primary/30 bg-primary/[0.045]"
+                      : "border-line bg-black/[0.015]"
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <p className="flex items-center gap-1.5 text-[13px] font-bold text-ink">
+                      <Moon size={13} className="shrink-0 text-primary" aria-hidden />
+                      {draftNights} night{draftNights === 1 ? "" : "s"}
+                      <span className="font-normal text-muted">· {money(price)} / night</span>
+                    </p>
+                    <p className="mt-0.5 text-[11.5px] leading-4 text-muted">
+                      {draftDirty
+                        ? "Press Done to apply these dates"
+                        : "The dates you're booking right now"}
+                    </p>
+                  </div>
+
+                  {/* The money, live. It is recalculated on every pick, so the
+                      guest is choosing dates against a price rather than finding
+                      out what they cost after committing to them. Until Done,
+                      this is the only place the new figure exists — the summary
+                      on the right still holds the stay that is actually booked,
+                      and two different totals under one heading would be worse
+                      than one clearly labelled "New total". */}
+                  <div className="ml-auto text-right">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.09em] text-muted">
+                      {draftDirty ? "New total" : "Total"}
+                    </p>
+                    {draftDirty && draftPricePending ? (
+                      // The coupon answer isn't back yet. A figure now would be
+                      // one the discount is about to move, so it says so instead.
+                      <p className="mt-0.5 text-[13px] font-semibold text-muted">
+                        working it out…
+                      </p>
+                    ) : (
+                      <>
+                        <p className="text-[19px] font-extrabold leading-tight text-ink">
+                          {money(draftDirty ? draftTotal : total)}
+                        </p>
+                        {draftDirty && draftDelta !== 0 && (
+                          <p
+                            className={`text-[11.5px] font-semibold leading-4 ${
+                              draftDelta > 0 ? "text-ink" : "text-green-600"
+                            }`}
+                          >
+                            {draftDelta > 0 ? "+" : "−"}
+                            {money(Math.abs(draftDelta))} vs your current dates
+                          </p>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* Confirm was pressed with this panel still open. The message
+                    belongs here, next to the Done it is asking for — the one by
+                    the Confirm button is a screen away from the control that
+                    clears it, and this is where the page has just scrolled. */}
+                {errorField === "dates" && (
+                  <p role="alert" className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-[12.5px] font-medium text-red-600">
+                    {error}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
 
           {/* A stay booked around nights somebody else holds. Every arrival and
               departure is spelled out here, before any card details are typed:
@@ -777,51 +1089,6 @@ function BookVillaContent() {
             </div>
           )}
 
-          {/* Change the stay without leaving the page: every price on the right
-              is derived from these two dates, so it re-quotes as they change —
-              there is nothing to save, and Done only folds the panel away. */}
-          {editingDates && (
-            <div
-              ref={dateEditRef}
-              className="animate-fade-in mt-3 rounded-xl border border-line bg-white p-4"
-            >
-              <div className="grid grid-cols-2 overflow-hidden rounded-xl border border-line">
-                <DateField
-                  variant="plain"
-                  label="Check - In"
-                  value={checkInIso}
-                  min={earliest}
-                  max={win?.lastDate}
-                  disabledDates={win?.unavailableDates}
-                  onChange={onCheckInPick}
-                  className="border-r border-line"
-                />
-                <DateField
-                  variant="plain"
-                  label="Check - Out"
-                  value={checkOutIso}
-                  min={addIsoDays(checkInIso, 1)}
-                  max={latestCheckOut}
-                  disabledDates={win?.unavailableDates.map((d) => addIsoDays(d, 1))}
-                  onChange={(next) => setStay(checkInIso, next)}
-                />
-              </div>
-
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-                <p className="text-[12.5px] text-muted">
-                  {trip.nights} night{trip.nights === 1 ? "" : "s"} ·{" "}
-                  <span className="font-semibold text-ink">{money(total)}</span> total
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setEditingDates(false)}
-                  className="rounded-lg border border-primary/40 px-4 py-1.5 text-[13px] font-medium text-primary transition-colors hover:bg-primary/5"
-                >
-                  Done
-                </button>
-              </div>
-            </div>
-          )}
           {/* No Edit here: it led to the same place as the one above it. */}
           <TripRow
             label="Guests"
@@ -1110,10 +1377,40 @@ function BookVillaContent() {
           {/* Cancellation policy */}
           <h2 className="mt-8 text-[15px] font-bold text-ink">Cancellation Policy</h2>
           <p className="mt-3 text-[13px] leading-6 text-body">
-            Cancel any time up to the end of {freeUntil} for a <strong>100% refund</strong>.
-            On {partialUntil}, the check-in day itself, cancelling before {checkInAtText}{" "}
-            refunds <strong>50%</strong>. From {checkInAtText} on {partialUntil} the booking
-            can no longer be cancelled and no refund is due.
+            What comes back depends on how near the stay is when you cancel — every
+            deadline below is {checkInAtText}, this booking&apos;s own check-in hour.
+          </p>
+          <dl className="mt-2.5 divide-y divide-line overflow-hidden rounded-xl border border-line text-[13px]">
+            {REFUND_LADDER.map((tier) => (
+              <div
+                key={tier.label}
+                className="flex items-baseline justify-between gap-4 px-3.5 py-2"
+              >
+                <dt className="text-body">{tier.label}</dt>
+                <dd
+                  className={`shrink-0 font-semibold ${
+                    tier.refund === 100
+                      ? "text-green-600"
+                      : tier.refund === 0
+                        ? "text-red-600"
+                        : "text-ink"
+                  }`}
+                >
+                  {tier.refund}% refund
+                </dd>
+              </div>
+            ))}
+            <div className="flex items-baseline justify-between gap-4 bg-page px-3.5 py-2">
+              <dt className="text-body">
+                From {checkInAtText} on {checkInDay}
+              </dt>
+              <dd className="shrink-0 font-semibold text-muted">Can no longer be cancelled</dd>
+            </div>
+          </dl>
+          <p className="mt-3 text-[13px] leading-6 text-body">
+            You don&apos;t have to give up the whole stay: from My Bookings you can hand
+            back only the nights you no longer need — priced by the same scale — and keep
+            the rest.
             <br />
             {/* TODO: link to the cancellation-policy page once it exists. */}
             <button type="button" className="font-semibold text-ink underline underline-offset-2">
@@ -1167,7 +1464,10 @@ function BookVillaContent() {
             </div>
           )}
 
-          {error && (
+          {/* The date-editor message has its own line inside the panel, beside
+              the Done that clears it — showing it here as well would be the same
+              sentence twice on one screen. */}
+          {error && errorField !== "dates" && (
             <p ref={errorRef} role="alert" className="mt-4 rounded-lg bg-red-50 px-4 py-2.5 text-[13px] text-red-600">
               {error}
             </p>
@@ -1185,10 +1485,14 @@ function BookVillaContent() {
         {/* ---------- Right: summary card ---------- */}
         <aside>
           {/* Above the collapsed heading (z-30): the two sticky boxes overlap by
-              a few pixels once the header shrinks, and the summary should win. */}
+              a few pixels once the header shrinks, and the summary should win.
+              The -mt only bites before the panel pins — it starts the summary
+              level with the form's first field rather than one heading lower.
+              80, not 65: on load, before the heading collapses, the card still
+              sat a touch low against the form beside it. */}
           <div
-            className="sticky-panel lg:-mt-[30px] lg:sticky lg:top-[150px] lg:z-40"
-            style={{ ["--sticky-top" as string]: "150px" }}
+            className="sticky-panel lg:-mt-[80px] lg:sticky lg:top-[165px] lg:z-40"
+            style={{ ["--sticky-top" as string]: "165px" }}
           >
             <div className="rounded-2xl border border-line bg-white p-5 shadow-[0_8px_30px_rgba(0,0,0,0.06)]">
               <div className="flex gap-4">
@@ -1212,7 +1516,11 @@ function BookVillaContent() {
                 </div>
               </div>
 
-              <hr className="my-5 border-line" />
+              {/* my-4, not my-5, on both of the card's rules: 16px of slack so
+                  a coupon message that runs to two lines is absorbed here
+                  rather than tipping the card past the viewport and into a
+                  scrollbar. Nothing else in the card gives height up cheaply. */}
+              <hr className="my-4 border-line" />
 
               {/* Coupon */}
               <CouponBox
@@ -1237,7 +1545,7 @@ function BookVillaContent() {
                 message={couponMsg}
               />
 
-              <hr className="my-5 border-line" />
+              <hr className="my-4 border-line" />
 
               <h3 className="text-[15px] font-bold text-ink">Price Details</h3>
               <div className="mt-4 space-y-3 text-[14px]">
@@ -1285,8 +1593,26 @@ function BookVillaContent() {
 
               <hr className="my-4 border-line" />
 
-              <div className="flex items-center justify-between text-[15px] font-bold text-ink">
-                <span>Total (USD)</span>
+              {/* Done has just applied new dates: this is the figure that
+                  changed because of it, and it says so for a couple of seconds.
+                  Without it the guest presses Done at the top of the page and
+                  the one number that matters re-renders silently over here. */}
+              <div
+                className={`-mx-2 flex items-center justify-between rounded-lg px-2 py-1.5 text-[15px] font-bold text-ink transition-colors duration-500 ${
+                  justPriced ? "bg-primary/10 ring-1 ring-primary/25" : ""
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  Total (USD)
+                  {justPriced && (
+                    <span
+                      role="status"
+                      className="rounded-full bg-primary px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white"
+                    >
+                      Updated
+                    </span>
+                  )}
+                </span>
                 <span>{money(total)}</span>
               </div>
             </div>
@@ -1346,7 +1672,30 @@ function CouponBox({
   }
   return (
     <div>
-      <label className="text-[13px] font-semibold text-ink">Have a coupon?</label>
+      {/* The answer takes the prompt's line rather than a new one of its own.
+          The summary card is pinned to the height of the viewport, and it sits
+          close enough to that ceiling that ONE extra 20px line of "that code
+          isn't valid" was enough to hand the whole card an inner scrollbar —
+          the guest typed a coupon and the price breakdown they were reading
+          jumped and grew a scroll track. A label and its validation message
+          are the same slot in every form: "Have a coupon?" has done its job by
+          the time there is something to say about the one you tried, and the
+          input below still names itself through its placeholder and its
+          `aria-label`. Zero height added, so nothing below it moves. */}
+      {message ? (
+        <p
+          role="status"
+          className={`text-[12.5px] font-medium leading-5 ${
+            message.ok ? "text-green-600" : "text-red-600"
+          }`}
+        >
+          {message.text}
+        </p>
+      ) : (
+        <label className="block text-[13px] font-semibold leading-5 text-ink">
+          Have a coupon?
+        </label>
+      )}
       <div className="mt-2 flex gap-2">
         <input
           value={value}
@@ -1372,11 +1721,6 @@ function CouponBox({
           {applying ? "…" : "Apply"}
         </button>
       </div>
-      {message && (
-        <p className={`mt-2 text-[12px] ${message.ok ? "text-green-600" : "text-red-600"}`}>
-          {message.text}
-        </p>
-      )}
     </div>
   );
 }
@@ -1476,7 +1820,9 @@ function TripRow({
   editing = false,
 }: {
   label: string;
-  value: string;
+  /** A plain string gets the quiet one-line treatment; anything else is
+      rendered as-is, for a row whose value is worth more room than that. */
+  value: React.ReactNode;
   /** Omit on a row with nothing to change (the guest count is fixed here). */
   onEdit?: () => void;
   /** Whether this row's editor is open — the control says so and reads as a toggle. */
@@ -1486,18 +1832,113 @@ function TripRow({
     <div className="mt-4">
       <div className="flex items-center justify-between">
         <span className="text-[14px] font-semibold text-ink">{label}</span>
+        {/* One control, two jobs: it opens the editor and it closes it. A slim
+            pill rather than the underlined word it was — an underline reads as
+            a link to somewhere else, and this goes nowhere; it toggles the
+            panel directly beneath it. Deliberately small and quiet: it sits
+            beside a heading on a page whose one loud button is Pay.
+            Editing, it fills in with the brand colour and takes a tick — the
+            same shape, plainly switched on, so the guest sees the thing they
+            pressed is the thing that ends it. */}
         {onEdit && (
           <button
             type="button"
             onClick={onEdit}
             aria-expanded={editing}
-            className="text-[13px] text-ink underline underline-offset-2 hover:text-primary"
+            aria-label={editing ? `Done editing ${label.toLowerCase()}` : `Edit ${label.toLowerCase()}`}
+            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12.5px] font-semibold leading-4 transition-colors ${
+              editing
+                ? "border-primary bg-primary text-white hover:bg-primary-dark"
+                : "border-line text-body hover:border-primary/50 hover:bg-primary/5 hover:text-primary"
+            }`}
           >
+            {editing ? (
+              <Check size={13} aria-hidden />
+            ) : (
+              <Pencil size={12} aria-hidden />
+            )}
             {editing ? "Done" : "Edit"}
           </button>
         )}
       </div>
-      <p className="mt-0.5 text-[12px] text-muted">{value}</p>
+      {typeof value === "string" ? (
+        <p className="mt-0.5 text-[12px] text-muted">{value}</p>
+      ) : (
+        value
+      )}
+    </div>
+  );
+}
+
+/* The stay itself, laid out as the two ends it actually has.
+ *
+ * It replaced one muted line — "6 Nights (25/08/2026 to 31/08/2026)" — where
+ * the dates were the same size and weight as everything around them, written
+ * in a numeric format that means two different days depending on where the
+ * guest reads it. This is the thing being bought, and the row above it is the
+ * one with an Edit control, so it is worth looking like something: each end
+ * labelled and dated in words, the day of the week and the hour underneath —
+ * because "check in Tuesday at 2 PM" is what a guest plans around — and the
+ * night count sitting on the line that joins them.
+ */
+function StayStrip({
+  checkIn,
+  checkOut,
+  nights,
+  arriveAt,
+  departAt,
+}: {
+  checkIn: string;
+  checkOut: string;
+  nights: number;
+  /** The villa's hours, or "" when the host stated none — no invented times. */
+  arriveAt?: string;
+  departAt?: string;
+}) {
+  return (
+    <div className="mt-2 flex items-stretch overflow-hidden rounded-xl border border-line bg-gradient-to-r from-primary/[0.05] via-white to-primary/[0.05]">
+      <StayEnd label="Check-in" iso={checkIn} at={arriveAt} atPrefix="from" />
+      {/* The join. The hairline runs behind the badge rather than beside it,
+          so the two ends read as one span at any width. */}
+      <div className="relative flex w-[92px] shrink-0 items-center justify-center sm:w-[124px]">
+        <span aria-hidden className="absolute inset-x-1 top-1/2 h-px bg-line" />
+        <ArrowRight
+          aria-hidden
+          size={12}
+          className="absolute right-0 top-1/2 -translate-y-1/2 text-muted/50"
+        />
+        <span className="relative inline-flex items-center gap-1 rounded-full border border-primary/25 bg-white px-2.5 py-1 text-[11.5px] font-bold leading-4 text-primary shadow-sm">
+          <Moon size={11} aria-hidden />
+          {nights}
+          <span className="font-semibold">night{nights === 1 ? "" : "s"}</span>
+        </span>
+      </div>
+      <StayEnd label="Check-out" iso={checkOut} at={departAt} atPrefix="until" align="right" />
+    </div>
+  );
+}
+
+function StayEnd({
+  label,
+  iso,
+  at,
+  atPrefix,
+  align = "left",
+}: {
+  label: string;
+  iso: string;
+  at?: string;
+  atPrefix: string;
+  align?: "left" | "right";
+}) {
+  return (
+    <div className={`min-w-0 flex-1 px-3.5 py-3 sm:px-4 ${align === "right" ? "text-right" : ""}`}>
+      <p className="text-[10px] font-bold uppercase tracking-[0.09em] text-muted">{label}</p>
+      <p className="mt-1 text-[14px] font-bold leading-tight text-ink">{prettyDate(iso)}</p>
+      <p className="mt-0.5 text-[11.5px] leading-4 text-muted">
+        {fmtWeekday(iso)}
+        {at ? ` · ${atPrefix} ${at}` : ""}
+      </p>
     </div>
   );
 }
@@ -1547,7 +1988,7 @@ function BookSkeleton() {
       {/* Same rhythm as the real header: breadcrumb, then the 30px title. */}
       <div className="skeleton h-4 w-64" />
       <div className="skeleton mt-2 h-8 w-56" />
-      <div className="mt-9 grid grid-cols-1 gap-10 lg:grid-cols-[1fr_440px]">
+      <div className="mt-9 grid grid-cols-1 gap-10 lg:grid-cols-[1fr_400px]">
         <div>
           <div className="skeleton h-4 w-40" />
           <div className="skeleton mt-4 h-12 w-full" />

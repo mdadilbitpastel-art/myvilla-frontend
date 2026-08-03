@@ -48,12 +48,16 @@ const THEME: Record<
     title: "Verify check-out",
     submit: "Verify & check out",
     press: "Check out",
-    accent: "bg-[#1971c2]",
-    accentHover: "hover:bg-[#155f9e]",
-    tintBg: "bg-[#1971c2]/10",
-    tintText: "text-[#1971c2]",
-    barBg: "bg-[#1971c2]",
-    focusBorder: "focus:border-[#1971c2]",
+    // Black, not blue. Departure is the last thing that happens to a booking,
+    // and the dialog that ends it should read as final rather than as one more
+    // primary action — the guest's own check-out card and the host's Check out
+    // button carry the same ink, so the two screens plainly belong together.
+    accent: "bg-ink",
+    accentHover: "hover:bg-ink/85",
+    tintBg: "bg-ink/[0.07]",
+    tintText: "text-ink",
+    barBg: "bg-ink",
+    focusBorder: "focus:border-ink",
   },
 };
 

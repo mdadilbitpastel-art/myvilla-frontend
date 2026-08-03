@@ -17,12 +17,14 @@ import {
 } from "lucide-react";
 import Img from "@/components/ui/Img";
 import Avatar from "@/components/ui/Avatar";
+import CheckInCountdownPill from "@/components/ui/CheckInCountdownPill";
+import StayCountdownPill from "@/components/ui/StayCountdownPill";
 import ReviewForm from "@/components/reviews/ReviewForm";
 import type { Booking } from "@/lib/api";
 import {
   bookingStatus,
-  bookingStatusDetail,
   cancellationGate,
+  checkInCountdown,
   stayAction,
   stayProgress,
   fmtPartMoment,
@@ -87,8 +89,19 @@ const PART_STATUS: Record<StayPartStatus, { label: string; className: string }> 
   cancelled: { label: "Cancelled", className: "bg-red-50 text-red-600" },
 };
 
-function PartStatusChip({ status }: { status: StayPartStatus }) {
-  const s = PART_STATUS[status];
+function PartStatusChip({
+  status,
+  leftEarly = false,
+}: {
+  status: StayPartStatus;
+  /** This part ended with the guest walking out before its check-out hour. It
+   *  replaces "Done" rather than sitting beside it: the part IS done, and what
+   *  is worth knowing a month later is that it didn't run its course. */
+  leftEarly?: boolean;
+}) {
+  const s = leftEarly
+    ? { label: "Left early", className: "bg-red-50 text-red-600" }
+    : PART_STATUS[status];
   return (
     <span
       className={`rounded-full px-1.5 py-[1px] text-[9.5px] font-bold uppercase tracking-wide ${s.className}`}
@@ -101,19 +114,12 @@ function PartStatusChip({ status }: { status: StayPartStatus }) {
 // Soft status pill colours per tone — a filled chip reads as a real-time state.
 const PILL_CLASS: Record<BookingStatusTone, string> = {
   green: "bg-green-50 text-green-700",
-  blue: "bg-primary/10 text-primary",
+  // Ink, not the brand purple — see STATUS_TONE_CLASS.blue. The row's label and
+  // this chip name the same state and must not disagree about how loud it is.
+  blue: "bg-ink/[0.07] text-ink",
   red: "bg-red-50 text-red-600",
   muted: "bg-page text-body",
   orange: "bg-orange-50 text-orange-600",
-};
-
-// The same tones as a left-border + tint strip, for the one-line status detail.
-const STRIP_CLASS: Record<BookingStatusTone, string> = {
-  green: "border-green-500 bg-green-50 text-green-700",
-  blue: "border-primary bg-primary/[0.06] text-primary",
-  red: "border-red-500 bg-red-50 text-red-600",
-  muted: "border-line bg-page text-body",
-  orange: "border-orange-500 bg-orange-50 text-orange-700",
 };
 
 /**
@@ -183,12 +189,15 @@ export function StayActionButton({
     );
   }
 
-  // Check-out keeps its one look — blue, the colour its PIN dialog and the
-  // guest's departure code carry. Check-in follows the window: grey before the
-  // hour, green once it opens, amber through the closing stretch of the grace
-  // period — the same three colours the server names in `button_state`.
+  // Check-out keeps its one look — black, the colour its PIN dialog and the
+  // guest's departure code carry. Blue put it in the same family as every link
+  // and primary action on the site, when it is neither: it is the last button
+  // of a stay, and it should read as final rather than as inviting. Check-in
+  // follows the window: grey before the hour, green once it opens, amber
+  // through the closing stretch of the grace period — the same three colours
+  // the server names in `button_state`.
   const tone = !isIn
-    ? "bg-[#1971c2] hover:bg-[#155f9e]"
+    ? "bg-ink hover:bg-ink/85"
     : gate.tone === "yellow"
       ? "bg-[#e8912a] hover:bg-[#cf7d1c]"
       : "bg-[#2f9e44] hover:bg-[#268c3b]";
@@ -287,10 +296,16 @@ function StayPinCard({
   pin,
   expiresIn,
   mode,
+  notice = "",
 }: {
   pin: string;
   expiresIn: number;
   mode: "in" | "out";
+  /** What reading this code out is about to cost — shown only when there IS a
+   *  cost. An ordinary departure on the booked day gets nothing: a warning
+   *  printed on every check-out is a warning nobody reads on the one that
+   *  matters. Empty otherwise. */
+  notice?: string;
 }) {
   // The same countdown the host is watching, read off the same clock — see
   // `usePinCountdown`. The guest reads the digits out; the host types them in.
@@ -313,14 +328,14 @@ function StayPinCard({
   return (
     <div
       className={`rounded-xl border px-4 py-3.5 ${
-        out ? "border-[#1971c2]/30 bg-[#1971c2]/[0.05]" : "border-[#2f9e44]/30 bg-[#2f9e44]/[0.05]"
+        out ? "border-ink/25 bg-ink/[0.04]" : "border-[#2f9e44]/30 bg-[#2f9e44]/[0.05]"
       }`}
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p
             className={`flex items-center gap-1.5 text-[12px] font-bold uppercase tracking-wide ${
-              out ? "text-[#1971c2]" : "text-[#2f9e44]"
+              out ? "text-ink" : "text-[#2f9e44]"
             }`}
           >
             {out ? <LogOut size={13} aria-hidden /> : <KeyRound size={13} aria-hidden />}
@@ -344,6 +359,17 @@ function StayPinCard({
           </p>
         </div>
       </div>
+
+      {/* The one warning that belongs beside a code rather than at the top of
+          the panel: reading these digits out is the act that ends the stay, and
+          leaving early is not undoable. It sits INSIDE the card, under the
+          digits, so it cannot be scrolled past on the way to them. */}
+      {notice && (
+        <p className="mt-3 flex items-start gap-2 rounded-lg border-l-4 border-red-500 bg-red-50 px-3 py-2 text-[12.5px] font-medium leading-5 text-red-600">
+          <AlertTriangle size={14} className="mt-[2px] shrink-0" aria-hidden />
+          <span>{notice}</span>
+        </p>
+      )}
     </div>
   );
 }
@@ -417,19 +443,14 @@ export default function BookingDetails({
   const status = bookingStatus(booking, now);
   const place = [booking.villaCity, booking.villaCountry].filter(Boolean).join(", ");
   // The panel is shared: the host sees it with check-in/out handlers, the guest
-  // with a cancel handler. That tells us which side is reading, so the status
-  // line and the contact column can be phrased/aimed for the right person.
+  // with a cancel handler. That tells us which side is reading, so the wording
+  // and the contact column can be aimed at the right person.
   const role: "owner" | "guest" = onCheckIn || onCheckOut ? "owner" : "guest";
-  const detail = bookingStatusDetail(booking, role);
+  // How long until the guest arrives — null once the stay is under way, over,
+  // cancelled or missed, which is precisely when the status pill has something
+  // of its own to say.
+  const countdown = checkInCountdown(booking, now);
   const cancelled = booking.status === "cancelled";
-
-  // The cancellation policy as it stands right now — used only to tell the
-  // guest what cancelling would COST them, while cancelling is still something
-  // they can do. A closed window used to get its own red strip here; it has
-  // gone. By then the guest is checking in or already staying, they aren't
-  // trying to cancel, and "refund 0%" is a penalty notice for a decision
-  // nobody is making — it read as a warning about the stay itself.
-  const cancelGate = cancellationGate(booking, now);
 
   // The runs this stay is really made of. Older payloads carry none, in which
   // case the booking's own two dates ARE the single run — the same fallback the
@@ -439,6 +460,24 @@ export default function BookingDetails({
   // a button, so it is read off the clock and stays honest between refetches.
   const progress = stayProgress(booking, now);
   const segments = progress.parts;
+
+  // What leaving early actually did — no refund for the nights they didn't use,
+  // and those nights back on the calendar for someone else. Both are surprises
+  // otherwise: the guest paid for them, and they will see the property bookable
+  // on dates they had held.
+  //
+  // Written once and shown where the departure IS, not on a strip at the top of
+  // the panel: on the part it happened in, or on the departure line of a stay
+  // that only had one part. A stay that ran its course says none of this.
+  const earlyNote = !booking.earlyCheckOut
+    ? ""
+    : role === "guest"
+      ? `You left ${plural(booking.releasedNights, "night")} early. Nothing is refunded — the stay was paid for in full — and ${
+          booking.releasedNights === 1 ? "that night is" : "those nights are"
+        } open for other guests again.`
+      : `Guest left ${plural(booking.releasedNights, "night")} early. No refund is due, and ${
+          booking.releasedNights === 1 ? "that night is" : "those nights are"
+        } back on your calendar for other guests to book.`;
 
   // The other party's contact: the host sees the guest, the guest sees the host.
   const contactName = role === "owner" ? booking.guestName : booking.hostName;
@@ -485,13 +524,31 @@ export default function BookingDetails({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
-          {/* Real-time status: upcoming / staying now / checked in-out / cancelled */}
-          <span
-            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold ${PILL_CLASS[status.tone]}`}
-          >
-            <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden />
-            {status.label}
-          </span>
+          {/* Real-time status: upcoming / staying now / checked in-out /
+              cancelled — except on the host's side of a stay still to come,
+              where the countdown below stands in its place. "Confirmed" is the
+              guest's news, not the host's: every booking in front of a host is
+              confirmed, and what they need from this line is when the guest
+              arrives. The label returns the moment the stay has a state worth
+              naming. */}
+          {!(role === "owner" && countdown) && (
+            <span
+              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold ${PILL_CLASS[status.tone]}`}
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden />
+              {status.label}
+            </span>
+          )}
+
+          {/* How long until it starts, while it hasn't — the same pill the
+              collapsed row carries, so opening a booking never loses a fact,
+              and the same one both sides read. */}
+          <CheckInCountdownPill countdown={countdown} checkIn={booking.checkIn} role={role} />
+
+          {/* And once it HAS started, how much of it is left — the same pill the
+              row carries, so opening a booking answers the question it was
+              already answering. Renders nothing outside a stay under way. */}
+          <StayCountdownPill booking={booking} />
 
           {onCheckIn && onCheckOut && (
             <StayActionButton
@@ -519,8 +576,13 @@ export default function BookingDetails({
                 <>
                   <span className="spinner" aria-hidden /> Cancelling…
                 </>
-              ) : (
+              ) : cancellationGate(booking, now).open ? (
                 "Cancel booking"
+              ) : (
+                // The whole stay can no longer be called off, but nights of it
+                // still can — the night the guest is in is theirs, the ones
+                // after it aren't yet. Say what the button actually does.
+                "Cancel dates"
               )}
             </button>
           )}
@@ -539,19 +601,16 @@ export default function BookingDetails({
         </div>
       </div>
 
-      {/* Live status line — "2 hrs late — not checked in yet", "Guest didn't
-          arrive", "You're checked in", etc. Phrased for whoever's reading. */}
-      {detail && (
-        <div
-          className={`flex items-start gap-2 rounded-lg border-l-4 px-3.5 py-2.5 text-[13px] font-medium ${STRIP_CLASS[detail.tone]}`}
-          role="status"
-        >
-          <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-current" aria-hidden />
-          <span>{detail.text}</span>
-        </div>
-      )}
+      {/* Nothing narrates the status here any more. This slot used to carry a
+          coloured strip restating whatever the pill above it already said —
+          "You're checked in", "You're already checked in, this stay can no
+          longer be cancelled" — and the panel opened with a paragraph about a
+          state the reader had just read the name of. What is genuinely
+          actionable has moved to where the action is: the departure warning
+          onto the check-out PIN, the cancellation cost into the dialog that
+          takes the decision, the early departure onto the part it happened in.
 
-      {/* The guest's stay PIN — arrival or departure, whichever is live (never
+          The guest's stay PIN — arrival or departure, whichever is live (never
           both: a booking has one code at a time). Sent to the guest and to
           nobody else, which is what makes a check-in evidence that the guest was
           actually at the property, and a check-out evidence they were there to
@@ -568,60 +627,23 @@ export default function BookingDetails({
           mode="out"
           pin={booking.checkoutPin}
           expiresIn={booking.checkoutPinExpiresIn}
+          // Leaving early used to be announced on a strip at the top of this
+          // panel, where it was a fact about a departure that hadn't happened
+          // yet, sitting a long way from the digits that would make it happen.
+          // It belongs with the code: this is the last moment the guest can
+          // decide not to. The server's own line, the same one the host is
+          // reading in their dialog, so neither side is warned about a
+          // different number of nights.
+          notice={booking.checkoutEarlyNow ? booking.checkoutMessage : ""}
         />
       )}
 
-      {/* Left early. The guest is told plainly what it cost and what it gave
-          back — no refund, and the nights they didn't use are on sale again —
-          because both are surprises otherwise: they paid for those nights, and
-          they will see the property bookable on the dates they had held. The
-          host reads the same fact from their own side. */}
-      {booking.earlyCheckOut && (
-        <div
-          className={`flex items-start gap-2 rounded-lg border-l-4 px-3.5 py-2.5 text-[13px] font-medium ${STRIP_CLASS.orange}`}
-          role="status"
-        >
-          <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-current" aria-hidden />
-          <span>
-            {role === "guest" ? (
-              <>
-                You checked out {plural(booking.releasedNights, "night")} early
-                {booking.checkedOutAt ? ` on ${fmtDateTime(booking.checkedOutAt)}` : ""}.
-                Nothing is refunded for the{" "}
-                {booking.releasedNights === 1 ? "unused night" : "unused nights"} — the
-                stay was paid for in full — and{" "}
-                {booking.releasedNights === 1 ? "that night is" : "those nights are"} now
-                open for other guests.
-              </>
-            ) : (
-              <>
-                Guest left {plural(booking.releasedNights, "night")} early
-                {booking.checkedOutAt ? ` on ${fmtDateTime(booking.checkedOutAt)}` : ""}.
-                No refund is due, and{" "}
-                {booking.releasedNights === 1 ? "that night is" : "those nights are"} back
-                on your calendar for other guests to book.
-              </>
-            )}
-          </span>
-        </div>
-      )}
-
-      {/* Cancellation policy, guest side — but only when there is money to warn
-          about AND a button to warn about it beside. Free cancellation is not
-          news the guest needs delivered on a coloured strip every time they
-          open a booking; if they ever go to cancel, the confirm dialog states
-          it right where the decision is made. A banner saying "this costs you
-          nothing" earns nothing — and so does one saying "you can no longer do
-          the thing you weren't doing". */}
-      {role === "guest" && !cancelled && onCancel && cancelGate.penaltyPercentage > 0 && (
-        <div
-          className={`flex items-start gap-2 rounded-lg border-l-4 px-3.5 py-2.5 text-[13px] font-medium ${STRIP_CLASS.orange}`}
-          role="status"
-        >
-          <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-current" aria-hidden />
-          <span>{cancelGate.message}</span>
-        </div>
-      )}
+      {/* The cancellation policy is no longer previewed here either. What it
+          would cost is a fact about a decision, and the guest reads it in the
+          Cancel dialog at the moment they take it — where it can't be stale and
+          can't be missed. Standing on the panel it was either telling them
+          cancelling was free (worth nothing) or telling them they could no
+          longer do a thing they weren't trying to do. */}
 
       {/* Cancelled: what the late-cancellation fine took, and what's refunded. */}
       {cancelled && (booking.cancellationFee > 0 || booking.refundAmount > 0) && (
@@ -634,6 +656,56 @@ export default function BookingDetails({
             Refunded:{" "}
             <span className="font-semibold text-green-600">{money(booking.refundAmount)}</span>
           </span>
+        </div>
+      )}
+
+      {/* Nights given up while the booking carries on. Its own block, listed
+          event by event: a stay can be trimmed more than once, each at whatever
+          the scale charged that day, and a single "cancellation fee" line would
+          flatten two different decisions into one number nobody can check. The
+          whole-stay cancellation above is deliberately left out of this list —
+          it is not a change to a stay that is still going ahead. */}
+      {(booking.cancellations || []).some((c) => c.kind === "partial") && (
+        <div className="rounded-lg border border-line bg-page px-3.5 py-2.5">
+          <p className="text-[12px] font-semibold uppercase tracking-wide text-muted">
+            {role === "guest" ? "Nights you gave up" : "Nights the guest gave up"}
+          </p>
+          <ul className="mt-1.5 space-y-1">
+            {(booking.cancellations || [])
+              .filter((c) => c.kind === "partial")
+              .map((c) => (
+                <li
+                  key={c.id}
+                  className="flex flex-wrap items-baseline justify-between gap-x-4 text-[12.5px]"
+                >
+                  <span className="text-body">
+                    {c.nightsCount} night{c.nightsCount === 1 ? "" : "s"} —{" "}
+                    {c.nights.map((n) => fmtDate(n)).join(", ")}
+                  </span>
+                  <span className="text-muted">
+                    {c.cancellationFee > 0 && (
+                      <>
+                        charge{" "}
+                        <span className="font-semibold text-red-600">
+                          {money(c.cancellationFee)}
+                        </span>
+                        {" · "}
+                      </>
+                    )}
+                    refunded{" "}
+                    <span className="font-semibold text-green-600">
+                      {money(c.refundAmount)}
+                    </span>
+                  </span>
+                </li>
+              ))}
+          </ul>
+          {!cancelled && (
+            <p className="mt-1.5 text-[12px] text-muted">
+              The rest of the stay goes ahead — {booking.activeNights} night
+              {booking.activeNights === 1 ? "" : "s"} still booked.
+            </p>
+          )}
         </div>
       )}
 
@@ -757,12 +829,30 @@ export default function BookingDetails({
                         </span>
                       </span>
                       <span className="flex shrink-0 flex-col items-end gap-0.5">
-                        <PartStatusChip status={s.status} />
+                        <PartStatusChip status={s.status} leftEarly={s.leftEarly} />
                         <span className="text-[11px] font-medium text-body">
                           {plural(s.nights, "night")}
                         </span>
                       </span>
                     </div>
+
+                    {/* The one thing a finished part can carry that its dates
+                        don't say: it ended because the guest walked out, not
+                        because its hour came. Tucked under the row it belongs
+                        to — this is that part's history, not the booking's. */}
+                    {s.leftEarly && (
+                      <div className="flex items-start gap-2.5 bg-red-50/60 px-2.5 py-1">
+                        <span
+                          className="w-[42px] shrink-0 text-center text-[12px] leading-4 text-red-500/70"
+                          aria-hidden
+                        >
+                          ↳
+                        </span>
+                        <span className="min-w-0 flex-1 text-[11px] leading-4 text-red-600">
+                          {earlyNote}
+                        </span>
+                      </div>
+                    )}
 
                     {gap > 0 && (
                       <div className="flex items-center gap-2.5 bg-page/70 px-2.5 py-1">
@@ -835,7 +925,19 @@ export default function BookingDetails({
                 label="Departure"
                 value={
                   booking.checkedOutAt ? (
-                    <span className="text-primary">{fmtDateTime(booking.checkedOutAt)}</span>
+                    <>
+                      <span className={earlyNote ? "text-red-600" : "text-primary"}>
+                        {fmtDateTime(booking.checkedOutAt)}
+                      </span>
+                      {/* An unbroken stay has no list of parts to hang this
+                          off, so its one departure line carries it — and only
+                          when there is something to carry. */}
+                      {earlyNote && (
+                        <span className="mt-0.5 block text-[11px] font-normal leading-4 text-red-600">
+                          {earlyNote}
+                        </span>
+                      )}
+                    </>
                   ) : (
                     <span className="text-muted">Not yet</span>
                   )

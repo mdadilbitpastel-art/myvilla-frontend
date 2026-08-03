@@ -11,6 +11,8 @@ import SettingsSidebar from "@/components/settings/SettingsSidebar";
 import BookingDetails, { StayActionButton } from "@/components/settings/BookingDetails";
 import CountPill from "@/components/ui/CountPill";
 import StayPartChips from "@/components/ui/StayPartChips";
+import CheckInCountdownPill from "@/components/ui/CheckInCountdownPill";
+import StayCountdownPill from "@/components/ui/StayCountdownPill";
 import Img from "@/components/ui/Img";
 import {
   fetchVillaBookings,
@@ -24,22 +26,30 @@ import {
 import StayPinDialog, { type StayPinMode } from "@/components/settings/StayPinDialog";
 import {
   bookingStatus,
+  checkInCountdown,
   lifecycleOf,
   useServerWallClock,
   stayAction,
   stayProgress,
+  stayStartMs,
   STATUS_TONE_CLASS,
 } from "@/lib/booking";
 
-// A broken avatar URL falls back to this transparent pixel, which reveals the
-// initial-letter tile rendered behind it.
-const TRANSPARENT_PX =
-  "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
-
-const COLUMNS = ["Tenant", "Property", "Stay Duration", "Guests", "Status", ""];
+// No tenant column: who booked is the first thing the expanded detail says,
+// with their avatar, contact and status — repeating the name here bought a
+// column of width for something the host reads once they open the row.
+const COLUMNS = ["Property", "Stay Duration", "Guests", "Status", ""];
 
 // One grid template shared by the header and every row so the columns line up.
-const ROW_GRID = "grid-cols-[1.3fr_1.2fr_1fr_0.7fr_0.9fr_1.5fr]";
+// Status carries the countdown pill under its label now, so it takes the width
+// back from Property and Guests — a villa title and "2 guests" each had more
+// room than they were using.
+// Status has since taken width back off Property and Stay Duration, because
+// what it holds got longer: the countdown names itself now ("Check-in in 12
+// days", not a bare "In 12 days"), and on one line rather than two. A villa
+// title truncates gracefully and the dates have slack; a status that wraps
+// mid-phrase does not.
+const ROW_GRID = "grid-cols-[1.4fr_1.3fr_0.55fr_1.2fr_1.5fr]";
 const ROW_MINW = "min-w-[860px]";
 
 const MONTHS = [
@@ -54,35 +64,36 @@ function fmtStay(checkIn: string, checkOut: string): string {
   return `${one(a)}-${one(b)}`;
 }
 
-function SortDropdown({ sort, onToggle }: { sort: "desc" | "asc"; onToggle: () => void }) {
+function SortDropdown({
+  sort,
+  onToggle,
+  // What the two directions are called. The history is a record, ordered by
+  // when each booking was made; the upcoming table is a queue, ordered by who
+  // arrives next — the same control, sorting two different things.
+  labels = { desc: "Latest to Oldest", asc: "Oldest to Latest" },
+}: {
+  sort: "desc" | "asc";
+  onToggle: () => void;
+  labels?: { desc: string; asc: string };
+}) {
   return (
     <button
       type="button"
       onClick={onToggle}
       className="flex items-center gap-2 rounded-md border border-line px-3 py-1.5 text-[12px] text-body transition-colors hover:border-primary/40"
     >
-      Sort: {sort === "desc" ? "Latest to Oldest" : "Oldest to Latest"}
+      Sort: {sort === "desc" ? labels.desc : labels.asc}
       <ChevronDown size={14} className="text-muted" />
     </button>
   );
 }
 
-function TenantAvatar({ name, avatar }: { name: string; avatar: string }) {
-  const initial = (name || "?").trim().charAt(0).toUpperCase();
-  return (
-    <div className="relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary/10 text-[13px] font-semibold text-primary">
-      {initial}
-      {avatar && (
-        <Img
-          src={avatar}
-          alt={name}
-          fallback={TRANSPARENT_PX}
-          className="absolute inset-0 h-full w-full object-cover"
-        />
-      )}
-    </div>
-  );
-}
+// The upcoming table's two directions: the next arrival first (the default), or
+// the furthest-off stay first.
+const CHECKIN_SORT_LABELS = {
+  asc: "Check-in: Soonest first",
+  desc: "Check-in: Latest first",
+};
 
 function RequestRow({
   req,
@@ -108,6 +119,11 @@ function RequestRow({
   // How far through a split stay this guest is, so the host can see at a glance
   // that the property is theirs in parts and which part is running.
   const progress = stayProgress(req, now);
+  // How long until this guest turns up — the same countdown the guest reads on
+  // their own booking, so the two sides are never a day apart on when the stay
+  // starts. Null once it has started (or was cancelled/missed), which is
+  // exactly when the status beside it takes over the story.
+  const countdown = checkInCountdown(req, now);
   const rowRef = useRef<HTMLDivElement>(null);
 
   // On expand, bring the newly revealed details into view — after the open
@@ -144,14 +160,8 @@ function RequestRow({
       >
         <div className="overflow-hidden">
           <div className={`grid ${ROW_GRID} items-center px-4 py-3 text-[13px]`}>
-            {/* Tenant */}
-            <div className="flex items-center gap-2.5">
-              <TenantAvatar name={req.guestName} avatar={req.guestAvatar} />
-              <span className="truncate text-ink" title={req.guestName}>
-                {req.guestName}
-              </span>
-            </div>
-
+            {/* Property — the row's identity now that the tenant has moved
+                into the expanded detail where the rest of their contact is. */}
             <Link
               href={`/villa/${req.villaId}`}
               title={req.villaTitle}
@@ -179,11 +189,40 @@ function RequestRow({
             </span>
 
             {/* Status — the real stay state, plus the guest's rating once they
-                leave one (so it shows right in the row, not only on expand). */}
+                leave one (so it shows right in the row, not only on expand).
+                On a stay still to come the countdown REPLACES the label rather
+                than joining it: "Confirmed" told the host nothing they didn't
+                already know from the booking being in this table, while what
+                they actually need is when the guest turns up. It is the guest's
+                own countdown, shown unchanged, so neither side can be a day out
+                from the other. The label comes back the moment the stay starts
+                — check-in window, checked in, no-show all have something to
+                say.
+
+                And once the guest is in, "Staying" alone doesn't say the thing
+                the host's day is actually organised around: when the room comes
+                free. The check-out countdown goes under it, the same reading
+                the guest has on their own booking, so neither side is planning
+                against a different hour. */}
             <span className="flex flex-col items-start gap-1">
-              <span className={`text-[13px] font-semibold ${STATUS_TONE_CLASS[status.tone]}`}>
-                {status.label}
-              </span>
+              {countdown ? (
+                // `text`, not the chip: whatever this cell shows, it is the
+                // status of the row, and every reading of it — "Check-in in 2
+                // days", "Check-in window open", "Checked in" — has to start on
+                // the same left edge and be the same size, or the column reads
+                // as if it were two columns badly stacked.
+                <CheckInCountdownPill
+                  countdown={countdown}
+                  checkIn={req.checkIn}
+                  role="owner"
+                  variant="text"
+                />
+              ) : (
+                <span className={`text-[13px] font-semibold ${STATUS_TONE_CLASS[status.tone]}`}>
+                  {status.label}
+                </span>
+              )}
+              <StayCountdownPill booking={req} />
               {/* One star and the score rather than a five-star strip — the
                   strip crowded the status column and read as decoration. */}
               {req.reviewRating > 0 && (
@@ -272,7 +311,13 @@ export default function RentRequestsPage() {
   );
   // Each table sorts on its own — sorting the history shouldn't silently
   // re-order the active requests above it.
-  const [sort, setSort] = useState<"desc" | "asc">("desc");
+  //
+  // The upcoming table sorts by CHECK-IN, soonest first, and that is its
+  // default: this list is a queue of people about to arrive, and the row the
+  // host needs is the next one through the door — not the booking that happened
+  // to be made most recently, which could be a stay four months out sitting
+  // above a guest turning up this afternoon.
+  const [sort, setSort] = useState<"desc" | "asc">("asc");
   const [historySort, setHistorySort] = useState<"desc" | "asc">("desc");
 
   // `silent` refreshes are background polls — a transient network blip there
@@ -448,7 +493,21 @@ export default function RentRequestsPage() {
       const diff = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       return order === "desc" ? diff : -diff;
     };
-    active.sort(byCreated(sort));
+    // Whoever arrives next, first. A stay already under way has the earliest
+    // check-in of all, so it sorts above the ones still to come — which is
+    // right: the guest in the property is the one the host may have to check
+    // out. Ties (two arrivals the same hour) fall back to the newer booking,
+    // so the order is stable rather than left to the server's.
+    const byCheckIn = (order: "desc" | "asc") => (a: Booking, b: Booking) => {
+      const ma = stayStartMs(a);
+      const mb = stayStartMs(b);
+      // Written as a comparison rather than a subtraction: two bookings with no
+      // readable check-in both come back Infinity, and Infinity − Infinity is
+      // NaN — a comparator that returns NaN leaves the sort order undefined.
+      if (ma !== mb) return (ma < mb ? -1 : 1) * (order === "asc" ? 1 : -1);
+      return byCreated("desc")(a, b);
+    };
+    active.sort(byCheckIn(sort));
     history.sort(byCreated(historySort));
     return { active, history };
   }, [requests, sort, historySort, listNow]);
@@ -532,7 +591,7 @@ export default function RentRequestsPage() {
               Upcoming Bookings
               <CountPill value={active.length} />
             </h2>
-            <SortDropdown sort={sort} onToggle={toggleSort} />
+            <SortDropdown sort={sort} onToggle={toggleSort} labels={CHECKIN_SORT_LABELS} />
           </div>
 
           {/* Table (scrolls horizontally on small screens) */}

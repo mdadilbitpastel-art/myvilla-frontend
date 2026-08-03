@@ -2,17 +2,24 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { CalendarClock, ChevronDown, Star, KeyRound } from "lucide-react";
+import { ChevronDown, Star, KeyRound, Users } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useLiveRefresh } from "@/lib/useLiveRefresh";
 import { useToast } from "@/lib/toast";
-import { useConfirm } from "@/lib/confirm";
 import SettingsSidebar from "@/components/settings/SettingsSidebar";
 import BookingDetails from "@/components/settings/BookingDetails";
+import CancelBookingModal from "@/components/settings/CancelBookingModal";
 import CountPill from "@/components/ui/CountPill";
 import StayPartChips from "@/components/ui/StayPartChips";
+import CheckInCountdownPill from "@/components/ui/CheckInCountdownPill";
+import StayCountdownPill from "@/components/ui/StayCountdownPill";
 import Img from "@/components/ui/Img";
-import { fetchMyBookings, cancelBooking, submitReview, type Booking } from "@/lib/api";
+import {
+  fetchMyBookings,
+  submitReview,
+  type Booking,
+  type NightsCancellationQuote,
+} from "@/lib/api";
 import {
   bookingStatus,
   cancellationGate,
@@ -23,49 +30,59 @@ import {
   useServerWallClock,
   stayProgress,
   STATUS_TONE_CLASS,
-  type CancellationGate,
 } from "@/lib/booking";
 
+// No "Posted" column: when a booking was made is the least of what a guest
+// looks for in their own list — the stay itself is what they scan for — and the
+// expanded detail still carries the booking date in full.
 const COLUMNS = [
   "Name of Villa",
-  "Posted",
   "Stay Duration",
-  "No. of Guests",
+  // "No. of Guests" over a cell that now holds an icon and a single digit was a
+  // heading three times the width of the thing it headed.
+  "Guests",
   "Status",
   "",
 ];
 
 // One grid template shared by the header and every row so the columns line up.
-//        villa   posted   stay    guests  status  actions
+//        villa   stay    guests  status  actions
 // Stay Duration takes what Posted and Status give up: it carries the longest
 // value of the three ("12 Sep-19 Sep", plus a "2 parts" tag on a split stay),
-// while the other two are a short phrase and a one-word pill. The six still
-// total 6.7fr, so the villa and action columns keep the width they had.
-const ROW_GRID = "grid-cols-[1.4fr_0.75fr_1.4fr_0.8fr_0.75fr_1.6fr]";
-const ROW_MINW = "min-w-[860px]";
+// while the other two are a short phrase and a one-word pill. Posted's width
+// goes to the villa, which is the row's identity and the first thing read.
+// Status has since taken a little back off all three: it no longer holds a
+// one-word label but the row's whole clock — "In 3 days", then "Checked in"
+// over "2d 17h left" — and at 0.75fr those wrapped onto three lines.
+// Actions carries three things now — the PIN/rating slot, Cancel and View —
+// so it takes a wider share, and the whole table a wider floor, rather than
+// letting the buttons crush each other at 860px.
+//
+// Status is sized to its longest single line — "Check-in in 12 days" — and no
+// wider. Every pixel past that is a gap between the middle of the row and the
+// buttons at the end of it, and what it doesn't need goes to the villa and the
+// dates, which are the two cells that actually truncate.
+const ROW_GRID = "grid-cols-[1.5fr_1.3fr_0.7fr_1.2fr_2.3fr]";
+const ROW_MINW = "min-w-[940px]";
+
+// The two middle columns, each nudged off the one before it so they read as
+// their own columns rather than as one run of text. Applied to the headings and
+// to every row's cells, never to one without the other.
+const GUESTS_INDENT = "pl-3";
+const STATUS_INDENT = "pl-4";
 
 const MONTHS = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
+// "12 Sep → 19 Sep". An arrow, not a hyphen: these are the two ends of a
+// journey, and a hyphen between two dates reads as a database range.
 function fmtStay(checkIn: string, checkOut: string): string {
   const a = new Date(checkIn);
   const b = new Date(checkOut);
   const one = (d: Date) => `${d.getDate()} ${MONTHS[d.getMonth()]}`;
-  return `${one(a)}-${one(b)}`;
-}
-
-function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  const days = Math.floor((Date.now() - then) / 86_400_000);
-  if (days <= 0) return "Today";
-  if (days === 1) return "1 day ago";
-  if (days < 7) return `${days} days ago`;
-  if (days < 14) return "1 week ago";
-  if (days < 30) return `${Math.floor(days / 7)} weeks ago`;
-  if (days < 60) return "1 month ago";
-  return `${Math.floor(days / 30)} months ago`;
+  return `${one(a)} → ${one(b)}`;
 }
 
 const money = (n: number) => `$${n.toFixed(2)}`;
@@ -195,7 +212,7 @@ function BookingRow({
   onToggle,
 }: {
   booking: Booking;
-  onCancel: (booking: Booking, gate: CancellationGate) => void;
+  onCancel: (booking: Booking) => void;
   cancelling: boolean;
   onReview: (rating: number, comment: string) => void | Promise<void>;
   reviewBusy: boolean;
@@ -210,36 +227,48 @@ function BookingRow({
   // How far through a split stay this is — the row shows a chip per part, the
   // expanded panel below spells each one out with its dates.
   const progress = stayProgress(booking, now);
-  // The flexible cancellation policy: free before the check-in day, 50% on the
-  // day, closed from the check-in time on.
+  // The flexible cancellation policy on its sliding scale: free 15 days out,
+  // charging more the nearer the stay gets, nothing back inside the last 24
+  // hours, and closed from the check-in time on.
   const gate = cancellationGate(booking, now);
-  const canCancel = gate.open;
-  // The guest's check-in code. Cancelling used to share this slot; it has moved
-  // into the expanded panel, where it sits at the foot past everything it would
-  // undo, so the row now carries no destructive action at all — the one thing
-  // a mis-aimed tap next to "View" could do damage with.
+  // The gate above answers "may the WHOLE stay be called off", which shuts the
+  // moment the guest checks in. On a split stay that is not the end of it: the
+  // parts they haven't arrived for are still theirs to give back, and the
+  // server will still take them (see Booking.cancellable_nights). So the button
+  // survives as long as there is any night left to hand over — with the dialog
+  // offering the rest of the stay rather than a whole-booking cancellation it
+  // could no longer perform.
+  const canCancel = gate.open || (booking.cancellableNights?.length ?? 0) > 0;
+  // The guest's stay code, in the row where they can reach it without opening
+  // anything — a code you have to hunt for is a code that expires first.
   //
-  // The slot appears the moment the window opens, not when the host presses
-  // Check in — until the code exists it holds `****`. A guest standing at the
-  // door needs to know the code is coming and where it will appear; an empty
-  // row that sprouts a PIN for sixty seconds is one they can miss entirely.
+  // ARRIVING, the slot appears the moment the window opens rather than when the
+  // host presses Check in — until the code exists it holds `****`. A guest
+  // standing at the door needs to know the code is coming and where it will
+  // appear; an empty row that sprouts a PIN for sixty seconds is one they can
+  // miss entirely.
   //
-  // The same slot serves the departure code, so a guest who is asked for a PIN
-  // on the way out looks in the place they already know. Which of the two it is
-  // follows the one stay action that's open: never both, because the booking is
-  // only ever at one of them.
+  // LEAVING, there is no such placeholder: it waits for a real code. A guest who
+  // has just checked in is not standing at any door, and four grey asterisks
+  // parked on their booking for a week of holiday only ever read as something
+  // broken. What answers for the stay meanwhile is the countdown in the Status
+  // column, and the digits appear here the moment the host actually starts the
+  // check-out.
   const checkin = checkInGate(booking, now);
   const action = stayAction(booking);
   const pinMode: "in" | "out" | null =
     action === "check_in" && checkin.visible && checkin.open
       ? "in"
-      : action === "check_out" && booking.checkoutAvailable
+      : action === "check_out" && booking.checkoutAvailable && booking.checkoutPin
         ? "out"
         : null;
   const pin = pinMode === "out" ? booking.checkoutPin : booking.checkinPin;
   // How many days until this stay starts — only ever set while it's confirmed
   // and still ahead, so the row can render it without asking any questions.
   const countdown = checkInCountdown(booking, now);
+  // Where the villa is, for the line under its name. The city alone when that
+  // is all the payload has; nothing at all rather than a stray comma.
+  const place = [booking.villaCity, booking.villaCountry].filter(Boolean).join(", ");
   const rowRef = useRef<HTMLDivElement>(null);
 
   // On expand, bring the whole opened panel into view — after the 300ms open
@@ -273,10 +302,15 @@ function BookingRow({
       // the thing you're reading starts and ends. Deliberately neutral, not the
       // brand colour — a blue outline read as a selection or an alert, and this
       // row is neither: it's simply the one you have open.
-      className={`${ROW_MINW} scroll-mt-[132px] scroll-mb-6 overflow-hidden rounded-lg border transition-all duration-300 ${
+      // Closed, it is a card that answers to the cursor rather than a table
+      // rule: white, softly rounded, its hairline warming and a shallow shadow
+      // lifting on hover. The list read as a database dump partly because
+      // nothing in it moved — every row was the same flat band whether you were
+      // pointing at it or not, and there was no sign that any of them opened.
+      className={`${ROW_MINW} scroll-mt-[132px] scroll-mb-6 overflow-hidden rounded-xl border bg-white transition-all duration-300 ${
         expanded
-          ? "border-ink/25 bg-white shadow-[0_6px_22px_-10px_rgba(20,20,45,0.28)]"
-          : "border-line"
+          ? "border-ink/25 shadow-[0_6px_22px_-10px_rgba(20,20,45,0.28)]"
+          : "border-line hover:border-ink/20 hover:shadow-[0_3px_14px_-9px_rgba(20,20,45,0.4)]"
       }`}
     >
       {/* Collapsed: the compact table row (collapses away as the detail opens). */}
@@ -286,124 +320,203 @@ function BookingRow({
         }`}
       >
         <div className="overflow-hidden">
-          <div className={`grid ${ROW_GRID} items-center px-4 py-3.5 text-[13px]`}>
+          <div className={`grid ${ROW_GRID} items-center px-4 py-4 text-[13px]`}>
+            {/* The villa: a proper thumbnail that grows a little under the
+                cursor, the name carrying the row's weight, and a quieter line
+                under it for where it is. Where the photo was a 36px square and
+                the title plain body text, the cell had no centre — three
+                columns of same-sized grey, and nothing said which one was the
+                thing the row is ABOUT. */}
             <Link
               href={`/villa/${booking.villaId}`}
               title={booking.villaTitle}
-              className="group flex min-w-0 items-center gap-2.5 pr-2"
+              className="group flex min-w-0 items-center gap-3 pr-3"
             >
-              <Img
-                src={booking.villaCover}
-                alt={booking.villaTitle}
-                className="h-9 w-9 shrink-0 rounded-lg object-cover"
-              />
-              <span className="flex min-w-0 flex-col">
-                <span className="truncate text-ink group-hover:text-primary">
+              <span className="h-11 w-11 shrink-0 overflow-hidden rounded-xl ring-1 ring-ink/[0.07]">
+                <Img
+                  src={booking.villaCover}
+                  alt={booking.villaTitle}
+                  className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-[1.12]"
+                />
+              </span>
+              <span className="flex min-w-0 flex-col gap-[3px]">
+                <span className="truncate text-[13.5px] font-semibold text-ink transition-colors group-hover:text-primary">
                   {booking.villaTitle}
                 </span>
-                {booking.extraServices?.length > 0 && (
-                  <span
-                    className="truncate text-[11px] text-muted"
-                    title={booking.extraServices.map((s) => s.name).join(", ")}
-                  >
-                    ✨ {booking.extraServices.length} extra service
-                    {booking.extraServices.length === 1 ? "" : "s"} · +{money(booking.extrasTotal)}
+                {(place || booking.extraServices?.length > 0) && (
+                  <span className="flex min-w-0 items-center gap-1.5 text-[11.5px] text-muted">
+                    {place && <span className="truncate">{place}</span>}
+                    {place && booking.extraServices?.length > 0 && (
+                      <span className="text-muted/40" aria-hidden>
+                        ·
+                      </span>
+                    )}
+                    {booking.extraServices?.length > 0 && (
+                      <span
+                        className="shrink-0 whitespace-nowrap"
+                        title={booking.extraServices.map((s) => s.name).join(", ")}
+                      >
+                        ✨ {booking.extraServices.length} extra
+                        {booking.extraServices.length === 1 ? "" : "s"} · +
+                        {money(booking.extrasTotal)}
+                      </span>
+                    )}
                   </span>
                 )}
               </span>
             </Link>
-            <span className="text-body">{relativeTime(booking.createdAt)}</span>
-            <span className="flex min-w-0 flex-col text-body">
-              <span>{fmtStay(booking.checkIn, booking.checkOut)}</span>
+            {/* The dates lead, the length follows them in a quieter line — the
+                same shape as the villa cell beside it, so the eye reads two
+                headlines and two footnotes rather than four equal greys. */}
+            <span className="flex min-w-0 flex-col gap-[3px]">
+              <span className="truncate text-[13px] font-medium text-ink">
+                {fmtStay(booking.checkIn, booking.checkOut)}
+              </span>
+              <span className="text-[11.5px] text-muted">
+                {booking.nights} night{booking.nights === 1 ? "" : "s"}
+              </span>
               {/* The two dates only bracket a split stay, so the parts are shown
                   under them rather than letting the row read as one continuous
                   booking. A chip each, in order: which are behind us, which one
                   the stay is on, which are still to come. */}
               <StayPartChips progress={progress} />
             </span>
-            <span className="text-body">
-              {booking.guests} guest{booking.guests === 1 ? "" : "s"}
+            {/* An icon and a number. "2 guests" spelled out sat at the same
+                weight as everything around it and had to be read as words to
+                give up one digit. */}
+            <span
+              className={`flex items-center gap-1.5 text-[13px] font-medium text-body ${GUESTS_INDENT}`}
+              title={`${booking.guests} guest${booking.guests === 1 ? "" : "s"}`}
+            >
+              <Users size={14} className="shrink-0 text-muted" aria-hidden />
+              {booking.guests}
             </span>
-            {/* Status — reflects where the stay actually is (upcoming / ongoing / done). */}
-            <span className={`text-[13px] font-semibold ${STATUS_TONE_CLASS[status.tone]}`}>
-              {status.label}
-            </span>
-            {/* Actions — cancel / rate (per stay state) + view details. */}
-            <div className="flex items-center justify-end gap-2">
-              {/* A confirmed stay's countdown, standing in the gap this cell
-                  leaves to its left (`mr-auto`) — between the status and the
-                  buttons, which is dead space on every upcoming booking and
-                  the one place the guest is already looking to find out where
-                  the stay stands. Gone the moment the stay starts, so it never
-                  competes with the PIN that takes its place. */}
-              {countdown && (
-                <span
-                  title={`Check-in ${fmtFull(booking.checkIn)}`}
-                  className={`mr-auto inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 py-1 text-[12px] font-semibold ${
-                    countdown.imminent
-                      ? "bg-[#e8912a]/12 text-[#b26a10]"
-                      : "bg-green-600/10 text-green-700"
-                  }`}
-                >
-                  <CalendarClock size={13} aria-hidden />
-                  {countdown.label}
+            {/* Status — where the stay actually is, and while it hasn't started
+                yet, WHEN it starts instead. "Confirmed" is not news to the
+                person who made the booking; how many days until they go is the
+                thing they opened this page for. Shown as plain text, not the
+                chip it used to be: whatever this cell says is the row's status,
+                and a chip's padding put "In 3 days" ten pixels right of every
+                "Checked in" above and below it. The host's table reads exactly
+                the same way, from the same countdown.
+
+                Under it, once the stay is under way, when it ends — a green
+                "Staying" over the check-out clock, ticking. Nothing to say
+                before check-in or after check-out, so the label stands alone
+                the rest of the time. */}
+            <span className={`flex min-w-0 flex-col items-start gap-1 ${STATUS_INDENT}`}>
+              {countdown ? (
+                <CheckInCountdownPill
+                  countdown={countdown}
+                  checkIn={booking.checkIn}
+                  role="guest"
+                  variant="text"
+                />
+              ) : (
+                <span className={`text-[13px] font-semibold ${STATUS_TONE_CLASS[status.tone]}`}>
+                  {status.label}
                 </span>
               )}
-              {booking.reviewRating > 0 ? (
-                // One star and the score, not a five-star strip: in a dense
-                // row the strip sat awkwardly next to the other star icons.
-                <span
-                  title={`You rated this stay ${booking.reviewRating} out of 5`}
-                  className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-star/10 px-2.5 py-1.5 text-[12.5px] font-semibold text-[#b8860b]"
-                >
-                  <Star size={13} className="fill-star text-star" aria-hidden />
-                  Rated {booking.reviewRating.toFixed(1)}
-                </span>
-              ) : booking.canReview ? (
-                <button
-                  type="button"
-                  onClick={() => onToggle(booking.id)}
-                  className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-star/15 px-3 py-1.5 text-[12.5px] font-semibold text-[#b8860b] transition-colors hover:bg-star/25"
-                >
-                  <Star size={13} className="fill-star text-star" aria-hidden />
-                  Rate stay
-                </button>
-              ) : null}
-              {pinMode && (
-                <span
-                  title={
-                    pin
-                      ? `Read this out to your host to be checked ${pinMode}`
-                      : `Your host starts check-${pinMode} — your code appears here`
-                  }
-                  aria-label={
-                    pin
-                      ? `Check-${pinMode} PIN ${pin.split("").join(" ")}`
-                      : `Check-${pinMode} PIN not issued yet`
-                  }
-                  // Green arriving, blue leaving — the same pair the host's
-                  // dialog uses, so both sides of the conversation are looking
-                  // at the same colour.
-                  className={`inline-flex items-center gap-2 whitespace-nowrap rounded-lg border px-3 py-1 text-[12.5px] font-semibold ${
-                    pinMode === "out"
-                      ? "border-[#1971c2]/30 bg-[#1971c2]/[0.07] text-[#1971c2]"
-                      : "border-[#2f9e44]/30 bg-[#2f9e44]/[0.07] text-[#2f9e44]"
-                  }`}
-                >
-                  <KeyRound size={13} aria-hidden />
-                  PIN
+              <StayCountdownPill booking={booking} />
+            </span>
+            {/* Actions — one fixed-width slot, then View. Rate stay, "Rated
+                4.5" and the PIN never appear together (a stay is either at its
+                door or long finished), so they share the slot rather than each
+                claiming width of their own. They used to sit loose in a flex
+                row, and the widest of them shoved View leftward on some rows
+                and not others — a ragged right edge down the whole table. */}
+            <div className="flex items-center justify-end gap-2">
+              <span className="flex w-[112px] shrink-0 justify-end">
+                {pinMode ? (
                   <span
-                    aria-hidden
-                    className={`font-mono text-[15px] font-bold tracking-[0.18em] ${
-                      // The placeholder is deliberately quieter than a real
-                      // code, so a glance can tell "not yet" from "here it is".
-                      pin ? "text-ink" : "text-muted"
+                    title={
+                      pin
+                        ? `Read this out to your host to be checked ${pinMode}`
+                        : `Your host starts check-${pinMode} — your code appears here`
+                    }
+                    aria-label={
+                      pin
+                        ? `Check-${pinMode} PIN ${pin.split("").join(" ")}`
+                        : `Check-${pinMode} PIN not issued yet`
+                    }
+                    // Green arriving, black leaving — the same pair the host's
+                    // dialog uses, so both sides of the conversation are looking
+                    // at the same colour.
+                    className={`inline-flex items-center gap-2 whitespace-nowrap rounded-lg border px-3 py-1 text-[12.5px] font-semibold ${
+                      pinMode === "out"
+                        ? "border-ink/25 bg-ink/[0.06] text-ink"
+                        : "border-[#2f9e44]/30 bg-[#2f9e44]/[0.07] text-[#2f9e44]"
                     }`}
                   >
-                    {pin || "****"}
+                    <KeyRound size={13} aria-hidden />
+                    PIN
+                    <span
+                      aria-hidden
+                      className={`font-mono text-[15px] font-bold tracking-[0.18em] ${
+                        // The placeholder is deliberately quieter than a real
+                        // code, so a glance can tell "not yet" from "here it is".
+                        pin ? "text-ink" : "text-muted"
+                      }`}
+                    >
+                      {pin || "****"}
+                    </span>
                   </span>
-                </span>
+                ) : booking.reviewRating > 0 ? (
+                  // One star and the score, not a five-star strip: in a dense
+                  // row the strip sat awkwardly next to the other star icons.
+                  <span
+                    title={`You rated this stay ${booking.reviewRating} out of 5`}
+                    className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-star/10 px-2.5 py-1.5 text-[12.5px] font-semibold text-[#b8860b]"
+                  >
+                    <Star size={13} className="fill-star text-star" aria-hidden />
+                    Rated {booking.reviewRating.toFixed(1)}
+                  </span>
+                ) : booking.canReview ? (
+                  <button
+                    type="button"
+                    onClick={() => onToggle(booking.id)}
+                    className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-star/15 px-3 py-1.5 text-[12.5px] font-semibold text-[#b8860b] transition-colors hover:bg-star/25"
+                  >
+                    <Star size={13} className="fill-star text-star" aria-hidden />
+                    Rate stay
+                  </button>
+                ) : null}
+              </span>
+
+              {/* Cancel, back in the row and sitting just before View — same
+                  outline and same height, so the two read as a pair of controls
+                  rather than as a button and a warning. No icon: a cross beside
+                  the word said the word twice, and the fixed-width label it was
+                  balanced against was narrower than "Cancel", which broke the
+                  word across two lines inside the button. It only turns red
+                  under the cursor, which is late enough to be a confirmation and
+                  early enough to stop a mis-aimed tap. The dialog it opens is
+                  where the refund is actually stated and the decision actually
+                  taken. */}
+              {canCancel && (
+                <button
+                  type="button"
+                  onClick={() => onCancel(booking)}
+                  disabled={cancelling}
+                  aria-busy={cancelling}
+                  aria-label={`Cancel ${booking.villaTitle} booking`}
+                  // The word stays "Cancel" at every width, but what it cancels
+                  // is not always the whole stay: once the guest has checked in,
+                  // only the nights they haven't reached are still theirs to
+                  // give back. The dialog opens on exactly that; the tooltip
+                  // says so before it does.
+                  title={
+                    gate.open
+                      ? "Cancel this booking"
+                      : "Give back the nights you haven't stayed"
+                  }
+                  className="inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-line px-3.5 py-[5px] text-[12.5px] font-medium text-body transition-colors hover:border-[#e5484d]/60 hover:bg-[#e5484d]/5 hover:text-[#e5484d] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {cancelling && <span className="spinner shrink-0" aria-hidden />}
+                  Cancel
+                </button>
               )}
+
               <button
                 type="button"
                 onClick={() => onToggle(booking.id)}
@@ -439,7 +552,7 @@ function BookingRow({
             <BookingDetails
               booking={booking}
               onCollapse={() => onToggle(booking.id)}
-              onCancel={canCancel ? () => onCancel(booking, gate) : undefined}
+              onCancel={canCancel ? () => onCancel(booking) : undefined}
               cancelling={cancelling}
               onReview={onReview}
               reviewBusy={reviewBusy}
@@ -454,10 +567,10 @@ function BookingRow({
 export default function MyBookingsPage() {
   const { user, ready } = useAuth();
   const toast = useToast();
-  const confirm = useConfirm();
   const [bookings, setBookings] = useState<Booking[] | null>(null);
   const [loadError, setLoadError] = useState("");
-  const [cancellingId, setCancellingId] = useState<string | null>(null);
+  // The booking whose cancel dialog is open, if any.
+  const [cancelTarget, setCancelTarget] = useState<Booking | null>(null);
   const [reviewingId, setReviewingId] = useState<string | null>(null);
   // Which booking row is expanded to show its full details inline.
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -511,9 +624,11 @@ export default function MyBookingsPage() {
   // the PIN only lives a minute — poll fast enough that the guest is never
   // reading a code that has already died. Ordinary pace the rest of the time.
   const awaitingPin = (bookings ?? []).some((b) => b.otpRequired);
+  // Paused while the cancel dialog is open: a background refresh would swap the
+  // booking out from under a picker the guest is halfway through filling in.
   useLiveRefresh(
     () => load(true),
-    ready && !!user && !cancellingId,
+    ready && !!user && !cancelTarget,
     awaitingPin ? 5_000 : undefined
   );
 
@@ -566,52 +681,30 @@ export default function MyBookingsPage() {
   const toggleActiveSort = () => setActiveSort((s) => (s === "desc" ? "asc" : "desc"));
   const toggleHistorySort = () => setHistorySort((s) => (s === "desc" ? "asc" : "desc"));
 
-  async function onCancel(b: Booking, gate: CancellationGate) {
-    if (cancellingId) return;
-    // The server's own figures while its reading still matches the live gate;
-    // once the clock has moved the booking into the next tier (midnight, or the
-    // check-in hour), the same percentages applied here.
-    const fee =
-      gate.penaltyPercentage === b.penaltyPercentage
-        ? b.cancelFeeNow
-        : Math.round(b.total * gate.penaltyPercentage) / 100;
-    // Spell out the exact fine (and refund) before it's charged — never a
-    // surprise after the fact.
-    const message =
-      fee > 0
-        ? `Your stay at "${b.villaTitle}" will be cancelled. Cancelling on the check-in day carries a ${gate.penaltyPercentage}% charge — ${money(fee)} — and you'll be refunded ${money(b.total - fee)}. This can't be undone.`
-        : `Your stay at "${b.villaTitle}" will be cancelled and you'll be refunded in full (${gate.refundPercentage}%). This can't be undone.`;
-    const ok = await confirm({
-      title: "Cancel this booking?",
-      message,
-      confirmLabel: "Cancel booking",
-      cancelLabel: "Keep booking",
-      tone: "danger",
-    });
-    if (!ok) return;
-    setCancellingId(b.id);
-    try {
-      const updated = await cancelBooking(b.id);
-      setBookings((prev) =>
-        (prev ?? []).map((x) => (x.id === b.id ? updated : x))
-      );
-      // The server is the authority on what was actually charged — quote its
-      // frozen figures back, not the estimate the dialog showed.
-      toast.success(
-        updated.cancellationFee > 0
-          ? `Booking cancelled — ${money(updated.cancellationFee)} charged, ${money(updated.refundAmount)} refunded.`
-          : "Booking cancelled — you'll be refunded in full."
-      );
-    } catch (e) {
-      setLoadError(e instanceof Error ? e.message : "Could not cancel booking.");
-      // The banner sits at the top of the card, far above the row the user just
-      // acted on — bring it into view once React has committed it.
-      requestAnimationFrame(() =>
-        errorRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })
-      );
-    } finally {
-      setCancellingId(null);
-    }
+  // Cancelling is a screen of its own, not a yes/no box: the guest may be
+  // calling the whole stay off or handing back three nights of it, and either
+  // way the money depends on which nights and how near they are. The dialog
+  // prices the choice against the server as it's made (see CancelBookingModal);
+  // this only opens it and folds the result back into the list.
+  function onCancel(b: Booking) {
+    setCancelTarget(b);
+  }
+
+  function onCancelled(updated: Booking, quote: NightsCancellationQuote) {
+    setCancelTarget(null);
+    setBookings((prev) => (prev ?? []).map((x) => (x.id === updated.id ? updated : x)));
+    // The server's own figures for THIS event, never the running totals on the
+    // booking: a stay trimmed twice would otherwise report the sum of both.
+    const what = quote.full
+      ? "Booking cancelled"
+      : `${quote.nightsCount} night${quote.nightsCount === 1 ? "" : "s"} cancelled`;
+    toast.success(
+      quote.refundAmount > 0
+        ? `${what} — ${money(quote.refundAmount)} refunded${
+            quote.cancellationFee > 0 ? `, ${money(quote.cancellationFee)} charged` : ""
+          }.`
+        : `${what} — no refund is due.`
+    );
   }
 
   // Leave / update a review for a completed stay, then fold the fresh review
@@ -709,7 +802,7 @@ export default function MyBookingsPage() {
                     key={b.id}
                     booking={b}
                     onCancel={onCancel}
-                    cancelling={cancellingId === b.id}
+                    cancelling={cancelTarget?.id === b.id}
                     onReview={(rating, comment) => onReview(b, rating, comment)}
                     reviewBusy={reviewingId === b.id}
                     expanded={expandedId === b.id}
@@ -757,21 +850,46 @@ export default function MyBookingsPage() {
 
           {/* Note */}
           <p className="mt-6 max-w-[720px] text-[11px] leading-5 text-muted">
-            Note: Cancellation of booking may result in cancellation charges. Charges vary
-            from property to property. They may also depend upon cancellation time. Read
-            cancellation policy of hosted place for further information.
+            Note: Cancelling a booking may carry a charge, and the charge grows as the
+            check-in date approaches — free 15 days or more ahead, 10% inside 15 days, 25%
+            inside 7 days, 50% inside 3 days, and nothing refunded in the last 24 hours.
+            You can also hand back only some of your nights and keep the rest of the stay.
+            Once a stay has started, the night you&apos;re in is yours, but the nights after
+            it can still be given up — they go back on the calendar, with no refund.
           </p>
         </div>
       </div>
+
+      {cancelTarget && (
+        <CancelBookingModal
+          booking={cancelTarget}
+          onClose={() => setCancelTarget(null)}
+          onCancelled={onCancelled}
+        />
+      )}
     </div>
   );
 }
 
+// Small caps, not body text. A heading row set at the same size as the rows
+// under it competes with them; at 11px uppercase it reads as a label for the
+// column and then gets out of the way.
 function ColumnHeadings() {
   return (
-    <div className={`mt-6 grid ${ROW_MINW} ${ROW_GRID} px-4 text-[13px] text-muted`}>
+    <div
+      className={`mt-6 grid ${ROW_MINW} ${ROW_GRID} px-4 text-[11px] font-semibold uppercase tracking-wide text-muted`}
+    >
       {COLUMNS.map((c, i) => (
-        <span key={c || `col-${i}`} className={c === "" ? "text-right" : ""}>
+        <span
+          key={c || `col-${i}`}
+          // Status is indented, heading and cell alike, so the column reads as
+          // its own thing rather than as a second line of the guest count
+          // pressed up against it. `STATUS_INDENT` keeps the two in step: the
+          // heading and every row below it move together or not at all.
+          className={
+            c === "" ? "text-right" : i === 2 ? GUESTS_INDENT : i === 3 ? STATUS_INDENT : ""
+          }
+        >
           {c || "Action"}
         </span>
       ))}
@@ -785,7 +903,10 @@ function SkeletonRows({ count }: { count: number }) {
   return (
     <>
       {Array.from({ length: count }, (_, i) => (
-        <div key={i} className={`skeleton h-[50px] ${ROW_MINW}`} />
+        // 76px: py-4 either side of a 44px thumbnail, which is what a real row
+        // measures now. A placeholder shorter than the thing it stands in for
+        // makes the whole list jump the moment the data lands.
+        <div key={i} className={`skeleton h-[76px] rounded-xl ${ROW_MINW}`} />
       ))}
     </>
   );
@@ -793,7 +914,7 @@ function SkeletonRows({ count }: { count: number }) {
 
 function EmptyLine({ text }: { text: string }) {
   return (
-    <div className="rounded-lg border border-dashed border-line px-4 py-6 text-center text-[13px] text-muted">
+    <div className="rounded-xl border border-dashed border-line px-4 py-8 text-center text-[13px] text-muted">
       {text}
     </div>
   );

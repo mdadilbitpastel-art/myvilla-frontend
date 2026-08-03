@@ -71,7 +71,12 @@ export function lifecycleOf(b: BookingLike): Lifecycle {
 const STATUS_BY_LIFECYCLE: Record<Lifecycle, BookingStatus> = {
   cancelled: { label: "Cancelled", tone: "red" },
   completed: { label: "Checked out", tone: "muted" },
-  staying: { label: "Checked in", tone: "blue" },
+  // "Staying", not "Checked in": one names where the guest IS, the other names
+  // a thing that happened to them once, at the door, hours or days ago. The
+  // list is read to find out what is going on right now, and green is the
+  // colour of a booking that is going right — the same green as the check-in
+  // window standing open, which is the state immediately before this one.
+  staying: { label: "Staying", tone: "green" },
   no_show: { label: "No show", tone: "red" },
   // "awaiting_checkin" is the check-in WINDOW: from the check-in time until the
   // grace period runs out. It's a good state, not a late one — being late is
@@ -102,82 +107,24 @@ export function bookingStatus(b: BookingLike, nowMs?: number): BookingStatus {
   return STATUS_BY_LIFECYCLE[life];
 }
 
-/**
- * A one-line description of where the stay is, phrased for whoever's reading:
- * the host sees "guest not checked in yet", the guest sees "the host hasn't
- * checked you in". Drives the status strip in the detail panel and the
- * check-in-reminder popup. Returns null when nothing needs saying.
+/*
+ * There used to be a `bookingStatusDetail` here: a sentence per lifecycle
+ * state, drawn as a coloured strip across the top of the booking panel. It has
+ * gone, and nothing replaced it. Every one of those sentences either restated
+ * the status pill an inch above it ("You're checked in") or gave instructions
+ * for something that wasn't happening yet ("when you leave, show the host the
+ * check-out PIN"). What actually needs saying is now said where the thing is
+ * done: the departure warning rides on the check-out PIN card, what cancelling
+ * costs is in the cancel dialog, and an early departure is recorded on the part
+ * of the stay it happened in.
  */
-export function bookingStatusDetail(
-  b: BookingLike & { checkedInAt?: string; checkedOutAt?: string },
-  role: "owner" | "guest"
-): { text: string; tone: BookingStatusTone } | null {
-  const life = lifecycleOf(b);
-  const hrs = Math.floor(b.hoursLate ?? 0);
-  // How long the window has been open, phrased as an opening rather than as a
-  // deadline missed. While it IS open, check-in is simply available — saying
-  // "check-in time has passed" made a perfectly normal arrival read as a
-  // failure. Only once the guest is genuinely overdue does the elapsed time
-  // become the point.
-  const openFor =
-    hrs >= 1
-      ? `Check-in has been open ${hrs} hr${hrs === 1 ? "" : "s"}`
-      : "Check-in is open now";
-
-  switch (life) {
-    case "awaiting_checkin":
-      return {
-        // Green while the guest is roughly on time — this is the state a stay
-        // is supposed to be in when they arrive; amber once they're overdue.
-        tone: hrs >= 1 ? "orange" : "green",
-        text:
-          role === "owner"
-            ? `${openFor} — press Check in, then ask the guest for the 4-digit PIN showing on their booking.`
-            : `${openFor} — show the host the 4-digit PIN on this booking and they'll check you in.`,
-      };
-    case "no_show":
-      if (b.lateCheckInAllowed) {
-        return {
-          tone: "orange",
-          text:
-            role === "owner"
-              ? "Marked a no-show, but you've allowed a late check-in — verify the guest's PIN when they arrive."
-              : "You missed the check-in window, but the host has allowed a late check-in. No refund is due.",
-        };
-      }
-      return {
-        tone: "red",
-        text:
-          role === "owner"
-            ? "Guest didn't arrive — the check-in window closed with no check-in."
-            : "Marked as a no-show — the check-in window closed without a check-in. No refund is due.",
-      };
-    case "staying":
-      // Leaving is verified the same way arriving was, so both sides are told
-      // now rather than discovering it at the door: a departure needs the guest
-      // there with a code, not the host pressing a button after they've gone.
-      return {
-        tone: "blue",
-        text:
-          role === "owner"
-            ? `Guest is staying${b.checkedInAt ? ` — checked in ${fmtDateTime(b.checkedInAt)}` : ""}. When they leave, press Check out and ask for the PIN on their booking.`
-            : "You're checked in — enjoy your stay. When you leave, show the host the check-out PIN on this booking.",
-      };
-    case "completed":
-      return {
-        tone: "muted",
-        text: b.checkedOutAt
-          ? `Stay complete — checked out ${fmtDateTime(b.checkedOutAt)}.`
-          : "Stay complete.",
-      };
-    default:
-      return null;
-  }
-}
 
 export const STATUS_TONE_CLASS: Record<BookingStatusTone, string> = {
   green: "text-green-600",
-  blue: "text-primary",
+  // No lifecycle uses `blue` any more — a stay under way is green, like the
+  // window opening that precedes it. Kept as ink rather than the brand purple,
+  // which read as a link in a column of plain labels.
+  blue: "text-ink",
   red: "text-red-400",
   muted: "text-body",
   orange: "text-orange-500",
@@ -188,10 +135,12 @@ export const STATUS_TONE_CLASS: Record<BookingStatusTone, string> = {
 /* ------------------------------------------------------------------ */
 
 export type CheckInCountdown = {
-  /** "In 12 days" / "Tomorrow" / "Today" — how long the guest has left to
-   *  wait, said in their own terms. Not "arriving": that is how the HOST
-   *  talks about a guest, and this is the guest reading their own booking. */
-  label: string;
+  /** "in 12 days" / "tomorrow" / "today" — the WHEN on its own, lower case,
+   *  because it is always read after the word "Check-in": the two are drawn as
+   *  a quiet noun and a loud answer, and a phrase baked into one string here
+   *  couldn't be. Not "arriving": that is how the HOST talks about a guest,
+   *  and the guest reading their own booking is not arriving at themselves. */
+  when: string;
   /** Today or tomorrow — near enough that the guest should act on it. */
   imminent: boolean;
   /** Whole days until the stay begins (0 = today). */
@@ -230,9 +179,97 @@ export function checkInCountdown(b: BookingLike, nowMs: number): CheckInCountdow
   // Already here or behind us: the lifecycle says the stay hasn't started, so
   // there is nothing useful to count and nothing worth guessing at.
   if (days < 0) return null;
-  if (days === 0) return { label: "Today", imminent: true, days };
-  if (days === 1) return { label: "Tomorrow", imminent: true, days };
-  return { label: `In ${days} days`, imminent: false, days };
+  if (days === 0) return { when: "today", imminent: true, days };
+  if (days === 1) return { when: "tomorrow", imminent: true, days };
+  return { when: `in ${days} days`, imminent: false, days };
+}
+
+/**
+ * The moment this stay is due to start, as a comparable number: the scheduled
+ * check-in hour when the payload carries it, the check-in date at midnight
+ * otherwise. On the SERVER's wall clock, like everything else here — so a list
+ * ordered by it is ordered the same way for a host in IST and one in UTC.
+ *
+ * Infinity for a booking with neither, so sorting by it parks the unreadable
+ * rows at the end rather than at the top where the next arrival belongs.
+ */
+export function stayStartMs(b: { checkInAt?: string; checkIn?: string }): number {
+  const wall = parseWall(b.checkInAt || "");
+  if (!Number.isNaN(wall)) return wall;
+  const day = new Date(`${b.checkIn || ""}T00:00:00`).getTime();
+  return Number.isNaN(day) ? Infinity : day;
+}
+
+/* ------------------------------------------------------------------ */
+/* How much of a stay under way is left                                */
+/* ------------------------------------------------------------------ */
+
+export type StayRemaining = {
+  /** "in 3d 4h" / "in 5h 12m" / "in 12m 34s" / "due now" — coarse while the
+   *  answer is "days", down to the second once it is "now". A guest reading
+   *  this on the last morning is deciding when to pack, not admiring a clock.
+   *
+   *  The WHEN on its own, like `CheckInCountdown.when`, and for the same
+   *  reason: it is always drawn after the word "Check-out", the two weighted
+   *  differently. The pair reads "Check-out in 3d 4h" — the mirror of
+   *  "Check-in in 4 days" at the other end of the stay. */
+  when: string;
+  /** Milliseconds to the departure hour. Negative once it has passed. */
+  ms: number;
+  /** Under six hours: close enough that leaving is today's problem. */
+  urgent: boolean;
+  /** The hour has passed and nobody has checked the guest out yet. */
+  overdue: boolean;
+  /** The hour being counted to, as the naive wall-clock string it came from —
+   *  the CURRENT part's on a split stay, which is not the booking's own. */
+  endsAtWall: string;
+};
+
+/**
+ * How long the guest has left in the property, on the SERVER's wall clock.
+ * Null for anything that isn't a stay actually under way — nothing to count
+ * before they arrive or after they've gone.
+ *
+ * Counted to the CURRENT PART's check-out hour on a split stay, not the
+ * booking's last date: a guest who has to vacate on Thursday and comes back on
+ * Saturday is owed the Thursday, and counting to the far end of the booking
+ * would tell them they have five days left in a room they lose in two.
+ */
+export function stayRemaining(
+  b: BookingLike & { segments?: SegmentLike[] },
+  nowMs: number
+): StayRemaining | null {
+  if (Number.isNaN(nowMs) || lifecycleOf(b) !== "staying") return null;
+
+  // The part they are in: checked into, not yet checked out of. Found by the
+  // recorded stamps alone — no clock comparison — so this picks the same part
+  // the host's Check out button is aimed at.
+  const part = (b.segments || []).find((s) => s.checkedInAt && !s.checkedOutAt);
+  const endsAtWall = part?.checkOutAt || b.checkOutAt || "";
+  const endsAt = parseWall(endsAtWall);
+  if (Number.isNaN(endsAt)) return null;
+
+  const ms = endsAt - nowMs;
+  const secs = Math.max(0, Math.floor(ms / 1000));
+  const d = Math.floor(secs / 86_400);
+  const h = Math.floor((secs % 86_400) / 3_600);
+  const m = Math.floor((secs % 3_600) / 60);
+  const s = secs % 60;
+
+  return {
+    ms,
+    endsAtWall,
+    urgent: ms <= 6 * 3_600_000,
+    overdue: ms <= 0,
+    when:
+      ms <= 0
+        ? "due now"
+        : d > 0
+          ? `in ${d}d ${h}h`
+          : h > 0
+            ? `in ${h}h ${m}m`
+            : `in ${m}m ${s}s`,
+  };
 }
 
 /**
@@ -529,10 +566,46 @@ export function checkInGate(
 /* Whether the guest may still cancel                                  */
 /* ------------------------------------------------------------------ */
 
-/** The three tiers, worded exactly as the backend words them. */
+/** The tier wordings, exactly as the backend words them. */
 export const CANCEL_MSG_FREE = "Free cancellation available.";
-export const CANCEL_MSG_PARTIAL = "50% cancellation charge applies.";
+export const CANCEL_MSG_NO_REFUND =
+  "Cancelling within 24 hours of check-in is non-refundable — no refund will be issued.";
 export const CANCEL_MSG_EXPIRED = "Cancellation period has expired.";
+
+/** How long before check-in a cancellation stops earning anything back.
+ *  Mirrors Booking.NO_REFUND_WINDOW_HOURS on the server. */
+export const NO_REFUND_WINDOW_HOURS = 24;
+
+/**
+ * The sliding refund scale, mirroring Booking.REFUND_TIERS on the server:
+ * hours before check-in, what comes back, and the line to show. Read top-down —
+ * the first threshold `now` still clears is the band it is in.
+ *
+ * Duplicated rather than fetched because it is also what the CHECKOUT page
+ * quotes before a booking exists to ask about. The server remains the
+ * authority: every live booking carries the percentages it worked out, and
+ * this only re-reads the ladder as the clock moves past a boundary.
+ */
+export const REFUND_TIERS: ReadonlyArray<
+  readonly [hoursBefore: number, refundPercentage: number, message: string]
+> = [
+  [15 * 24, 100, CANCEL_MSG_FREE],
+  [7 * 24, 90, "Cancelling now carries a 10% charge — 90% is refunded."],
+  [3 * 24, 75, "Cancelling now carries a 25% charge — 75% is refunded."],
+  [NO_REFUND_WINDOW_HOURS, 50, "Cancelling now carries a 50% charge — half is refunded."],
+  [0, 0, CANCEL_MSG_NO_REFUND],
+] as const;
+
+/** Which band an arrival at `opensAt` falls into, judged at `nowMs`. */
+export function refundTierAt(
+  opensAt: number,
+  nowMs: number
+): { refundPercentage: number; message: string } {
+  for (const [hours, refundPercentage, message] of REFUND_TIERS) {
+    if (nowMs <= opensAt - hours * 3_600_000) return { refundPercentage, message };
+  }
+  return { refundPercentage: 0, message: CANCEL_MSG_NO_REFUND };
+}
 
 export type CancellationGate = {
   /** May the guest press Cancel booking right now? */
@@ -560,9 +633,9 @@ type CancellableBooking = BookingLike & {
  * The SERVER decides this — `canCancel` and the percentages arrive with the
  * booking. This only re-runs the same rule locally so a page left open across
  * the boundary keeps up: the button disappears the moment check-in time
- * arrives, and a full refund quietly becomes a half one at midnight, without
- * waiting for a reload. It can only ever close a gate the server left open,
- * never open one the server closed.
+ * arrives, and a full refund quietly becomes no refund once the stay is 24
+ * hours out, without waiting for a reload. It can only ever close a gate the
+ * server left open, never open one the server closed.
  *
  * `nowMs` is the server's wall clock (see `useServerWallClock`), not the
  * browser's — the two can be whole time zones apart, and the guest's own clock
@@ -597,24 +670,18 @@ export function cancellationGate(b: CancellableBooking, nowMs: number): Cancella
 
   if (!serverOpen) return gate;
 
-  // Before the check-in time, on the check-in day itself — half back.
-  const now = new Date(nowMs);
-  const opens = new Date(opensAt);
-  const sameDay =
-    now.getFullYear() === opens.getFullYear() &&
-    now.getMonth() === opens.getMonth() &&
-    now.getDate() === opens.getDate();
-  if (sameDay) {
-    return {
-      open: true,
-      refundPercentage: 50,
-      penaltyPercentage: 50,
-      message: CANCEL_MSG_PARTIAL,
-      expired: false,
-    };
-  }
-
-  return { ...gate, refundPercentage: 100, penaltyPercentage: 0, message: CANCEL_MSG_FREE };
+  // Still open: re-read the sliding scale, so a page left sitting through a
+  // boundary shows the band the server would now charge at. Distances are
+  // durations, not calendar days — 24 hours before a 2 PM check-in is 2 PM the
+  // day before, not the midnight in between.
+  const { refundPercentage, message } = refundTierAt(opensAt, nowMs);
+  return {
+    open: true,
+    refundPercentage,
+    penaltyPercentage: 100 - refundPercentage,
+    message,
+    expired: false,
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -643,6 +710,10 @@ export type StayPart = {
   checkOutAt: string;
   nights: number;
   status: StayPartStatus;
+  /** The guest walked out of THIS part before its check-out hour — the one
+   *  thing about a finished part that isn't simply "done", and the only reason
+   *  a completed part is worth a second glance. False everywhere else. */
+  leftEarly: boolean;
 };
 
 export type StayProgress = {
@@ -693,7 +764,7 @@ type SegmentLike = {
  * every part rather than quietly "completing" as its hours roll by.
  */
 export function stayProgress(
-  b: BookingLike & { nights?: number; segments?: SegmentLike[] },
+  b: BookingLike & { nights?: number; segments?: SegmentLike[]; earlyCheckOut?: boolean },
   nowMs: number
 ): StayProgress {
   // No segments on the payload (an older response, or an unbroken stay that
@@ -719,6 +790,14 @@ export function stayProgress(
   // A recorded departure closes the whole stay, however many parts it had.
   const closedOut = life === "completed";
   const clockKnown = !Number.isNaN(nowMs);
+
+  // Where the early departure happened, when there was one. An early check-out
+  // ends the whole stay, so it belongs to the LAST part anyone actually left —
+  // found by the recorded stamps rather than by comparing a departure INSTANT
+  // against a naive wall-clock hour, which are two different kinds of number.
+  const lastDeparted = b.earlyCheckOut
+    ? raw.reduce((found, s, i) => (s.checkedOutAt ? i : found), -1)
+    : -1;
 
   const parts: StayPart[] = raw.map((s, i) => {
     const opensAt = parseWall(s.checkInAt || "");
@@ -757,6 +836,7 @@ export function stayProgress(
       checkOutAt: s.checkOutAt || "",
       nights: s.nights,
       status,
+      leftEarly: i === lastDeparted,
     };
   });
 

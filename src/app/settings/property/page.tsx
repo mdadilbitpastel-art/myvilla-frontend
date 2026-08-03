@@ -221,13 +221,17 @@ export default function MyPropertyPage() {
           )}
 
           {/* Header — sticks flush against the pinned "Manage Account" bar
-              (navbar + its collapsed height), NOT lower: any gap between the
-              two becomes a slot the scrolling list is visible through. It
-              cancels the card's own top padding (-mt) and carries its own
-              even py-4 instead, so the title and button sit centred in the
-              band rather than pushed down by two paddings stacked. */}
+              (navbar 68px + its collapsed 51px = 119px), NOT lower: any gap
+              between the two becomes a slot the scrolling list is visible
+              through, which is exactly what 135px left. Erring a few px UNDER
+              that 119 is the safe direction — the bar is z-30 against this
+              z-20, so the overlap simply tucks behind it, while erring over
+              re-opens the slot. It cancels the card's own top padding (-mt)
+              and carries its own even py-4 instead, so the title and button
+              sit centred in the band rather than pushed down by two paddings
+              stacked. */}
           <div
-            className={`sticky top-[135px] z-20 -mx-6 flex items-center justify-between rounded-t-2xl border-b border-line bg-white px-6 py-4 sm:-mx-8 sm:px-8 ${
+            className={`sticky top-[116px] z-20 -mx-6 flex items-center justify-between rounded-t-2xl border-b border-line bg-white px-6 py-4 sm:-mx-8 sm:px-8 ${
               // Only reach up into the card's padding when nothing is above it —
               // with a banner showing, that pull would ride over it.
               banner ? "" : "-mt-6 sm:-mt-8"

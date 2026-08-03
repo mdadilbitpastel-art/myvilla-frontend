@@ -108,7 +108,10 @@ export default function ConfirmDialog({
 
       <div
         ref={panelRef}
-        className="animate-toast-in relative w-full max-w-[400px] overflow-hidden rounded-2xl border border-line bg-white p-6 shadow-2xl"
+        // Wider than a plain alert on purpose: the messages here name a villa,
+        // a date range or what a cancellation costs, and at 400px those wrapped
+        // into a narrow column of four or five lines.
+        className="animate-toast-in relative w-full max-w-[480px] overflow-hidden rounded-2xl border border-line bg-white p-6 shadow-2xl"
       >
         <div className="flex gap-4">
           <span

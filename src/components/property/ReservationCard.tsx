@@ -31,6 +31,8 @@ export default function ReservationCard({
   checkInTime = "",
   coupon = "",
   propertyType = "",
+  initialCheckIn = "",
+  initialCheckOut = "",
 }: {
   pricing: Villa["pricing"];
   /** real villa id — omit for the static demo page (Reserve disabled) */
@@ -45,6 +47,14 @@ export default function ReservationCard({
   coupon?: string;
   /** the listing's own category — decides what the card calls the place. */
   propertyType?: string;
+  /**
+   * A stay handed back to the card, "YYYY-MM-DD" — from Cancel on the payment
+   * page. Taken once, as the starting dates, instead of the first free night.
+   * They still have to survive the host's window: a range that has been taken
+   * in the meantime is parked on the first open night like any other.
+   */
+  initialCheckIn?: string;
+  initialCheckOut?: string;
 }) {
   const router = useRouter();
   const { user, openAuth } = useAuth();
@@ -102,8 +112,18 @@ export default function ReservationCard({
     [rawWindow, now]
   );
 
-  const [checkIn, setCheckIn] = useState("");
-  const [checkOut, setCheckOut] = useState("");
+  // A stay coming back from a cancelled payment starts the card off, when there
+  // is one. Taken as the INITIAL value rather than pushed in by an effect: this
+  // card is only ever mounted once its villa has loaded, and the page has read
+  // the URL long before that — so the dates are already here on the first
+  // render, and seeding them later would only cost an extra pass and a flash of
+  // the wrong dates. Everything downstream treats them as any other choice: the
+  // effect below still parks them on the first open night if the host's window
+  // says they're gone, and `stayProblem` still has the last word on whether the
+  // stay can be booked at all.
+  const returning = !!initialCheckIn && !!initialCheckOut && initialCheckOut > initialCheckIn;
+  const [checkIn, setCheckIn] = useState(returning ? initialCheckIn : "");
+  const [checkOut, setCheckOut] = useState(returning ? initialCheckOut : "");
 
   // The first date the guest can actually take: the window's start, stepped
   // past any dates already booked or closed. "" when the whole window is gone.
@@ -346,21 +366,14 @@ export default function ReservationCard({
         <span className="text-[15px] font-normal text-muted"> / {pricing.period}</span>
       </p>
 
-      {/* How far ahead this host is open — the calendar allows exactly this
-          span and nothing else, so it's worth saying out loud. */}
-      {win && (
-        <p className="mt-3 text-[12.5px] text-muted">
-          {windowFull ? (
-            <span className="font-medium text-red-600">
-              Fully booked through {prettyDate(win.lastDate)}
-            </span>
-          ) : (
-            <>
-              Open for booking{" "}
-              <span className="font-medium text-ink">{prettyDate(win.firstDate)}</span> –{" "}
-              <span className="font-medium text-ink">{prettyDate(win.lastDate)}</span>
-            </>
-          )}
+      {/* Only the bad news. The open span used to be spelled out here too, but
+          the date fields right below already refuse anything outside it (and
+          grey the rest out in the calendar), so the line restated in words what
+          the control enforces — a whole line of a card that is pinned to one
+          screenful. Being fully booked is the one thing the fields can't say. */}
+      {win && windowFull && (
+        <p className="mt-3 text-[12.5px] font-medium text-red-600">
+          Fully booked through {prettyDate(win.lastDate)}
         </p>
       )}
 
@@ -440,10 +453,12 @@ export default function ReservationCard({
           so a picker here would only look like it changed the price.
           One line, not two: "the whole villa is yours for the stay" was a
           sentence where a clause would do, and the second line cost the card
-          height it doesn't have to spare. */}
-      <div className="mt-2.5 flex items-center gap-3 rounded-xl bg-page px-4 py-3">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-primary shadow-sm">
-          <Users size={17} strokeWidth={1.8} aria-hidden />
+          height it doesn't have to spare. Kept as a slim band for the same
+          reason — the icon sets the tile's height, so it is a 28px disc with
+          thin padding rather than a 36px one inside a roomy box. */}
+      <div className="mt-2.5 flex items-center gap-2.5 rounded-xl bg-page px-3.5 py-2">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white text-primary shadow-sm">
+          <Users size={15} strokeWidth={1.8} aria-hidden />
         </span>
         {/* The capacity always reads in full; only the "whole ___" clause gives
             way, since a host may have typed a property type of any length

@@ -885,9 +885,10 @@ export type Booking = {
    *  (0 unless awaiting_checkin). */
   hoursLate: number;
   /** The flexible cancellation policy, read on the server at `serverNow`:
-   *  free before the check-in day, a 50% charge on the day itself, and closed
-   *  from the check-in time onward. `cancellationMessage` is the line to show
-   *  ("Free cancellation available." / "50% cancellation charge applies." /
+   *  free more than 24 hours before check-in, allowed but wholly
+   *  non-refundable inside those last 24 hours, and closed from the check-in
+   *  time onward. `cancellationMessage` is the line to show ("Free
+   *  cancellation available." / the 24-hour non-refundable notice /
    *  "Cancellation period has expired."), and cancelFeeNow / refundAmountNow
    *  are that split in currency. */
   canCancel: boolean;
@@ -955,6 +956,82 @@ export type Booking = {
    *  posting, and the Edit control goes with it. */
   canEditReview: boolean;
   reviewEditableUntil: string;
+  /** Nights the guest may still choose to give up — every night of a stay part
+   *  nobody has arrived for and whose check-in hour hasn't passed. Empty when
+   *  there is nothing left to drop, which is what hides the "selected dates"
+   *  option instead of opening an empty picker. ISO dates. */
+  cancellableNights: string[];
+  /** Nights already given up, how many are still held, and whether this is a
+   *  stay that was trimmed rather than called off (a trimmed booking is still
+   *  ACTIVE — it goes ahead, shorter). */
+  cancelledNights: string[];
+  /** The whole stay laid out night by night — every date the booking was made
+   *  for, held or already given up — each carrying what cancelling it right now
+   *  would hand back, or why it can't go. What the cancel screen is drawn from,
+   *  so the dates, their disabled state and their reason all come from the
+   *  server rather than being guessed at in the browser. */
+  nightOptions: BookingNightOption[];
+  activeNights: number;
+  partiallyCancelled: boolean;
+  /** One receipt per cancellation event, oldest first, and their total refund. */
+  cancellations: BookingCancellation[];
+  refundedTotal: number;
+};
+
+/** One night of a stay as the cancel screen sees it: whether it may still be
+ *  given up, what that would hand back, and the line explaining either. */
+export type BookingNightOption = {
+  /** The night slept, ISO date, and which part of the stay holds it. */
+  date: string;
+  partIndex: number;
+  /** "open" — it may go right now — or why not: "started" (that part is under
+   *  way), "expired" (its check-in hour has passed), "cancelled" (already
+   *  given up). `cancellable` is "open" said plainly. */
+  state: "open" | "started" | "expired" | "cancelled" | string;
+  cancellable: boolean;
+  /** What this ONE night is worth and how it splits at its part's tier —
+   *  indicative, for the chip's label. The binding figure is the quote for the
+   *  whole selection. On a cancelled night, what it actually got back. */
+  refundPercentage: number;
+  stayValue: number;
+  refundAmount: number;
+  cancellationFee: number;
+  /** The policy line for this night, in the guest's words. */
+  message: string;
+};
+
+/** One cancellation event on a booking — the whole stay, or nights of it. */
+export type BookingCancellation = {
+  id: string;
+  /** "full" — the stay was called off — or "partial", some of its nights. */
+  kind: string;
+  nights: string[];
+  nightsCount: number;
+  /** stayValue = cancellationFee + refundAmount, always. */
+  stayValue: number;
+  cancellationFee: number;
+  refundAmount: number;
+  refundPercentage: number;
+  /** The policy line the guest was shown as they confirmed it. */
+  message: string;
+  createdAt: string;
+};
+
+/** What giving up a chosen set of nights would cost and hand back, priced by
+ *  the server with the same code that performs the cancellation. `allowed`
+ *  false means the selection can't go through and `error` says why. */
+export type NightsCancellationQuote = {
+  nights: string[];
+  nightsCount: number;
+  stayValue: number;
+  cancellationFee: number;
+  refundAmount: number;
+  refundPercentage: number;
+  /** The selection is every night still held — a whole-stay cancellation. */
+  full: boolean;
+  allowed: boolean;
+  message: string;
+  error: string;
 };
 
 const BOOKING_SELECTION = `
@@ -967,6 +1044,9 @@ const BOOKING_SELECTION = `
   checkInAt checkOutAt serverNow lifecycleStatus hoursLate
   canCancel refundPercentage penaltyPercentage cancellationMessage
   cancelFeeNow refundAmountNow cancellationFee refundAmount
+  cancellableNights cancelledNights activeNights partiallyCancelled refundedTotal
+  nightOptions { date partIndex state cancellable refundPercentage stayValue refundAmount cancellationFee message }
+  cancellations { id kind nights nightsCount stayValue cancellationFee refundAmount refundPercentage message createdAt }
   bookingStatus checkinAvailable buttonState buttonVisible
   gracePeriodRemainingMinutes otpRequired checkinMessage graceEndsAt
   noShowAt lateCheckInAllowed
@@ -1011,6 +1091,47 @@ export async function cancelBooking(id: string): Promise<Booking> {
     { id }
   );
   return data.cancelBooking;
+}
+
+/**
+ * Give up SOME of a booking's nights. The stay goes ahead, shorter, and the
+ * nights go back on the villa's calendar.
+ *
+ * Passing every night still held is a whole-stay cancellation and the server
+ * records it as one — the guest reaches the same place from either door.
+ * Re-priced server-side at its own clock, so a picker left open across a tier
+ * boundary is charged what is true when the button is pressed, not what was
+ * quoted a minute ago.
+ */
+export async function cancelBookingNights(
+  id: string,
+  nights: string[]
+): Promise<Booking> {
+  const data = await gql<{ cancelBookingNights: Booking }>(
+    `mutation CancelBookingNights($id: ID!, $nights: [String!]!) {
+       cancelBookingNights(id: $id, nights: $nights) { ${BOOKING_SELECTION} }
+     }`,
+    { id, nights }
+  );
+  return data.cancelBookingNights;
+}
+
+/** Price a set of nights before giving them up — the picker's live summary.
+ *  Read-only, so it is safe to call on every change of the selection. */
+export async function fetchNightsCancellationQuote(
+  id: string,
+  nights: string[]
+): Promise<NightsCancellationQuote> {
+  const data = await gql<{ nightsCancellationQuote: NightsCancellationQuote }>(
+    `query NightsCancellationQuote($id: ID!, $nights: [String!]!) {
+       nightsCancellationQuote(id: $id, nights: $nights) {
+         nights nightsCount stayValue cancellationFee refundAmount
+         refundPercentage full allowed message error
+       }
+     }`,
+    { id, nights }
+  );
+  return data.nightsCancellationQuote;
 }
 
 /**

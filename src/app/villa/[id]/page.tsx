@@ -48,12 +48,26 @@ function serviceIcon(s: string): Facility["icon"] {
 export default function VillaDetailPage() {
   const params = useParams();
   const id = String(params.id);
-  // A coupon carried in from a home-page offer (?coupon=CODE) — forwarded to
-  // checkout via the reservation card so it's already applied at payment.
-  const [coupon, setCoupon] = useState("");
+  // What the URL carried in, read after mount (the server has no `location`,
+  // and resolving it during render would hydrate differently):
+  //   ?coupon=CODE          — a home-page offer, forwarded to checkout via the
+  //                           reservation card so it's already applied there.
+  //   ?checkIn=&checkOut=   — a stay being handed BACK, by Cancel on the payment
+  //                           page. The card opens on those dates instead of
+  //                           resetting to the first free night, and the page
+  //                           scrolls down to it: cancelling a payment should
+  //                           return the guest to the choice they made, not
+  //                           make them make it again from the top of the page.
+  const [fromUrl, setFromUrl] = useState({ coupon: "", checkIn: "", checkOut: "" });
   useEffect(() => {
-    setCoupon(new URLSearchParams(window.location.search).get("coupon") || "");
+    const q = new URLSearchParams(window.location.search);
+    setFromUrl({
+      coupon: q.get("coupon") || "",
+      checkIn: q.get("checkIn") || "",
+      checkOut: q.get("checkOut") || "",
+    });
   }, []);
+  const coupon = fromUrl.coupon;
   // undefined = loading, null = not found, Villa = loaded
   const [v, setV] = useState<Villa | null | undefined>(undefined);
   // Real reviews for this villa, fetched alongside it.
@@ -118,6 +132,26 @@ export default function VillaDetailPage() {
       active = false;
     };
   }, [v, id]);
+
+  // Coming back from a cancelled payment: bring the reservation card into view,
+  // with the returning stay already in it. Waits for the villa itself — until it
+  // lands the page is a spinner and there is nothing at that position yet — and
+  // then one more beat for the sticky header and the hero gallery to take their
+  // real heights, or the card is scrolled to a place that then moves out from
+  // under it. Runs once: `done` latches, so a later re-render (reviews landing,
+  // the header collapsing) can't yank the page back down here.
+  const reserveRef = useRef<HTMLDivElement>(null);
+  const scrolledToCard = useRef(false);
+  useEffect(() => {
+    if (!v || scrolledToCard.current) return;
+    if (!fromUrl.checkIn || !fromUrl.checkOut) return;
+    scrolledToCard.current = true;
+    const t = setTimeout(
+      () => reserveRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+      260
+    );
+    return () => clearTimeout(t);
+  }, [v, fromUrl.checkIn, fromUrl.checkOut]);
 
   // The hand-over is measured once, then remembered — never re-measured while
   // the strip is up.
@@ -439,7 +473,10 @@ export default function VillaDetailPage() {
         </div>
 
         {/* Reservation sidebar */}
-        <aside className="lg:col-start-2 lg:row-start-1">
+        {/* scroll-mt clears the pinned navbar + page header, so a returning
+            guest lands with the whole card in view rather than its top edge
+            tucked under the chrome. */}
+        <aside ref={reserveRef} className="scroll-mt-[150px] lg:col-start-2 lg:row-start-1">
           {/* Parks below the pinned page header instead of under it — at the
               old fixed offset the card's price and rating were clipped. The
               offset follows the header, which changes height as it collapses
@@ -469,6 +506,8 @@ export default function VillaDetailPage() {
               checkInTime={v.checkInTime}
               coupon={coupon}
               propertyType={v.propertyType}
+              initialCheckIn={fromUrl.checkIn}
+              initialCheckOut={fromUrl.checkOut}
             />
           </div>
         </aside>
