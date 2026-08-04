@@ -2,17 +2,19 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronDown, Star, KeyRound, Users } from "lucide-react";
+import { ChevronDown, Plus, Star, KeyRound, Users } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useLiveRefresh } from "@/lib/useLiveRefresh";
 import { useToast } from "@/lib/toast";
 import SettingsSidebar from "@/components/settings/SettingsSidebar";
 import BookingDetails from "@/components/settings/BookingDetails";
 import CancelBookingModal from "@/components/settings/CancelBookingModal";
+import EditBookingModal from "@/components/settings/EditBookingModal";
 import CountPill from "@/components/ui/CountPill";
 import StayPartChips from "@/components/ui/StayPartChips";
 import CheckInCountdownPill from "@/components/ui/CheckInCountdownPill";
 import StayCountdownPill from "@/components/ui/StayCountdownPill";
+import ForcedCheckOutPill from "@/components/ui/ForcedCheckOutPill";
 import Img from "@/components/ui/Img";
 import {
   fetchMyBookings,
@@ -25,10 +27,12 @@ import {
   cancellationGate,
   checkInCountdown,
   checkInGate,
+  lastCheckInStarted,
   lifecycleOf,
   stayAction,
   useServerWallClock,
   stayProgress,
+  nextActionAt,
   STATUS_TONE_CLASS,
 } from "@/lib/booking";
 
@@ -62,14 +66,31 @@ const COLUMNS = [
 // wider. Every pixel past that is a gap between the middle of the row and the
 // buttons at the end of it, and what it doesn't need goes to the villa and the
 // dates, which are the two cells that actually truncate.
-const ROW_GRID = "grid-cols-[1.5fr_1.3fr_0.7fr_1.2fr_2.3fr]";
-const ROW_MINW = "min-w-[940px]";
+//
+// Every track is `minmax(0, …fr)` rather than a bare `…fr`, and that is what
+// keeps the headings over their columns. A bare fr track is `minmax(auto, 1fr)`
+// — it refuses to go narrower than its content — so the moment the actions cell
+// held one button more than its share (Edit arriving beside Cancel and View) it
+// pushed its own track wider on THOSE rows only, and every column left of it
+// shifted. The headings, having no buttons, never moved: hence a header that
+// lined up on some rows and not others. With a 0 floor the track is exactly its
+// share on every row, and the row's own min-width below is what guarantees the
+// buttons still fit inside it.
+const ROW_GRID =
+  "grid-cols-[minmax(0,1.5fr)_minmax(0,1.3fr)_minmax(0,0.6fr)_minmax(0,1.3fr)_minmax(0,2.7fr)]";
+// Wide enough for the actions cell to hold all four of its controls — the
+// 112px PIN/rating slot, Edit, Cancel and View — at its 2.7fr share, so nothing
+// has to overflow to be reachable.
+const ROW_MINW = "min-w-[1020px]";
 
-// The two middle columns, each nudged off the one before it so they read as
-// their own columns rather than as one run of text. Applied to the headings and
-// to every row's cells, never to one without the other.
-const GUESTS_INDENT = "pl-3";
-const STATUS_INDENT = "pl-4";
+// The three middle columns, each nudged further off the one before it so they
+// read as their own columns rather than as one run of text — the villa cell is
+// a photo and two lines of type, and without a step between them the dates and
+// the count looked like its continuation. Applied to the headings and to every
+// row's cells, never to one without the other.
+const STAY_INDENT = "pl-3";
+const GUESTS_INDENT = "pl-5";
+const STATUS_INDENT = "pl-5";
 
 const MONTHS = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -83,6 +104,26 @@ function fmtStay(checkIn: string, checkOut: string): string {
   const b = new Date(checkOut);
   const one = (d: Date) => `${d.getDate()} ${MONTHS[d.getMonth()]}`;
   return `${one(a)} → ${one(b)}`;
+}
+
+/**
+ * A status label as the collapsed row prints it: on two lines when it is long
+ * enough to need them.
+ *
+ * "Check-in window open" set on one line ran to the edge of its column, sat
+ * against the guests count beside it and left the check-out clock under it
+ * looking like a third column. Breaking at the space nearest the middle gives
+ * two balanced lines that stay inside the cell whatever the label says. Short
+ * labels — "Staying", "Cancelled" — are returned untouched.
+ */
+function statusLines(label: string): string[] {
+  if (label.length <= 15) return [label];
+  const mid = label.length / 2;
+  let at = -1;
+  for (let i = label.indexOf(" "); i >= 0; i = label.indexOf(" ", i + 1)) {
+    if (at < 0 || Math.abs(i - mid) < Math.abs(at - mid)) at = i;
+  }
+  return at < 0 ? [label] : [label.slice(0, at), label.slice(at + 1)];
 }
 
 const money = (n: number) => `$${n.toFixed(2)}`;
@@ -126,7 +167,13 @@ function greetingText(b: Booking): string {
       ? [
           `✨ Extra services:`,
           ...b.extraServices.map(
-            (s) => `   • ${s.name} — ${money(s.price)} × ${b.nights} = ${money(s.price * b.nights)}`
+            // Over the nights this one was actually charged for — a service
+            // bought after checkout runs from the night it was bought, not the
+            // whole stay (older payloads carry neither and fall back).
+            (s) => {
+              const n = s.nights || b.nights;
+              return `   • ${s.name} — ${money(s.price)} × ${n} = ${money(s.amount ?? s.price * n)}`;
+            }
           ),
         ]
       : []),
@@ -196,7 +243,7 @@ function SortDropdown({ sort, onToggle }: { sort: "desc" | "asc"; onToggle: () =
       onClick={onToggle}
       className="flex items-center gap-2 rounded-md border border-line px-3 py-1.5 text-[12px] text-body transition-colors hover:border-primary/40"
     >
-      Sort: {sort === "desc" ? "Latest to Oldest" : "Oldest to Latest"}
+      Sort: {sort === "asc" ? "Soonest first" : "Latest first"}
       <ChevronDown size={14} className="text-muted" />
     </button>
   );
@@ -205,19 +252,25 @@ function SortDropdown({ sort, onToggle }: { sort: "desc" | "asc"; onToggle: () =
 function BookingRow({
   booking,
   onCancel,
+  onEdit,
   cancelling,
   onReview,
   reviewBusy,
   expanded,
   onToggle,
+  onRefresh,
 }: {
   booking: Booking;
   onCancel: (booking: Booking) => void;
+  onEdit: (booking: Booking) => void;
   cancelling: boolean;
   onReview: (rating: number, comment: string) => void | Promise<void>;
   reviewBusy: boolean;
   expanded: boolean;
   onToggle: (id: string) => void;
+  /** Re-read the list — used when this stay's forced check-out falls due, since
+   *  the close itself happens on the server's next read of the booking. */
+  onRefresh: () => void;
 }) {
   // The server's clock, ticking — so a page left open through the check-in
   // hour drops the Cancel button on its own, exactly when the server would
@@ -239,6 +292,15 @@ function BookingRow({
   // offering the rest of the stay rather than a whole-booking cancellation it
   // could no longer perform.
   const canCancel = gate.open || (booking.cancellableNights?.length ?? 0) > 0;
+  // And the same question the other way up: is there anything to ADD? The
+  // server decides both halves — services the villa offers and this stay
+  // doesn't have, and whether it still has nights ahead to extend from — so a
+  // guest who has everything on offer is never shown a door onto an empty room.
+  const canEdit = booking.canAddServices || booking.canAddNights;
+  // Once the stay's LAST arrival has come round there is nothing ahead of the
+  // guest to re-plan — what they can still do is stay longer. So the button
+  // stops saying "Edit", which promises choices, and says what it now does.
+  const extendOnly = lastCheckInStarted(booking, now);
   // The guest's stay code, in the row where they can reach it without opening
   // anything — a code you have to hunt for is a code that expires first.
   //
@@ -368,7 +430,7 @@ function BookingRow({
             {/* The dates lead, the length follows them in a quieter line — the
                 same shape as the villa cell beside it, so the eye reads two
                 headlines and two footnotes rather than four equal greys. */}
-            <span className="flex min-w-0 flex-col gap-[3px]">
+            <span className={`flex min-w-0 flex-col gap-[3px] ${STAY_INDENT}`}>
               <span className="truncate text-[13px] font-medium text-ink">
                 {fmtStay(booking.checkIn, booking.checkOut)}
               </span>
@@ -384,12 +446,23 @@ function BookingRow({
             {/* An icon and a number. "2 guests" spelled out sat at the same
                 weight as everything around it and had to be read as words to
                 give up one digit. */}
+            {/* Once the host has counted the party in at the door, that count
+                replaces the booked one: it is who is actually in the property,
+                and the same figure the host's own table shows. */}
             <span
-              className={`flex items-center gap-1.5 text-[13px] font-medium text-body ${GUESTS_INDENT}`}
-              title={`${booking.guests} guest${booking.guests === 1 ? "" : "s"}`}
+              className={`flex items-center gap-1.5 text-[13px] font-medium ${GUESTS_INDENT} ${
+                booking.checkedInGuests > 0 ? "text-green-600" : "text-body"
+              }`}
+              title={
+                booking.checkedInGuests > 0
+                  ? `${booking.checkedInGuests} guest${
+                      booking.checkedInGuests === 1 ? "" : "s"
+                    } checked in`
+                  : `${booking.guests} guest${booking.guests === 1 ? "" : "s"}`
+              }
             >
               <Users size={14} className="shrink-0 text-muted" aria-hidden />
-              {booking.guests}
+              {booking.checkedInGuests > 0 ? booking.checkedInGuests : booking.guests}
             </span>
             {/* Status — where the stay actually is, and while it hasn't started
                 yet, WHEN it starts instead. "Confirmed" is not news to the
@@ -413,11 +486,21 @@ function BookingRow({
                   variant="text"
                 />
               ) : (
-                <span className={`text-[13px] font-semibold ${STATUS_TONE_CLASS[status.tone]}`}>
-                  {status.label}
+                <span
+                  className={`text-[13px] font-semibold leading-[1.25] ${STATUS_TONE_CLASS[status.tone]}`}
+                >
+                  {statusLines(status.label).map((line) => (
+                    <span key={line} className="block">
+                      {line}
+                    </span>
+                  ))}
                 </span>
               )}
               <StayCountdownPill booking={booking} />
+              {/* The check-out hour has gone by with the stay still open. It
+                  closes itself half an hour later — the guest sees exactly when
+                  their booking stops being live, rather than finding it closed. */}
+              <ForcedCheckOutPill booking={booking} onDue={onRefresh} />
             </span>
             {/* Actions — one fixed-width slot, then View. Rate stay, "Rated
                 4.5" and the PIN never appear together (a stay is either at its
@@ -493,6 +576,26 @@ function BookingRow({
                   early enough to stop a mis-aimed tap. The dialog it opens is
                   where the refund is actually stated and the decision actually
                   taken. */}
+              {/* Add to the stay. Sits before Cancel so the row reads in the
+                  order a guest thinks in — more of this trip, then less of it —
+                  and only appears when there is something to add. */}
+              {canEdit && (
+                <button
+                  type="button"
+                  onClick={() => onEdit(booking)}
+                  aria-label={`Add services or nights to ${booking.villaTitle} booking`}
+                  title={
+                    extendOnly
+                      ? "Stay longer — add nights to this booking"
+                      : "Add extra services or more nights"
+                  }
+                  className="inline-flex shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-lg border border-line px-3 py-[5px] text-[12.5px] font-medium text-body transition-colors hover:border-primary hover:bg-primary/5 hover:text-primary"
+                >
+                  <Plus size={13} className="shrink-0" aria-hidden />
+                  {extendOnly ? "Extend" : "Edit"}
+                </button>
+              )}
+
               {canCancel && (
                 <button
                   type="button"
@@ -553,6 +656,7 @@ function BookingRow({
               booking={booking}
               onCollapse={() => onToggle(booking.id)}
               onCancel={canCancel ? () => onCancel(booking) : undefined}
+              onEdit={canEdit ? () => onEdit(booking) : undefined}
               cancelling={cancelling}
               onReview={onReview}
               reviewBusy={reviewBusy}
@@ -569,8 +673,11 @@ export default function MyBookingsPage() {
   const toast = useToast();
   const [bookings, setBookings] = useState<Booking[] | null>(null);
   const [loadError, setLoadError] = useState("");
-  // The booking whose cancel dialog is open, if any.
+  // The booking whose cancel dialog is open, if any — and the one whose edit
+  // dialog is. Never both: the edit screen hands over to the cancel screen for
+  // shortening a stay, which is where that is priced.
   const [cancelTarget, setCancelTarget] = useState<Booking | null>(null);
+  const [editTarget, setEditTarget] = useState<Booking | null>(null);
   const [reviewingId, setReviewingId] = useState<string | null>(null);
   // Which booking row is expanded to show its full details inline.
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -580,7 +687,10 @@ export default function MyBookingsPage() {
   );
   // Each table sorts independently — one shared state would make sorting the
   // history silently re-order the active table above it.
-  const [activeSort, setActiveSort] = useState<"desc" | "asc">("desc");
+  // Active leads with the stay about to happen; history leads with the one that
+  // happened last. Both are "nearest to now first" — read forwards or backwards
+  // depending on which side of now the table lives on.
+  const [activeSort, setActiveSort] = useState<"desc" | "asc">("asc");
   const [historySort, setHistorySort] = useState<"desc" | "asc">("desc");
   const errorRef = useRef<HTMLDivElement>(null);
 
@@ -632,6 +742,13 @@ export default function MyBookingsPage() {
     awaitingPin ? 5_000 : undefined
   );
 
+  // A read is what closes an overrunning stay (the server does it lazily, on
+  // the next look at that booking), so a row whose forced check-out falls due
+  // asks for one immediately rather than sitting on "0:00" until the next poll.
+  const refreshNow = useCallback(() => {
+    load(true);
+  }, [load]);
+
   // The server's clock for the list itself, so the active/history split below
   // is judged on the same time as every row's own status.
   const listNow = useServerWallClock(bookings?.[0]?.serverNow ?? "");
@@ -659,12 +776,43 @@ export default function MyBookingsPage() {
         history.push(b);
       }
     }
-    const byCreated = (order: "desc" | "asc") => (a: Booking, b: Booking) => {
-      const diff = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-      return order === "desc" ? diff : -diff;
+    // The list is ordered by the STAY, not by when it was bought. What a guest
+    // scans this page for is which trip is next, so the one whose check-in
+    // comes soonest leads the active table; the history reads the other way,
+    // most recent stay first. Two stays that start on the same day fall back to
+    // when they were booked (newest first) and then to the id, so the order is
+    // fully determined — no row can swap places with another between renders.
+    const stamp = (b: Booking) => {
+      const t = new Date(b.createdAt).getTime();
+      return Number.isNaN(t) ? 0 : t;
     };
-    active.sort(byCreated(activeSort));
-    history.sort(byCreated(historySort));
+    const cmp = (x: string, y: string) => (x < y ? -1 : x > y ? 1 : 0);
+    // Whatever needs doing soonest, first — see `nextActionAt`. That is the
+    // arrival for a stay still to come, and the DEPARTURE for one under way,
+    // which is why sorting on the stay's start date got it wrong: a booking
+    // whose first part is behind it sorted above a guest arriving today while
+    // its own row read "in 2 days". Then check-in, then check-out, so two rows
+    // due at the same hour still read in stay order; then the booking stamp and
+    // the id, which decide nothing visible but keep the list from reshuffling
+    // between renders.
+    const byUrgency = (order: "asc" | "desc") => (a: Booking, b: Booking) => {
+      const dir = order === "asc" ? 1 : -1;
+      const na = nextActionAt(a, listNow);
+      const nb = nextActionAt(b, listNow);
+      // Compared, not subtracted: two rows with nothing outstanding are both
+      // Infinity, and Infinity − Infinity is NaN — which leaves a sort with no
+      // defined order at all.
+      const due = na === nb ? 0 : na < nb ? -1 : 1;
+      return (
+        dir * due ||
+        dir * cmp(a.checkIn, b.checkIn) ||
+        dir * cmp(a.checkOut, b.checkOut) ||
+        stamp(b) - stamp(a) ||
+        b.id.localeCompare(a.id, undefined, { numeric: true })
+      );
+    };
+    active.sort(byUrgency(activeSort));
+    history.sort(byUrgency(historySort));
     return { active, history };
   }, [bookings, activeSort, historySort, listNow]);
 
@@ -705,6 +853,20 @@ export default function MyBookingsPage() {
           }.`
         : `${what} — no refund is due.`
     );
+  }
+
+  // Adding to a stay is a screen of its own for the same reason cancelling is:
+  // what it costs depends on what is picked and on how much of the stay is
+  // still ahead, and both are priced against the server as the guest chooses
+  // (see EditBookingModal). This opens it and folds the result back in.
+  function onEdit(b: Booking) {
+    setEditTarget(b);
+  }
+
+  function onEdited(updated: Booking, summary: string) {
+    setEditTarget(null);
+    setBookings((prev) => (prev ?? []).map((x) => (x.id === updated.id ? updated : x)));
+    toast.success(summary);
   }
 
   // Leave / update a review for a completed stay, then fold the fresh review
@@ -802,11 +964,13 @@ export default function MyBookingsPage() {
                     key={b.id}
                     booking={b}
                     onCancel={onCancel}
+                    onEdit={onEdit}
                     cancelling={cancelTarget?.id === b.id}
                     onReview={(rating, comment) => onReview(b, rating, comment)}
                     reviewBusy={reviewingId === b.id}
                     expanded={expandedId === b.id}
                     onToggle={toggleExpand}
+                    onRefresh={refreshNow}
                   />
                 ))
               )}
@@ -837,11 +1001,13 @@ export default function MyBookingsPage() {
                     key={b.id}
                     booking={b}
                     onCancel={onCancel}
+                    onEdit={onEdit}
                     cancelling={false}
                     onReview={(rating, comment) => onReview(b, rating, comment)}
                     reviewBusy={reviewingId === b.id}
                     expanded={expandedId === b.id}
                     onToggle={toggleExpand}
+                    onRefresh={refreshNow}
                   />
                 ))
               )}
@@ -867,6 +1033,21 @@ export default function MyBookingsPage() {
           onCancelled={onCancelled}
         />
       )}
+
+      {editTarget && !cancelTarget && (
+        <EditBookingModal
+          booking={editTarget}
+          onClose={() => setEditTarget(null)}
+          onUpdated={onEdited}
+          // "Fewer nights" is the cancel screen's job — it prices the refund.
+          // Handing over rather than duplicating keeps one place where nights
+          // are given up, whichever door the guest came in by.
+          onCancelDates={() => {
+            setCancelTarget(editTarget);
+            setEditTarget(null);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -876,8 +1057,13 @@ export default function MyBookingsPage() {
 // column and then gets out of the way.
 function ColumnHeadings() {
   return (
+    // `border border-transparent`, and it is not decoration: every row below is
+    // a bordered card, so its cells start one pixel in from where a borderless
+    // heading's do and the fr columns are two pixels narrower. An invisible
+    // border of the same width gives the heading the identical box, and the
+    // columns line up instead of drifting apart across the row.
     <div
-      className={`mt-6 grid ${ROW_MINW} ${ROW_GRID} px-4 text-[11px] font-semibold uppercase tracking-wide text-muted`}
+      className={`mt-6 grid ${ROW_MINW} ${ROW_GRID} border border-transparent px-4 text-[11px] font-semibold uppercase tracking-wide text-muted`}
     >
       {COLUMNS.map((c, i) => (
         <span
@@ -887,7 +1073,15 @@ function ColumnHeadings() {
           // pressed up against it. `STATUS_INDENT` keeps the two in step: the
           // heading and every row below it move together or not at all.
           className={
-            c === "" ? "text-right" : i === 2 ? GUESTS_INDENT : i === 3 ? STATUS_INDENT : ""
+            c === ""
+              ? "text-right"
+              : i === 1
+                ? STAY_INDENT
+                : i === 2
+                  ? GUESTS_INDENT
+                  : i === 3
+                    ? STATUS_INDENT
+                    : ""
           }
         >
           {c || "Action"}

@@ -311,190 +311,223 @@ export default function CancelBookingModal({
   // A tap that had to take its neighbours with it — worth saying out loud, or
   // the picker looks like it selected dates on its own.
   const pulledAlong = effective.filter((n) => !selected.has(n)).length;
+  // The dialog is as wide as the stay needs and no wider: a weekend doesn't
+  // deserve a hall, and a long stay would otherwise stack its dates into a
+  // column taller than the screen. Width is what buys the height back.
+  const panelWidth = rows.length <= 7 ? 640 : rows.length <= 16 ? 800 : 940;
 
   return createPortal(
+    // The dialog never scrolls inside itself: a picker with its own scrollbar
+    // hides dates behind an edge the guest has to find. The panel is as tall as
+    // the stay needs, and on the rare booking too long to fit, the whole dialog
+    // moves under the OVERLAY's scroll — one scrollbar, in the usual place.
     <div
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
-      className="fixed inset-0 z-[110] flex items-center justify-center px-5 py-8"
+      className="fixed inset-0 z-[110] overflow-y-auto overscroll-contain"
     >
       <div
         aria-hidden
         onClick={() => !busy && onClose()}
-        className="animate-fade-in absolute inset-0 bg-ink/45 backdrop-blur-[2px]"
+        className="animate-fade-in fixed inset-0 bg-ink/45 backdrop-blur-[2px]"
       />
 
-      <div
-        ref={panelRef}
-        className="animate-toast-in relative flex max-h-full w-full max-w-[560px] flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-2xl"
-      >
-        {/* Header */}
-        <div className="flex items-start gap-3.5 border-b border-line px-6 py-5">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-50 text-red-500">
-            <CalendarX2 size={20} aria-hidden />
-          </span>
-          <div className="min-w-0">
-            <h2 id={titleId} className="text-[16px] font-bold text-ink">
-              Cancel dates
-            </h2>
-            <p className="mt-0.5 truncate text-[13px] text-body">{booking.villaTitle}</p>
-          </div>
-        </div>
-
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-          {/* The whole stay, night by night. Nothing is hidden: the dates that
-              can't go are here too, disabled, with their reason a tap away. */}
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-[12.5px] font-semibold uppercase tracking-wide text-muted">
-              Your booked dates
-            </p>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={selectAll}
-                disabled={!anySelectable || busy}
-                className="rounded-md border border-line px-2.5 py-1 text-[12px] font-semibold text-body transition-colors hover:border-primary/40 hover:text-ink disabled:opacity-50"
-              >
-                Select all
-              </button>
-              <button
-                type="button"
-                onClick={clearAll}
-                disabled={selected.size === 0 || busy}
-                className="rounded-md border border-line px-2.5 py-1 text-[12px] font-semibold text-body transition-colors hover:border-primary/40 hover:text-ink disabled:opacity-50"
-              >
-                Clear
-              </button>
+      <div className="relative flex min-h-full items-center justify-center px-5 py-6">
+        <div
+          ref={panelRef}
+          style={{ maxWidth: panelWidth }}
+          className="animate-toast-in relative w-full overflow-hidden rounded-2xl border border-line bg-white shadow-2xl"
+        >
+          {/* Header */}
+          <div className="flex items-start gap-3.5 border-b border-line px-6 py-4">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-50 text-red-500">
+              <CalendarX2 size={20} aria-hidden />
+            </span>
+            <div className="min-w-0">
+              <h2 id={titleId} className="text-[16px] font-bold text-ink">
+                Cancel dates
+              </h2>
+              <p className="mt-0.5 truncate text-[13px] text-body">{booking.villaTitle}</p>
             </div>
           </div>
 
-          {parts.map((part) => (
-            <div key={part.index} className="mt-3">
-              {parts.length > 1 && (
-                <p className="mb-1.5 text-[12px] font-semibold text-body">
-                  Part {part.index} of {parts.length}
+          {/* Two columns where there's room: the stay on the left, the money on
+              the right. Side by side the dialog is wide rather than tall, which
+              is what keeps a long stay on one screen without a scrollbar. */}
+          <div className="px-6 py-4 md:flex md:items-start md:gap-6">
+            <div className="min-w-0 md:flex-1">
+              {/* The whole stay, night by night. Nothing is hidden: the dates
+                  that can't go are here too, disabled, reason a tap away. */}
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[12.5px] font-semibold uppercase tracking-wide text-muted">
+                  Your booked dates
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={selectAll}
+                    disabled={!anySelectable || busy}
+                    className="rounded-md border border-line px-2.5 py-1 text-[12px] font-semibold text-body transition-colors hover:border-primary/40 hover:text-ink disabled:opacity-50"
+                  >
+                    Select all
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearAll}
+                    disabled={selected.size === 0 || busy}
+                    className="rounded-md border border-line px-2.5 py-1 text-[12px] font-semibold text-body transition-colors hover:border-primary/40 hover:text-ink disabled:opacity-50"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+
+              {parts.map((part) => (
+                <div key={part.index} className="mt-3">
+                  {parts.length > 1 && (
+                    <p className="mb-1.5 text-[12px] font-semibold text-body">
+                      Part {part.index} of {parts.length}
+                    </p>
+                  )}
+                  <div className="flex flex-wrap gap-1.5">
+                    {part.nights.map((row) => (
+                      <NightChip
+                        key={row.date}
+                        row={row}
+                        picked={effectiveSet.has(row.date)}
+                        busy={busy}
+                        onTap={() => tapNight(row)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ))}
+
+              <Legend />
+
+              {/* Why the last tap did what it did — a night that can't go, or
+                  one that took its neighbours with it. */}
+              {(note || pulledAlong > 0) && (
+                <p className="mt-2.5 text-[12px] leading-5 text-body" role="status">
+                  {pulledAlong > 0
+                    ? `A stay can't have a gap you leave and come back across, so ${pulledAlong} night${
+                        pulledAlong === 1 ? " next to your pick was" : "s next to your picks were"
+                      } added — nights are given up from the start or the end of a stay.`
+                    : note}
                 </p>
               )}
-              <div className="flex flex-wrap gap-1.5">
-                {part.nights.map((row) => (
-                  <NightChip
-                    key={row.date}
-                    row={row}
-                    picked={effectiveSet.has(row.date)}
-                    busy={busy}
-                    onTap={() => tapNight(row)}
-                  />
-                ))}
-              </div>
+
+              {!anySelectable && (
+                <p className="mt-2.5 text-[12px] leading-5 text-body">
+                  None of these nights can be cancelled any more. If your stay is under
+                  way, check out early instead — the nights go back on the calendar, but
+                  nothing is refunded.
+                </p>
+              )}
             </div>
-          ))}
 
-          <Legend />
-
-          {/* Why the last tap did what it did — a night that can't go, or one
-              that took its neighbours with it. */}
-          {(note || pulledAlong > 0) && (
-            <p className="mt-2.5 text-[12px] leading-5 text-body" role="status">
-              {pulledAlong > 0
-                ? `A stay can't have a gap you leave and come back across, so ${pulledAlong} night${
-                    pulledAlong === 1 ? " next to your pick was" : "s next to your picks were"
-                  } added — nights are given up from the start or the end of a stay.`
-                : note}
-            </p>
-          )}
-
-          {!anySelectable && (
-            <p className="mt-2.5 text-[12px] leading-5 text-body">
-              None of these nights can be cancelled any more. If your stay is under way,
-              check out early instead — the nights go back on the calendar, but nothing is
-              refunded.
-            </p>
-          )}
-
-          {/* What it costs. Every number here is the server's. */}
-          <div className="mt-5 rounded-xl border border-line bg-page px-4 py-3.5">
-            {effective.length === 0 ? (
-              <p className="text-[13px] text-body">
-                Pick the dates you want to cancel to see what comes back.
-              </p>
-            ) : quoting && !quote ? (
-              <p className="flex items-center gap-2 text-[13px] text-body">
-                <Loader2 size={15} className="animate-spin" aria-hidden /> Working out your
-                refund…
-              </p>
-            ) : blocked ? (
-              <p className="flex items-start gap-2 text-[13px] leading-5 text-red-600">
-                <AlertTriangle size={15} className="mt-0.5 shrink-0" aria-hidden />
-                {quote?.error}
-              </p>
-            ) : quote ? (
-              <div>
-                <Line
-                  label={
-                    quote.full
-                      ? `Whole booking — ${quote.nightsCount} night${quote.nightsCount === 1 ? "" : "s"}`
-                      : `${quote.nightsCount} night${quote.nightsCount === 1 ? "" : "s"} of ${booking.activeNights}`
-                  }
-                  value={money(quote.stayValue)}
-                />
-                <Line
-                  label={`Cancellation charge (${100 - quote.refundPercentage}%)`}
-                  value={`− ${money(quote.cancellationFee)}`}
-                  tone="red"
-                />
-                <div className="mt-2 flex items-center justify-between border-t border-line pt-2">
-                  <span className="text-[13px] font-semibold text-ink">Refund to you</span>
-                  <span
-                    className={`text-[15px] font-bold ${
-                      quote.refundAmount > 0 ? "text-green-600" : "text-red-600"
-                    }`}
-                  >
-                    {quote.refundAmount > 0 ? money(quote.refundAmount) : "No refund"}
-                  </span>
-                </div>
-                <p className="mt-2 text-[12px] leading-5 text-muted">{quote.message}</p>
+            <div className="mt-4 md:mt-0 md:w-[276px] md:shrink-0">
+              {/* What it costs. Every number here is the server's. */}
+              <div className="rounded-xl border border-line bg-page px-4 py-3">
+                {effective.length === 0 ? (
+                  <p className="text-[13px] text-body">
+                    Pick the dates you want to cancel to see what comes back.
+                  </p>
+                ) : quoting && !quote ? (
+                  <p className="flex items-center gap-2 text-[13px] text-body">
+                    <Loader2 size={15} className="animate-spin" aria-hidden /> Working out
+                    your refund…
+                  </p>
+                ) : blocked ? (
+                  <p className="flex items-start gap-2 text-[13px] leading-5 text-red-600">
+                    <AlertTriangle size={15} className="mt-0.5 shrink-0" aria-hidden />
+                    {quote?.error}
+                  </p>
+                ) : quote ? (
+                  <div>
+                    <Line
+                      label={
+                        quote.full
+                          ? `Whole booking — ${quote.nightsCount} night${quote.nightsCount === 1 ? "" : "s"}`
+                          : `${quote.nightsCount} night${quote.nightsCount === 1 ? "" : "s"} of ${booking.activeNights}`
+                      }
+                      value={money(quote.stayValue)}
+                    />
+                    {/* The services on those nights, called out because they
+                        do NOT follow the ladder: the host was going to do
+                        something on a night that is no longer happening, so
+                        there is nothing to keep a percentage of and it comes
+                        back whole. Without this line a guest reading "25%
+                        back" beside a bigger number would think the sum was
+                        wrong. */}
+                    {quote.extrasValue > 0 && (
+                      <Line
+                        label="Extra services (refunded in full)"
+                        value={`+ ${money(quote.extrasValue)}`}
+                      />
+                    )}
+                    <Line
+                      label={`Cancellation charge (${100 - quote.refundPercentage}%)`}
+                      value={`− ${money(quote.cancellationFee)}`}
+                      tone="red"
+                    />
+                    <div className="mt-2 flex items-center justify-between border-t border-line pt-2">
+                      <span className="text-[13px] font-semibold text-ink">
+                        Refund to you
+                      </span>
+                      <span
+                        className={`text-[15px] font-bold ${
+                          quote.refundAmount > 0 ? "text-green-600" : "text-red-600"
+                        }`}
+                      >
+                        {quote.refundAmount > 0 ? money(quote.refundAmount) : "No refund"}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-[12px] leading-5 text-muted">{quote.message}</p>
+                  </div>
+                ) : null}
               </div>
-            ) : null}
+
+              {error && (
+                <p className="mt-3 text-[12.5px] font-medium text-red-600" role="alert">
+                  {error}
+                </p>
+              )}
+
+              <p className="mt-2.5 text-[12px] leading-5 text-muted">
+                {full
+                  ? "The booking is called off and the nights go back on the villa's calendar. This can't be undone."
+                  : "The rest of your stay is unaffected; the nights you give up go back on the villa's calendar. This can't be undone."}
+              </p>
+            </div>
           </div>
 
-          {error && (
-            <p className="mt-3 text-[12.5px] font-medium text-red-600" role="alert">
-              {error}
-            </p>
-          )}
-
-          <p className="mt-3 text-[12px] leading-5 text-muted">
-            {full
-              ? "The booking is called off and the nights go back on the villa's calendar. This can't be undone."
-              : "The rest of your stay is unaffected; the nights you give up go back on the villa's calendar. This can't be undone."}
-          </p>
-        </div>
-
-        {/* Actions */}
-        <div className="flex justify-end gap-3 border-t border-line px-6 py-4">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={busy}
-            className="rounded-lg border border-line px-4 py-2.5 text-[13px] font-semibold text-body transition-colors hover:border-primary/40 hover:text-ink disabled:opacity-60"
-          >
-            Keep booking
-          </button>
-          <button
-            type="button"
-            onClick={submit}
-            disabled={busy || quoting || blocked || effective.length === 0}
-            aria-busy={busy}
-            className="inline-flex items-center gap-2 rounded-lg bg-red-500 px-4 py-2.5 text-[13px] font-semibold text-white shadow-sm transition-colors hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {busy && <span className="spinner" aria-hidden />}
-            {busy
-              ? "Cancelling…"
-              : full
-                ? "Cancel booking"
-                : `Cancel ${effective.length || ""} night${effective.length === 1 ? "" : "s"}`}
-          </button>
+          {/* Actions */}
+          <div className="flex justify-end gap-3 border-t border-line px-6 py-3.5">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={busy}
+              className="rounded-lg border border-line px-4 py-2.5 text-[13px] font-semibold text-body transition-colors hover:border-primary/40 hover:text-ink disabled:opacity-60"
+            >
+              Keep booking
+            </button>
+            <button
+              type="button"
+              onClick={submit}
+              disabled={busy || quoting || blocked || effective.length === 0}
+              aria-busy={busy}
+              className="inline-flex items-center gap-2 rounded-lg bg-red-500 px-4 py-2.5 text-[13px] font-semibold text-white shadow-sm transition-colors hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {busy && <span className="spinner" aria-hidden />}
+              {busy
+                ? "Cancelling…"
+                : full
+                  ? "Cancel booking"
+                  : `Cancel ${effective.length || ""} night${effective.length === 1 ? "" : "s"}`}
+            </button>
+          </div>
         </div>
       </div>
     </div>,
@@ -563,7 +596,7 @@ function NightChip({
 
 function Legend() {
   return (
-    <ul className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11.5px] text-muted">
+    <ul className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] text-muted">
       <LegendItem className="border-line bg-white" label="Can be cancelled" />
       <LegendItem className="border-red-500 bg-red-50" label="Selected to cancel" />
       <LegendItem className="border-dashed border-line bg-page" label="Locked — tap to see why" />

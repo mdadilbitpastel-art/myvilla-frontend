@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronDown, Star } from "lucide-react";
+import { ChevronDown, Star, Users } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useVillaCount } from "@/lib/useProperty";
 import { useLiveRefresh } from "@/lib/useLiveRefresh";
@@ -13,6 +13,7 @@ import CountPill from "@/components/ui/CountPill";
 import StayPartChips from "@/components/ui/StayPartChips";
 import CheckInCountdownPill from "@/components/ui/CheckInCountdownPill";
 import StayCountdownPill from "@/components/ui/StayCountdownPill";
+import ForcedCheckOutPill from "@/components/ui/ForcedCheckOutPill";
 import Img from "@/components/ui/Img";
 import {
   fetchVillaBookings,
@@ -31,7 +32,7 @@ import {
   useServerWallClock,
   stayAction,
   stayProgress,
-  stayStartMs,
+  nextActionAt,
   STATUS_TONE_CLASS,
 } from "@/lib/booking";
 
@@ -49,8 +50,14 @@ const COLUMNS = ["Property", "Stay Duration", "Guests", "Status", ""];
 // days", not a bare "In 12 days"), and on one line rather than two. A villa
 // title truncates gracefully and the dates have slack; a status that wraps
 // mid-phrase does not.
-const ROW_GRID = "grid-cols-[1.4fr_1.3fr_0.55fr_1.2fr_1.5fr]";
-const ROW_MINW = "min-w-[860px]";
+// `minmax(0, …fr)`, never a bare fr: a bare track refuses to go narrower than
+// its content, so an actions cell holding one control more than its share
+// widened itself on those rows alone and slid every column left of it out from
+// under its heading. With a 0 floor each track is exactly its share on every
+// row, and the row's min-width below is what keeps the buttons fitting.
+const ROW_GRID =
+  "grid-cols-[minmax(0,1.4fr)_minmax(0,1.3fr)_minmax(0,0.55fr)_minmax(0,1.2fr)_minmax(0,2.2fr)]";
+const ROW_MINW = "min-w-[980px]";
 
 const MONTHS = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -90,9 +97,12 @@ function SortDropdown({
 
 // The upcoming table's two directions: the next arrival first (the default), or
 // the furthest-off stay first.
+// The table is ordered by what falls due next — an arrival to run, or a
+// departure to close — so the label says that rather than naming check-in,
+// which is only half of what it sorts on.
 const CHECKIN_SORT_LABELS = {
-  asc: "Check-in: Soonest first",
-  desc: "Check-in: Latest first",
+  asc: "Soonest first",
+  desc: "Latest first",
 };
 
 function RequestRow({
@@ -102,6 +112,7 @@ function RequestRow({
   onCheckIn,
   onAllowLate,
   onCheckOut,
+  onRefresh,
   working,
 }: {
   req: Booking;
@@ -110,6 +121,9 @@ function RequestRow({
   onCheckIn: (id: string) => void;
   onAllowLate: (id: string) => void;
   onCheckOut: (id: string) => void;
+  /** Re-read the list — used when a stay's forced check-out falls due, since
+   *  the close itself happens on the server's next read of that booking. */
+  onRefresh: () => void;
   working: boolean;
 }) {
   // The server's clock, ticking — so a stay that has been waiting an hour says
@@ -184,8 +198,24 @@ function RequestRow({
                   which part they are on. */}
               <StayPartChips progress={progress} />
             </span>
-            <span className="text-body">
-              {req.guests} {req.guests === 1 ? "guest" : "guests"}
+            {/* One figure, and the truest one available: once the host has
+                counted the party in at the door that count IS who is in the
+                property, so it replaces the booked number rather than sitting
+                beside it. Until then the booking's own is all there is. */}
+            <span
+              className={`flex items-center gap-1.5 text-[13px] font-medium ${
+                req.checkedInGuests > 0 ? "text-green-600" : "text-body"
+              }`}
+              title={
+                req.checkedInGuests > 0
+                  ? `${req.checkedInGuests} guest${
+                      req.checkedInGuests === 1 ? "" : "s"
+                    } checked in`
+                  : `${req.guests} guest${req.guests === 1 ? "" : "s"} booked`
+              }
+            >
+              <Users size={14} className="shrink-0 text-muted" aria-hidden />
+              {req.checkedInGuests > 0 ? req.checkedInGuests : req.guests}
             </span>
 
             {/* Status — the real stay state, plus the guest's rating once they
@@ -223,21 +253,27 @@ function RequestRow({
                 </span>
               )}
               <StayCountdownPill booking={req} />
-              {/* One star and the score rather than a five-star strip — the
-                  strip crowded the status column and read as decoration. */}
-              {req.reviewRating > 0 && (
-                <span
-                  title={`Guest rated this stay ${req.reviewRating} out of 5`}
-                  className="inline-flex items-center gap-1 whitespace-nowrap text-[12px] font-medium text-muted"
-                >
-                  <Star size={11} className="fill-star text-star" aria-hidden />
-                  Guest rated {req.reviewRating.toFixed(1)}
-                </span>
-              )}
+              {/* The guest's hour to be out has gone by and nobody has closed
+                  the stay. Half an hour from that hour it closes itself, and
+                  this is the host's warning that it is about to — while there
+                  is still time to do it properly, with the guest's PIN. */}
+              <ForcedCheckOutPill booking={req} onDue={onRefresh} />
             </span>
 
-            {/* Actions — expand for full details, and the single stay action. */}
+            {/* Actions — the guest's score, then the single stay action, then
+                expand for the full details. */}
             <div className="flex items-center justify-end gap-2">
+              <span className="flex w-[104px] shrink-0 justify-end">
+                {req.reviewRating > 0 && (
+                  <span
+                    title={`Guest rated this stay ${req.reviewRating} out of 5`}
+                    className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-star/10 px-2.5 py-1.5 text-[12.5px] font-semibold text-[#b8860b]"
+                  >
+                    <Star size={13} className="fill-star text-star" aria-hidden />
+                    Rated {req.reviewRating.toFixed(1)}
+                  </span>
+                )}
+              </span>
               <StayActionButton
                 booking={req}
                 onCheckIn={onCheckIn}
@@ -341,6 +377,13 @@ export default function RentRequestsPage() {
   // Paused mid check-in/out so an in-flight poll can't land stale rows over it.
   useLiveRefresh(() => load(true), ready && !!user && !workingId);
 
+  // A read is what closes an overrunning stay (the server does it lazily, on
+  // the next look at that booking), so a row whose forced check-out falls due
+  // asks for one immediately rather than sitting on "0:00" until the next poll.
+  const refreshNow = useCallback(() => {
+    load(true);
+  }, [load]);
+
 
   // Apply a mutation's returned booking into the list (the popup, derived by
   // id, updates with it).
@@ -380,7 +423,7 @@ export default function RentRequestsPage() {
   // stays inside the dialog, next to the boxes it is about — the host is
   // mid-conversation with the guest and shouldn't have to hunt for it.
   const doVerifyPin = useCallback(
-    async (pin: string) => {
+    async (pin: string, guests: number) => {
       if (!pinBookingId) return;
       const leaving = pinMode === "out";
       setPinBusy(true);
@@ -388,14 +431,16 @@ export default function RentRequestsPage() {
       try {
         const updated = await (leaving
           ? verifyCheckOut(pinBookingId, pin)
-          : verifyCheckIn(pinBookingId, pin));
+          : verifyCheckIn(pinBookingId, pin, guests));
         applyUpdate(updated);
         setPinBookingId(null);
         // An early departure is worth saying out loud: the host has just given
         // nights back to their own calendar, and that is the point of it.
         toast.success(
           !leaving
-            ? "PIN verified — guest checked in."
+            ? `PIN verified — ${updated.checkedInGuests || guests} guest${
+                (updated.checkedInGuests || guests) === 1 ? "" : "s"
+              } checked in.`
             : updated.releasedNights > 0
               ? `Guest checked out ${updated.releasedNights} night${
                   updated.releasedNights === 1 ? "" : "s"
@@ -493,14 +538,16 @@ export default function RentRequestsPage() {
       const diff = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       return order === "desc" ? diff : -diff;
     };
-    // Whoever arrives next, first. A stay already under way has the earliest
-    // check-in of all, so it sorts above the ones still to come — which is
-    // right: the guest in the property is the one the host may have to check
-    // out. Ties (two arrivals the same hour) fall back to the newer booking,
+    // Whatever the host has to do next, first — an arrival to run, or a
+    // departure to close for the guest already in. Sorting on the stay's start
+    // read the wrong thing off a split stay: with its first part behind it, a
+    // booking whose next arrival is days away still had the earliest start of
+    // all and sat above the guest turning up this afternoon. `nextActionAt` is
+    // the hour the job actually falls due. Ties fall back to the newer booking,
     // so the order is stable rather than left to the server's.
     const byCheckIn = (order: "desc" | "asc") => (a: Booking, b: Booking) => {
-      const ma = stayStartMs(a);
-      const mb = stayStartMs(b);
+      const ma = nextActionAt(a, listNow);
+      const mb = nextActionAt(b, listNow);
       // Written as a comparison rather than a subtraction: two bookings with no
       // readable check-in both come back Infinity, and Infinity − Infinity is
       // NaN — a comparator that returns NaN leaves the sort order undefined.
@@ -634,6 +681,7 @@ export default function RentRequestsPage() {
                   onCheckIn={doCheckIn}
                   onAllowLate={doAllowLate}
                   onCheckOut={doCheckOut}
+                  onRefresh={refreshNow}
                   working={workingId === req.id}
                 />
               ))
@@ -677,6 +725,7 @@ export default function RentRequestsPage() {
                     onCheckIn={doCheckIn}
                     onAllowLate={doAllowLate}
                     onCheckOut={doCheckOut}
+                    onRefresh={refreshNow}
                     working={workingId === req.id}
                   />
                 ))
@@ -718,7 +767,11 @@ export default function RentRequestsPage() {
 
 function ColumnHeadings() {
   return (
-    <div className={`mt-6 grid ${ROW_MINW} ${ROW_GRID} px-4 text-[13px] text-muted`}>
+    // The transparent border matches the bordered row cards below, so heading
+    // and cell sit on the same left edge — see the guest table's own headings.
+    <div
+      className={`mt-6 grid ${ROW_MINW} ${ROW_GRID} border border-transparent px-4 text-[13px] text-muted`}
+    >
       {COLUMNS.map((c, i) => (
         <span key={c || `col-${i}`} className={c === "" ? "text-right" : ""}>
           {c || "Actions"}

@@ -257,8 +257,22 @@ export async function removeAvatar(): Promise<AuthUser> {
 
 /* ---- Villas / "Add your Villa" ---- */
 
-/** A premium add-on: a name and its price, charged per night. */
-export type ExtraService = { name: string; price: number };
+/** A premium add-on: a name and its price, charged per night.
+ *
+ *  On a VILLA that is all there is. On a BOOKING the two below say what was
+ *  actually bought — how many nights this one was charged over and what that
+ *  came to. A service ticked at checkout ran the whole stay; one bought
+ *  afterwards runs only from the night it was bought, so the two can't be
+ *  assumed equal (they are 0 on the villa's own list). */
+export type ExtraService = {
+  name: string;
+  price: number;
+  nights?: number;
+  amount?: number;
+  /** On an addition's receipt: this service was already on the booking and was
+   *  carried on over the nights being added, not bought in that purchase. */
+  carried?: boolean;
+};
 
 export type VillaInput = {
   title: string;
@@ -789,6 +803,10 @@ export type StaySegment = {
    *  happens. Real instants, so unlike the scheduled pair these do localise. */
   checkedInAt: string;
   checkedOutAt: string;
+  /** How many people the host counted in for THIS part — 0 until they do. A
+   *  split stay is arrived at once per part, and the party can be a different
+   *  size each time. */
+  checkedInGuests: number;
 };
 
 export type BookingInput = {
@@ -815,6 +833,10 @@ export type BookingInput = {
   billingCountry: string;
   contactEmail: string;
   contactPhone?: string;
+  /** Pay the way this guest paid before: the server looks the method up against
+   *  their own past bookings and reuses its masked reference and billing
+   *  address. The card fields above are ignored when this is set. */
+  useSavedPayment?: boolean;
   /** Optional discount code; re-validated and applied on the server. */
   couponCode?: string;
   /** Names of the extra services the guest ticked; priced on the server. */
@@ -840,6 +862,13 @@ export type Booking = {
    *  slept — not the days between the two. */
   segments: StaySegment[];
   guests: number;
+  /** How many guests the host actually counted through the door when they
+   *  verified the arrival — 0 until that happens, and never the same thing as
+   *  `guests`, which is only what the booking was made for. `guestCapacity` is
+   *  what the villa sleeps: the ceiling on that headcount, enforced server-side
+   *  as well as offered as the input's max. */
+  checkedInGuests: number;
+  guestCapacity: number;
   pricePerNight: number;
   subtotal: number;
   discount: number;
@@ -937,6 +966,24 @@ export type Booking = {
    *  calendar for other guests. 0 / false until that happens. */
   earlyCheckOut: boolean;
   releasedNights: number;
+  /** The overrun. A stay nobody checked out closes itself half an hour after
+   *  the hour the guest had to be out — the departure PIN only ever existed to
+   *  stop a host ending a stay EARLY, and past the hour there is nothing left
+   *  for it to protect.
+   *
+   *  `checkoutOverdue` is that half hour running. `autoCheckOutAt` is when it
+   *  closes, naive wall-clock like `checkOutAt` (compare against `serverNow`,
+   *  never `new Date()`), and `autoCheckOutSecondsLeft` is the server's own
+   *  count at the moment the payload was built — what the countdown re-bases
+   *  itself on with every poll. "" / 0 when nothing is pending. */
+  checkoutOverdue: boolean;
+  autoCheckOutAt: string;
+  autoCheckOutSecondsLeft: number;
+  /** Whether this stay was closed BY the platform rather than by the host —
+   *  and when. `checkedOutAt` carries the same instant; this is the answer to
+   *  who ended it, which is what a disputed departure turns on. */
+  forcedCheckOut: boolean;
+  forcedCheckOutAt: string;
   /** The live check-out PIN — the same arrangement as the check-in one above,
    *  and never both at once: a booking has one live code, for whichever end of
    *  the stay it is at. */
@@ -976,6 +1023,137 @@ export type Booking = {
   /** One receipt per cancellation event, oldest first, and their total refund. */
   cancellations: BookingCancellation[];
   refundedTotal: number;
+  /** The other direction: what may still be ADDED to this stay, and what has
+   *  been. `availableServices` are the villa's add-ons this booking doesn't
+   *  have yet — an empty list is what HIDES the "add a service" option rather
+   *  than opening an empty picker. Both flags are false once the stay is
+   *  cancelled or every part of it is behind the guest. */
+  availableServices: ExtraService[];
+  canAddServices: boolean;
+  canAddNights: boolean;
+  /** One receipt per purchase made after booking, oldest first, and their sum. */
+  additions: BookingAddition[];
+  additionsTotal: number;
+};
+
+/** One purchase made against a booking after it was paid for — extra services,
+ *  or extra nights — with the payment that covered it. */
+export type BookingAddition = {
+  id: string;
+  /** "services" — add-ons were bought — or "nights", the stay grew. */
+  kind: string;
+  /** What was bought. On a nights purchase these are the services already on
+   *  the booking, carried on over the new nights. */
+  services: ExtraService[];
+  nights: string[];
+  nightsCount: number;
+  /** accommodation + serviceFee + tax + extras = amount, always. Only a nights
+   *  purchase has the first three. */
+  accommodation: number;
+  serviceFee: number;
+  tax: number;
+  extras: number;
+  amount: number;
+  paymentMethod: string;
+  paymentReference: string;
+  message: string;
+  createdAt: string;
+};
+
+/** How an addition is paid for: the card already on the booking, or a fresh
+ *  method validated exactly as checkout validates one. */
+export type AddonPayment = {
+  useSaved?: boolean;
+  paymentMethod?: string;
+  cardNumber?: string;
+  expiration?: string;
+  cvv?: string;
+  paymentDetail?: string;
+  billingStreet?: string;
+  billingApartment?: string;
+  billingCity?: string;
+  billingState?: string;
+  billingZip?: string;
+  billingCountry?: string;
+};
+
+/** Everything the edit screen needs to draw itself: what may still be added to
+ *  a stay, and the calendar it may be extended over. The calendar is this
+ *  BOOKING's — the nights it already holds are marked as its own (`ownNights`)
+ *  rather than counted as taken. */
+export type BookingEditOptions = {
+  bookingId: string;
+  availableServices: ExtraService[];
+  canAddServices: boolean;
+  canAddNights: boolean;
+  /** The one sentence explaining a shut door ("" when both are open). */
+  blockedReason: string;
+  /** Nights a service bought now would be charged over (the stay's nights that
+   *  haven't started), and what one more night would cost. */
+  chargeableNights: number;
+  pricePerNight: number;
+  /** The methods this host takes, and what the booking itself was paid with —
+   *  the "use the same card again" option. */
+  acceptedPayments: string[];
+  savedPaymentMethod: string;
+  savedPaymentReference: string;
+  firstDate: string;
+  lastDate: string;
+  maxCheckOut: string;
+  unavailableDates: string[];
+  ownNights: string[];
+  checkInTime: string;
+  serverNow: string;
+};
+
+/** What buying a set of extra services would cost, priced by the server with
+ *  the same code the purchase runs. `allowed` false means it can't go through
+ *  and `error` says why. */
+export type ServiceQuote = {
+  services: ExtraService[];
+  nights: string[];
+  nightsCount: number;
+  amount: number;
+  allowed: boolean;
+  message: string;
+  error: string;
+};
+
+/** Everything being added in one go, and the single figure it comes to. Either
+ *  half may be null — what is never split is the payment: `amount` is what the
+ *  button charges, and `allowed` false means none of it goes through. */
+export type ChangesQuote = {
+  services: ServiceQuote | null;
+  nights: NightsQuote | null;
+  amount: number;
+  allowed: boolean;
+  message: string;
+  error: string;
+};
+
+/** What extending a stay over a range would cost. `kept` are nights inside the
+ *  range the booking already holds — not charged for, so dragging across the
+ *  whole stay to add a day on the end never pays for it twice. */
+export type NightsQuote = {
+  nights: string[];
+  nightsCount: number;
+  kept: string[];
+  /** Nights inside the range somebody else holds — skipped, not refused: the
+   *  stay extends around them and the guest checks out and back in. */
+  skipped: string[];
+  accommodation: number;
+  serviceFee: number;
+  tax: number;
+  extras: number;
+  services: ExtraService[];
+  amount: number;
+  /** What the stay would become. */
+  checkIn: string;
+  checkOut: string;
+  totalNights: number;
+  allowed: boolean;
+  message: string;
+  error: string;
 };
 
 /** One night of a stay as the cancel screen sees it: whether it may still be
@@ -1012,6 +1190,9 @@ export type BookingCancellation = {
   cancellationFee: number;
   refundAmount: number;
   refundPercentage: number;
+  /** How much of the refund was extra services on those nights — handed back in
+   *  full, whatever the ladder charged on the stay itself. */
+  extrasRefund: number;
   /** The policy line the guest was shown as they confirmed it. */
   message: string;
   createdAt: string;
@@ -1027,6 +1208,10 @@ export type NightsCancellationQuote = {
   cancellationFee: number;
   refundAmount: number;
   refundPercentage: number;
+  /** Of `stayValue`, what was extra services on those nights. Refunded IN FULL
+   *  whatever the ladder charges on the stay — already inside `refundAmount`,
+   *  named separately so the summary can show why the refund beats the tier. */
+  extrasValue: number;
   /** The selection is every night still held — a whole-stay cancellation. */
   full: boolean;
   allowed: boolean;
@@ -1037,21 +1222,27 @@ export type NightsCancellationQuote = {
 const BOOKING_SELECTION = `
   id villaId villaTitle villaCover villaCity villaCountry
   guestName guestAvatar guestEmail
-  checkIn checkOut nights segments { index checkIn checkOut nights checkInAt checkOutAt checkedInAt checkedOutAt } guests
+  checkIn checkOut nights segments { index checkIn checkOut nights checkInAt checkOutAt checkedInAt checkedOutAt checkedInGuests } guests
+  checkedInGuests guestCapacity
   pricePerNight subtotal discount couponCode discountLabel serviceFee tax
-  extraServices { name price } extrasTotal total
+  extraServices { name price nights amount } extrasTotal total
+  availableServices { name price } canAddServices canAddNights additionsTotal
+  additions { id kind services { name price nights amount carried } nights nightsCount
+              accommodation serviceFee tax extras amount
+              paymentMethod paymentReference message createdAt }
   hostName hostEmail hostPhone hostAvatar hostGender guestPhone
   checkInAt checkOutAt serverNow lifecycleStatus hoursLate
   canCancel refundPercentage penaltyPercentage cancellationMessage
   cancelFeeNow refundAmountNow cancellationFee refundAmount
   cancellableNights cancelledNights activeNights partiallyCancelled refundedTotal
   nightOptions { date partIndex state cancellable refundPercentage stayValue refundAmount cancellationFee message }
-  cancellations { id kind nights nightsCount stayValue cancellationFee refundAmount refundPercentage message createdAt }
+  cancellations { id kind nights nightsCount stayValue cancellationFee refundAmount refundPercentage extrasRefund message createdAt }
   bookingStatus checkinAvailable buttonState buttonVisible
   gracePeriodRemainingMinutes otpRequired checkinMessage graceEndsAt
   noShowAt lateCheckInAllowed
   checkinPin checkinPinExpiresIn checkinPinPending checkinPinAttemptsLeft
   checkoutAvailable checkoutMessage checkoutEarlyNow earlyCheckOut releasedNights
+  checkoutOverdue autoCheckOutAt autoCheckOutSecondsLeft forcedCheckOut forcedCheckOutAt
   checkoutPin checkoutPinExpiresIn checkoutPinPending checkoutPinAttemptsLeft
   canReview reviewRating reviewComment reviewCreatedAt canEditReview reviewEditableUntil
   paymentMethod cardLast4 status checkedInAt checkedOutAt createdAt`;
@@ -1126,12 +1317,128 @@ export async function fetchNightsCancellationQuote(
     `query NightsCancellationQuote($id: ID!, $nights: [String!]!) {
        nightsCancellationQuote(id: $id, nights: $nights) {
          nights nightsCount stayValue cancellationFee refundAmount
-         refundPercentage full allowed message error
+         refundPercentage extrasValue full allowed message error
        }
      }`,
     { id, nights }
   );
   return data.nightsCancellationQuote;
+}
+
+/** A way this guest has paid before, offered back at checkout. Masked
+ *  reference and billing address only — the card number and CVV were never
+ *  stored, so there is nothing here to leak and nothing to retype. */
+export type SavedPayment = {
+  method: string;
+  reference: string;
+  billingStreet: string;
+  billingApartment: string;
+  billingCity: string;
+  billingState: string;
+  billingZip: string;
+  billingCountry: string;
+  lastUsed: string;
+};
+
+/** The ways the signed-in guest has paid before, most recent first. Empty on a
+ *  first booking, which is what keeps the option off that checkout. */
+export async function fetchSavedPayments(): Promise<SavedPayment[]> {
+  const data = await gql<{ savedPayments: SavedPayment[] }>(
+    `query SavedPayments {
+       savedPayments {
+         method reference billingStreet billingApartment billingCity
+         billingState billingZip billingCountry lastUsed
+       }
+     }`,
+    {}
+  );
+  return data.savedPayments;
+}
+
+/* ---- Editing a booking: adding services and nights ---- */
+
+const SERVICE_QUOTE_SELECTION = `
+  services { name price nights amount } nights nightsCount amount
+  allowed message error`;
+
+const NIGHTS_QUOTE_SELECTION = `
+  nights nightsCount kept skipped accommodation serviceFee tax extras
+  services { name price nights amount } amount
+  checkIn checkOut totalNights allowed message error`;
+
+/** What may still be added to one's own booking, and the calendar it may be
+ *  extended over — one round trip, read fresh each time the screen opens. */
+export async function fetchBookingEditOptions(
+  id: string
+): Promise<BookingEditOptions> {
+  const data = await gql<{ bookingEditOptions: BookingEditOptions }>(
+    `query BookingEditOptions($id: ID!) {
+       bookingEditOptions(id: $id) {
+         bookingId availableServices { name price }
+         canAddServices canAddNights blockedReason
+         chargeableNights pricePerNight
+         acceptedPayments savedPaymentMethod savedPaymentReference
+         firstDate lastDate maxCheckOut unavailableDates ownNights
+         checkInTime serverNow
+       }
+     }`,
+    { id }
+  );
+  return data.bookingEditOptions;
+}
+
+/**
+ * Price everything the guest is adding — services, nights, or both — as ONE
+ * figure. Read-only, so it is safe to call on every tick of the picker.
+ *
+ * Both halves go in the same call because they are bought in the same breath: a
+ * service added alongside two extra nights runs over those nights too, which is
+ * not something two separate quotes could work out.
+ */
+export async function fetchChangesQuote(
+  id: string,
+  services: string[],
+  checkIn: string,
+  checkOut: string
+): Promise<ChangesQuote> {
+  const data = await gql<{ bookingChangesQuote: ChangesQuote }>(
+    `query BookingChangesQuote($id: ID!, $services: [String!], $checkIn: String, $checkOut: String) {
+       bookingChangesQuote(id: $id, services: $services, checkIn: $checkIn, checkOut: $checkOut) {
+         services { ${SERVICE_QUOTE_SELECTION} }
+         nights { ${NIGHTS_QUOTE_SELECTION} }
+         amount allowed message error
+       }
+     }`,
+    { id, services, checkIn: checkIn || null, checkOut: checkOut || null }
+  );
+  return data.bookingChangesQuote;
+}
+
+/**
+ * Add extra services, more nights, or both to a booking that is already paid
+ * for — in one charge.
+ *
+ * One call and not two: the guest made one decision, and splitting it would
+ * take two payments off their card and price a service over the stay they had
+ * rather than the one they were buying. Everything is re-decided on the server
+ * at the moment the button is pressed.
+ */
+export async function addToBooking(
+  id: string,
+  services: string[],
+  checkIn: string,
+  checkOut: string,
+  payment: AddonPayment
+): Promise<Booking> {
+  const data = await gql<{ addToBooking: Booking }>(
+    `mutation AddToBooking($id: ID!, $services: [String!], $checkIn: String, $checkOut: String, $payment: AddonPaymentInput!) {
+       addToBooking(id: $id, services: $services, checkIn: $checkIn, checkOut: $checkOut, payment: $payment) {
+         ${BOOKING_SELECTION}
+       }
+     }`,
+    { id, services, checkIn: checkIn || null, checkOut: checkOut || null, payment }
+  );
+  return data.addToBooking;
 }
 
 /**
@@ -1153,16 +1460,25 @@ export async function startCheckIn(id: string): Promise<Booking> {
 }
 
 /**
- * Step 2: the host types back the PIN the guest read out. Correct → the guest
- * is checked in and the code is spent. Three wrong tries lock that code and
- * email the guest a security alert; `startCheckIn` issues a fresh one.
+ * Step 2: the host types back the PIN the guest read out, with how many people
+ * are actually walking in. Correct → the guest is checked in, the headcount is
+ * recorded on the booking, and the code is spent. Three wrong tries lock that
+ * code and email the guest a security alert; `startCheckIn` issues a fresh one.
+ *
+ * `guests` is checked against the villa's capacity on the SERVER as well as by
+ * the dialog's input, so a number the property can't hold is refused with the
+ * server's own sentence rather than quietly recorded.
  */
-export async function verifyCheckIn(id: string, pin: string): Promise<Booking> {
+export async function verifyCheckIn(
+  id: string,
+  pin: string,
+  guests: number
+): Promise<Booking> {
   const data = await gql<{ verifyCheckIn: Booking }>(
-    `mutation VerifyCheckIn($id: ID!, $pin: String!) {
-       verifyCheckIn(id: $id, pin: $pin) { ${BOOKING_SELECTION} }
+    `mutation VerifyCheckIn($id: ID!, $pin: String!, $guests: Int) {
+       verifyCheckIn(id: $id, pin: $pin, guests: $guests) { ${BOOKING_SELECTION} }
      }`,
-    { id, pin }
+    { id, pin, guests }
   );
   return data.verifyCheckIn;
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { KeyRound, LogOut, RefreshCw, ShieldAlert, X } from "lucide-react";
+import { KeyRound, LogOut, Minus, Plus, RefreshCw, ShieldAlert, Users, X } from "lucide-react";
 import type { Booking } from "@/lib/api";
 import { usePinCountdown } from "@/lib/booking";
 
@@ -69,6 +69,12 @@ const THEME: Record<
  * boxes they type it into, the countdown until the code dies, and the one
  * button that issues a fresh one.
  *
+ * On the way IN it also asks the one question only the person at the door can
+ * answer: how many people are actually walking in. The booking says what was
+ * booked months ago; parties turn up short, or with a cousin nobody mentioned.
+ * The count can't go past what the villa sleeps — the stepper stops there and
+ * the server refuses anything above it either way.
+ *
  * It owns no rules: whether a code is live, how many tries are left and whether
  * the stay is at the point that code is for are all decided by the server.
  * Everything here is either an instruction to the host or a reflection of what
@@ -87,8 +93,10 @@ export default function StayPinDialog({
 }: {
   booking: Booking;
   mode: StayPinMode;
-  /** Submit the typed PIN. Rejects with the server's message when it's wrong. */
-  onVerify: (pin: string) => void | Promise<void>;
+  /** Submit the typed PIN, with the arriving headcount on a check-in (it is
+   *  ignored on the way out). Rejects with the server's message when either is
+   *  wrong. */
+  onVerify: (pin: string, guests: number) => void | Promise<void>;
   /** Issue a new PIN (the old one stops working the moment this returns). */
   onResend: () => void | Promise<void>;
   onClose: () => void;
@@ -105,7 +113,19 @@ export default function StayPinDialog({
     ? booking.checkoutPinAttemptsLeft
     : booking.checkinPinAttemptsLeft;
 
+  // What the villa sleeps — the ceiling on the headcount. Older payloads (or a
+  // villa read before this field existed) fall back to what was booked, so the
+  // stepper is never capped at zero and the server stays the real authority.
+  const capacity = Math.max(1, booking.guestCapacity || booking.guests || 1);
+
   const [digits, setDigits] = useState<string[]>(["", "", "", ""]);
+  // Pre-filled with what the booking was made for, because that is what usually
+  // walks in — the host confirms it in a glance and only touches it when the
+  // party is a different size. Clamped to capacity in case a host later shrank
+  // the listing below a party they had already taken.
+  const [guests, setGuests] = useState(() =>
+    Math.min(Math.max(1, booking.guests || 1), capacity)
+  );
   // The same countdown the guest is watching, off the same clock — see
   // `usePinCountdown`. It re-anchors on every poll rather than ticking on
   // alone, which is what used to leave this dialog showing ten seconds the
@@ -149,8 +169,18 @@ export default function StayPinDialog({
   const canResend = expired || attemptsLeft <= 0;
 
   const submit = useCallback(() => {
-    if (pin.length === CELLS.length && !busy && !expired) onVerify(pin);
-  }, [pin, busy, expired, onVerify]);
+    if (pin.length === CELLS.length && !busy && !expired) onVerify(pin, guests);
+  }, [pin, busy, expired, guests, onVerify]);
+
+  // The stepper and the typed field share one door, so neither can put a number
+  // through that the server would only refuse.
+  const setHeadcount = useCallback(
+    (value: number) => {
+      if (Number.isNaN(value)) return;
+      setGuests(Math.min(Math.max(1, Math.trunc(value)), capacity));
+    },
+    [capacity]
+  );
 
   function setDigit(i: number, value: string) {
     const only = value.replace(/\D/g, "");
@@ -240,6 +270,73 @@ export default function StayPinDialog({
           >
             {notice}
           </p>
+        )}
+
+        {/* How many are actually walking in. Only on the way in: on the way out
+            the party is whoever the host already counted, and asking again
+            would invite a second, contradictory number onto the record.
+
+            It sits ABOVE the PIN because that is the order the conversation
+            happens in — the host counts the people in front of them, then asks
+            for the code. The booked figure stays visible underneath so a party
+            that turned up short or large is a visible difference, not a number
+            silently overwritten. */}
+        {!isOut && (
+          <div className="mt-4 rounded-xl border border-line bg-page/60 px-3 py-2.5">
+            <div className="flex items-center justify-between gap-3">
+              <label
+                htmlFor="checkin-guests"
+                className="flex items-center gap-2 text-[13px] font-semibold text-ink"
+              >
+                <Users size={15} className={theme.tintText} aria-hidden />
+                Guests checking in
+              </label>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setHeadcount(guests - 1)}
+                  disabled={busy || guests <= 1}
+                  aria-label="One guest fewer"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-line text-body transition-colors hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Minus size={14} aria-hidden />
+                </button>
+                <input
+                  id="checkin-guests"
+                  value={guests}
+                  onChange={(e) => setHeadcount(parseInt(e.target.value, 10))}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") submit();
+                  }}
+                  inputMode="numeric"
+                  disabled={busy}
+                  aria-describedby="checkin-guests-hint"
+                  className={`h-8 w-12 rounded-lg border border-line bg-white text-center text-[14px] font-bold tabular-nums text-ink transition-colors focus:outline-none ${theme.focusBorder} disabled:bg-page disabled:text-muted`}
+                />
+                <button
+                  type="button"
+                  onClick={() => setHeadcount(guests + 1)}
+                  disabled={busy || guests >= capacity}
+                  aria-label="One guest more"
+                  title={
+                    guests >= capacity
+                      ? `This property sleeps ${capacity}`
+                      : "One guest more"
+                  }
+                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-line text-body transition-colors hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Plus size={14} aria-hidden />
+                </button>
+              </div>
+            </div>
+            {/* The booked figure is the starting point, not a target: it says
+                where the number came from and what the property can hold, and
+                then gets out of the way. Whatever the host leaves here is what
+                the booking will report from now on. */}
+            <p id="checkin-guests-hint" className="mt-1.5 text-[11.5px] leading-4 text-muted">
+              Booked for {booking.guests} · this property sleeps {capacity}
+            </p>
+          </div>
         )}
 
         <div className="mt-4 flex items-center justify-center gap-2.5">

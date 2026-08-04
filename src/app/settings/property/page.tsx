@@ -286,7 +286,17 @@ export default function MyPropertyPage() {
               return (
               <div
                 key={p.id}
-                className="flex gap-5 rounded-xl border border-line/70 p-3 shadow-[0_1px_3px_rgba(0,0,0,0.04)]"
+                // A rail down the left edge, not a badge in the corner. "Available"
+                // was printed on almost every row of the list — a label that is
+                // true nearly all of the time stops being read, and a green pill
+                // repeated eight times is just noise the eye has to step over.
+                // The colour of the row's own edge says the same thing without
+                // spending a word on it, and the one state worth interrupting
+                // for — this villa is taken, and until when — keeps its pill.
+                className={`flex gap-5 rounded-xl border border-l-[3px] border-line/70 p-3 shadow-[0_1px_3px_rgba(0,0,0,0.04)] ${
+                  p.unavailable ? "border-l-red-400" : "border-l-green-500"
+                }`}
+                title={p.unavailable ? p.unavailable : "Available to book"}
               >
                 {/* Thumbnail — <Img> rather than next/image so uploaded villa
                     photos (served from the backend/Cloudinary) render directly,
@@ -347,17 +357,14 @@ export default function MyPropertyPage() {
                       <span className="rounded-md bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary">
                         {p.posted}
                       </span>
-                      {/* Booking status, so a host sees at a glance which of
-                          their villas is occupied and until when. */}
-                      <span
-                        className={`rounded-md px-2.5 py-1 text-[11px] font-semibold ${
-                          p.unavailable
-                            ? "bg-red-50 text-red-600"
-                            : "bg-green-50 text-green-700"
-                        }`}
-                      >
-                        {p.unavailable || "Available"}
-                      </span>
+                      {/* Only the state that interrupts: this villa is taken,
+                          and until when. A free villa says nothing here — the
+                          row's green edge has already said it. */}
+                      {p.unavailable && (
+                        <span className="rounded-md bg-red-50 px-2.5 py-1 text-[11px] font-semibold text-red-600">
+                          {p.unavailable}
+                        </span>
+                      )}
                     </div>
                     {/* Icon buttons. Three text links on every row read as a
                         paragraph of controls; the icons are the conventional

@@ -11,6 +11,8 @@ import {
   fetchVilla,
   fetchBookingWindow,
   createBooking,
+  fetchSavedPayments,
+  type SavedPayment,
   validateCoupon,
   type Villa,
 } from "@/lib/api";
@@ -218,6 +220,11 @@ function BookVillaContent() {
   // Which of the host's offered methods the guest is paying with. Set to the
   // first accepted method once the villa loads (see the effect below).
   const [method, setMethod] = useState("");
+  // Ways this guest has paid before, and whether they've chosen to pay that way
+  // again — in which case none of the card/account fields below are read (the
+  // server looks the details up from their own bookings).
+  const [savedPayments, setSavedPayments] = useState<SavedPayment[]>([]);
+  const [useSaved, setUseSaved] = useState(false);
   const [cardType, setCardType] = useState("Credit Card or Debit Card");
   const [cardNumber, setCardNumber] = useState("");
   const [expiration, setExpiration] = useState("");
@@ -525,6 +532,36 @@ function BookVillaContent() {
     setMethod((m) => (m && acceptedMethods.includes(m) ? m : acceptedMethods[0] ?? ""));
   }, [acceptedMethods]);
 
+  // --- Paying the way they paid last time ---
+  //
+  // The platform never stored a card number or a CVV — only the masked tail and
+  // the billing address — so "saved card" here means "don't make me type an
+  // address again", which is the part guests actually resent. Offered only for
+  // methods THIS host accepts: a saved PayPal is no use at a villa that takes
+  // cards alone.
+  useEffect(() => {
+    if (!user) return;
+    let live = true;
+    fetchSavedPayments()
+      .then((rows) => live && setSavedPayments(rows))
+      .catch(() => {
+        // A guest who has never booked has none, and a failure here is not
+        // worth an error on a payment page — the form below still works.
+      });
+    return () => {
+      live = false;
+    };
+  }, [user]);
+
+  const savedChoices = useMemo(
+    () => savedPayments.filter((p) => acceptedMethods.includes(p.method)),
+    [savedPayments, acceptedMethods]
+  );
+  // The saved card stops being an option the moment it isn't offered any more.
+  useEffect(() => {
+    if (useSaved && !savedChoices.some((p) => p.method === method)) setUseSaved(false);
+  }, [useSaved, savedChoices, method]);
+
   if (loadError) {
     return (
       <Centered
@@ -743,8 +780,13 @@ function BookVillaContent() {
     if (!method) return { field: "method", message: "Please choose a payment method." };
 
     // Each method validates only its own inputs — card fields for the card
-    // brands, account credentials for PayPal / Google Pay.
-    if (isCardMethod(method)) {
+    // brands, account credentials for PayPal / Google Pay. A guest paying the
+    // way they paid last time has no inputs at all: there is nothing on this
+    // page to check, and the server re-reads the details from their own
+    // bookings rather than from anything sent up.
+    if (useSaved) {
+      // nothing to validate
+    } else if (isCardMethod(method)) {
       if (!cardType.trim()) return { field: "cardType", message: "Please choose a card type." };
       const card = onlyDigits(cardNumber);
       if (card.length < 12 || !luhnValid(card))
@@ -795,8 +837,12 @@ function BookVillaContent() {
     setErrorField("");
     setSubmitting(true);
     try {
-      const card = isCardMethod(method);
+      // A saved payment sends the method and nothing else: the card fields are
+      // empty because there is nothing to send, and the server fills the
+      // reference and billing address in from this guest's own history.
+      const card = isCardMethod(method) && !useSaved;
       await createBooking({
+        useSavedPayment: useSaved,
         villaId: id,
         checkIn: isoDate(stay.start),
         checkOut: isoDate(stay.end),
@@ -814,7 +860,7 @@ function BookVillaContent() {
         cardNumber: card ? cardNumber : "",
         expiration: card ? expiration : "",
         cvv: card ? cvv : "",
-        paymentDetail,
+        paymentDetail: useSaved ? "" : paymentDetail,
         billingStreet: card ? street : "",
         billingApartment: card ? apartment : "",
         billingCity: card ? city : "",
@@ -1141,6 +1187,63 @@ function BookVillaContent() {
               villa's own accepted methods, not a fixed row of logos. */}
           <div className="mt-8">
             <h2 className="text-[19px] font-semibold text-ink">Pay using</h2>
+
+            {/* The way they paid last time, first — a returning guest should not
+                have to retype a billing address the platform already has. Only
+                the masked tail was ever stored, so there is nothing here to
+                reveal; choosing one simply says "the same as before", and the
+                server looks the rest up from this guest's own bookings. */}
+            {savedChoices.length > 0 && (
+              <div className="mt-4 space-y-2">
+                {savedChoices.map((p) => {
+                  const on = useSaved && method === p.method;
+                  return (
+                    <button
+                      key={`${p.method}-${p.reference}`}
+                      type="button"
+                      role="radio"
+                      aria-checked={on}
+                      onClick={() => {
+                        setMethod(p.method);
+                        setUseSaved(true);
+                        setError("");
+                        setErrorField("");
+                      }}
+                      className={`flex w-full items-center justify-between gap-3 rounded-xl border px-4 py-3 text-left transition-colors ${
+                        on ? "border-primary bg-primary/[0.05]" : "border-line hover:border-primary/40"
+                      }`}
+                    >
+                      <span className="flex min-w-0 items-center gap-3">
+                        <span className="flex h-6 shrink-0 items-center">
+                          {CARD_BRANDS[p.method]}
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block truncate text-[14px] font-semibold text-ink">
+                            {p.method} {p.reference}
+                          </span>
+                          <span className="block truncate text-[12.5px] text-muted">
+                            {[p.billingCity, p.billingCountry].filter(Boolean).join(", ") ||
+                              "Saved from an earlier booking"}
+                          </span>
+                        </span>
+                      </span>
+                      <span
+                        className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border ${
+                          on ? "border-primary bg-primary" : "border-line"
+                        }`}
+                        aria-hidden
+                      >
+                        {on && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+                      </span>
+                    </button>
+                  );
+                })}
+                <p className="text-[12.5px] text-muted">
+                  Or pay another way — your card details are never stored, only the
+                  last four digits.
+                </p>
+              </div>
+            )}
             {acceptedMethods.length === 0 ? (
               <p className="mt-4 rounded-xl border border-dashed border-line bg-page px-4 py-4 text-[13.5px] text-muted">
                 This host hasn&apos;t set up any payment methods for this villa yet.
@@ -1149,7 +1252,7 @@ function BookVillaContent() {
             ) : (
             <div role="radiogroup" aria-label="Payment method" className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
               {acceptedMethods.map((m) => {
-                const on = method === m;
+                const on = !useSaved && method === m;
                 return (
                   <button
                     key={m}
@@ -1158,6 +1261,10 @@ function BookVillaContent() {
                     aria-checked={on}
                     onClick={() => {
                       setMethod(m);
+                      // Picking a method here is picking to enter it fresh —
+                      // otherwise the form below would sit there greyed out
+                      // with no way back to it.
+                      setUseSaved(false);
                       if (error) {
                         setError("");
                         setErrorField("");
@@ -1182,7 +1289,7 @@ function BookVillaContent() {
           </div>
 
           {/* ---------- Card payment (Visa / Mastercard) ---------- */}
-          {isCardMethod(method) && (
+          {!useSaved && isCardMethod(method) && (
           <>
           {/* Card type select */}
           <div className="mt-4">
@@ -1304,7 +1411,7 @@ function BookVillaContent() {
           )}
 
           {/* ---------- PayPal ---------- */}
-          {method === "PayPal" && (
+          {!useSaved && method === "PayPal" && (
             <PayPalPanel
               email={paypalEmail}
               setEmail={(val) => {
@@ -1330,7 +1437,7 @@ function BookVillaContent() {
           )}
 
           {/* ---------- Google Pay ---------- */}
-          {method === "Google Pay" && (
+          {!useSaved && method === "Google Pay" && (
             <GooglePayPanel
               value={gpayId}
               setValue={(val) => {

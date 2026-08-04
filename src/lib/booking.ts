@@ -200,6 +200,47 @@ export function stayStartMs(b: { checkInAt?: string; checkIn?: string }): number
   return Number.isNaN(day) ? Infinity : day;
 }
 
+/**
+ * When this booking next needs somebody to DO something, as a comparable
+ * number on the server's wall clock.
+ *
+ * Not the same question as "when does the stay start". A stay already under way
+ * started days ago, but what is outstanding on it is the CHECK-OUT; a split
+ * stay whose first part is behind us is waiting on the arrival for its next
+ * part, not on the date the booking brackets. Sorting a list by the stay's
+ * start therefore put a booking whose next job is two days away above one whose
+ * guest arrives today — the row said "in 2 days" and sat on top of "today".
+ *
+ * So: the soonest hour, across the parts still live, at which either the guest
+ * must arrive or the guest must leave. A part whose hour has already come and
+ * gone unanswered lands in the past, which is exactly where it belongs — that
+ * is the most urgent row on the page, not the least.
+ *
+ * Infinity when nothing is outstanding (every part done, missed or cancelled),
+ * so those park at the end rather than at the top.
+ */
+export function nextActionAt(
+  b: BookingLike & { nights?: number; segments?: SegmentLike[]; earlyCheckOut?: boolean },
+  nowMs: number
+): number {
+  let soonest = Infinity;
+  let outstanding = false;
+  for (const p of stayProgress(b, nowMs).parts) {
+    if (p.status === "completed" || p.status === "missed" || p.status === "cancelled") {
+      continue;
+    }
+    outstanding = true;
+    // A part being lived in is waiting on its check-out; every other live part
+    // is waiting on its arrival.
+    const at = parseWall(p.status === "current" ? p.checkOutAt : p.checkInAt);
+    if (!Number.isNaN(at) && at < soonest) soonest = at;
+  }
+  if (!outstanding) return Infinity;
+  // Something IS outstanding but carries no readable hour (an old payload):
+  // fall back to the stay's own start, the best this booking can answer with.
+  return soonest === Infinity ? stayStartMs(b) : soonest;
+}
+
 /* ------------------------------------------------------------------ */
 /* How much of a stay under way is left                                */
 /* ------------------------------------------------------------------ */
@@ -272,6 +313,54 @@ export function stayRemaining(
   };
 }
 
+/* ------------------------------------------------------------------ */
+/* The overrun: a stay that closes itself                              */
+/* ------------------------------------------------------------------ */
+
+export type ForcedCheckOut = {
+  /** "29:41" — minutes and seconds, because that is the whole range it ever
+   *  covers and a half hour counted in "0h 29m" reads as an estimate. */
+  when: string;
+  /** Seconds until the stay closes itself. 0 the moment it is due. */
+  secondsLeft: number;
+  /** The countdown has run out; the next read of this booking closes it. */
+  due: boolean;
+};
+
+/**
+ * The half hour between the hour a guest had to be out and the moment the
+ * platform closes the stay on its own. Null whenever nothing is overrunning —
+ * so a caller can render whatever it gets back without asking twice.
+ *
+ * Counted off the SERVER's wall clock like every other hour in this file, and
+ * re-based on `autoCheckOutSecondsLeft` whenever a poll lands: the server is
+ * the only clock that decides when this actually fires, and a browser ticking
+ * alone would drift away from it over half an hour.
+ */
+export function forcedCheckOut(
+  b: {
+    checkoutOverdue?: boolean;
+    autoCheckOutAt?: string;
+    autoCheckOutSecondsLeft?: number;
+  },
+  nowMs: number
+): ForcedCheckOut | null {
+  if (!b.checkoutOverdue) return null;
+
+  const dueAt = parseWall(b.autoCheckOutAt || "");
+  const secondsLeft = Number.isNaN(dueAt) || Number.isNaN(nowMs)
+    ? Math.max(0, b.autoCheckOutSecondsLeft ?? 0)
+    : Math.max(0, Math.ceil((dueAt - nowMs) / 1000));
+
+  const m = Math.floor(secondsLeft / 60);
+  const s = secondsLeft % 60;
+  return {
+    secondsLeft,
+    due: secondsLeft <= 0,
+    when: `${m}:${String(s).padStart(2, "0")}`,
+  };
+}
+
 /**
  * The single stay action available to the HOST on a booking, as a small state
  * machine: check the guest in → then out → then it's done. A cancelled booking
@@ -339,6 +428,32 @@ function parseWall(value: string): number {
   if (!m) return NaN;
   const [, y, mo, d, h, mi, s] = m.map(Number) as unknown as number[];
   return new Date(y, mo - 1, d, h, mi, s || 0).getTime();
+}
+
+/**
+ * Has the LAST arrival of this stay come round?
+ *
+ * Not the booking's own check-in, which on a split stay is only the first of
+ * several: once the final part has opened there is no arrival left ahead of the
+ * guest, and what they can still do with the booking changes shape — adding to
+ * the trip stops being "edit my plans" and becomes "stay longer". That is the
+ * moment the button changes its word.
+ *
+ * Judged on the SERVER's clock, like every other hour in this file: the browser
+ * may sit in another time zone, and the two disagree by whole days at the
+ * boundary. Falls back to the booking's own check-in on a payload with no
+ * per-part times.
+ */
+export function lastCheckInStarted(
+  b: { checkInAt?: string; segments?: { checkInAt?: string }[] },
+  nowMs: number
+): boolean {
+  const parts = b.segments || [];
+  const opensAt = parseWall(
+    (parts.length ? parts[parts.length - 1].checkInAt || "" : "") || b.checkInAt || ""
+  );
+  if (Number.isNaN(opensAt)) return false;
+  return nowMs >= opensAt;
 }
 
 /** "27 Jul 2026 at 2:00 PM" — how the gate names the hour it opens. */
@@ -708,6 +823,17 @@ export type StayPart = {
   /** Naive wall-clock at the property — compare only against the server clock. */
   checkInAt: string;
   checkOutAt: string;
+  /** When the host actually recorded THIS part's arrival and departure — a
+   *  PIN-verified check-in and a confirmed check-out, "" until each happens.
+   *  Real instants (unlike the scheduled pair above), and per part: on a split
+   *  stay the booking's own two stamps are only ever the first arrival and the
+   *  last departure, which says nothing about the parts in between. */
+  checkedInAt: string;
+  checkedOutAt: string;
+  /** How many people the host counted in for THIS part, 0 until they do. Per
+   *  part for the same reason the stamps are: the guest leaves and comes back,
+   *  and the party that returns need not be the size that left. */
+  checkedInGuests: number;
   nights: number;
   status: StayPartStatus;
   /** The guest walked out of THIS part before its check-out hour — the one
@@ -748,6 +874,8 @@ type SegmentLike = {
   /** What the host actually recorded for this part — the truth about it. */
   checkedInAt?: string;
   checkedOutAt?: string;
+  /** And how many people they counted in for it. */
+  checkedInGuests?: number;
 };
 
 /**
@@ -834,6 +962,9 @@ export function stayProgress(
       checkOut: s.checkOut,
       checkInAt: s.checkInAt || "",
       checkOutAt: s.checkOutAt || "",
+      checkedInAt: s.checkedInAt || "",
+      checkedOutAt: s.checkedOutAt || "",
+      checkedInGuests: s.checkedInGuests || 0,
       nights: s.nights,
       status,
       leftEarly: i === lastDeparted,
