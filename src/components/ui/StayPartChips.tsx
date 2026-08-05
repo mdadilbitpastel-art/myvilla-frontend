@@ -41,6 +41,7 @@ const LOOK: Record<StayPart["status"], { mark: string; cls: string; word: string
     cls: "border-line bg-page text-muted",
     word: "Still to come",
   },
+
   missed: {
     mark: "✕",
     cls: "border-red-200 bg-red-50 text-red-600",
@@ -52,6 +53,18 @@ const LOOK: Record<StayPart["status"], { mark: string; cls: string; word: string
     word: "Cancelled",
   },
 };
+
+/**
+ * The look for the part the guest is next due back for — the one chip in the
+ * strip that breathes.
+ *
+ * Amber, and specifically the amber the check-in countdown is drawn in
+ * (#e8912a), because it is the same fact said a second way: this is the arrival
+ * that is coming. Left at the ordinary "still to come" grey, the one chip
+ * pulsing for attention was also the palest thing on the row — movement saying
+ * "look here" and colour saying "nothing to see".
+ */
+const LIVE_UPCOMING = "border-[#e8912a]/35 bg-[#e8912a]/[0.14] text-[#94560c]";
 
 /**
  * The parts of a split stay, one chip each — what the single "1/2 parts done"
@@ -71,10 +84,23 @@ export default function StayPartChips({
   className?: string;
 }) {
   if (!progress.isSplit) return null;
+  // The one chip that is LIVE: the part being stayed in, the one whose hour has
+  // come and is waiting on a check-in, or — when the guest is away between parts
+  // — the one they are due back for. Only ever one, and only ever ahead of or
+  // under the guest: a strip where three chips breathe at once is a strip nobody
+  // can read past, and it would be pointing at nothing in particular.
+  const live =
+    progress.parts.find(
+      (p) => p.status === "current" || p.status === "awaiting"
+    )?.index ?? progress.parts.find((p) => p.status === "upcoming")?.index ?? 0;
   return (
     <span className={`mt-1 flex flex-wrap items-center gap-1 ${className}`}>
       {progress.parts.map((p) => {
         const look = LOOK[p.status];
+        const isLive = p.index === live;
+        // A part still to come that is the NEXT one takes the arrival colour;
+        // the ones behind it in the queue stay grey.
+        const cls = isLive && p.status === "upcoming" ? LIVE_UPCOMING : look.cls;
         const dates = range(p.checkIn, p.checkOut);
         return (
           <span
@@ -84,7 +110,9 @@ export default function StayPartChips({
               (dates ? ` · ${dates}` : "") +
               ` (${p.nights} night${p.nights === 1 ? "" : "s"}) — ${look.word}`
             }
-            className={`inline-flex items-center gap-1 whitespace-nowrap rounded border px-1.5 py-0.5 text-[10.5px] font-semibold ${look.cls}`}
+            className={`inline-flex items-center gap-1 whitespace-nowrap rounded border px-1.5 py-0.5 text-[10.5px] font-semibold ${cls} ${
+              isLive ? "animate-soft-pulse" : ""
+            }`}
           >
             <span aria-hidden>{look.mark}</span>
             Part {p.index}

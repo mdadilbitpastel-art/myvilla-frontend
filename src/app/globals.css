@@ -560,6 +560,23 @@ textarea:disabled {
   animation: kenBurns 12s ease-in-out infinite alternate;
 }
 
+/* The part of a split stay the guest is ON, or the one they are due at next.
+   A slow breath rather than a blink: it never goes far enough to read as
+   flashing, and at 2.6s it is well outside the rate that makes a row hard to
+   scan past. Opacity only, so the chip never moves and the strip never reflows. */
+@keyframes softPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+.animate-soft-pulse {
+  animation: softPulse 2.6s ease-in-out infinite;
+}
+
 /* Hero carousel zoom. A single continuous zoom wraps ALL slides at once, so
    every slide is always at the same scale — a slide swap is a pure crossfade
    with no scale change to perceive. It is strictly one-directional (scale only
@@ -751,6 +768,7 @@ textarea:disabled {
   .ken-burns,
   .hero-zoom,
   .animate-marquee,
+  .animate-soft-pulse,
   .img-fade {
     animation: none !important;
     transition: none !important;

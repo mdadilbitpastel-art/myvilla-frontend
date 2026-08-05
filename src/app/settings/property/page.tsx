@@ -2,14 +2,20 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Star, X, Pencil, Eye, Trash2 } from "lucide-react";
+import { X, Pencil, Eye, Trash2, ChevronDown } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/lib/toast";
 import { useConfirm } from "@/lib/confirm";
 import SettingsSidebar from "@/components/settings/SettingsSidebar";
+import CountPill from "@/components/ui/CountPill";
 import Img from "@/components/ui/Img";
 import { setVillaCount } from "@/lib/useProperty";
-import { fetchMyVillas, deleteVilla, type Villa } from "@/lib/api";
+import {
+  fetchMyVillas,
+  fetchVillaAvailability,
+  deleteVilla,
+  type Villa,
+} from "@/lib/api";
 
 const PLACEHOLDER_IMG =
   "https://images.unsplash.com/photo-1571896349842-33c89424de2d?auto=format&fit=crop&w=600&q=80";
@@ -19,17 +25,326 @@ type Row = {
   id: string; // enables View / Edit / Remove
   title: string;
   image: string;
+  /** What KIND of listing this is — "Villa Living", "Bungalow", whatever the
+   *  host typed under "Others". A column of its own now: a host with eight
+   *  properties sorts them in their head by type long before they read a name,
+   *  and the value was already on the villa, shown everywhere except the one
+   *  page belonging to the person who set it. */
+  type: string;
+  /** The street address the host typed. This is what the Location column
+   *  actually shows: city/country are optional on a listing and were empty on
+   *  most of them, leaving the column blank on a page whose whole job is to
+   *  tell the host which property is which. The address is always there. */
+  address: string;
   city: string;
   country: string;
   price: number;
-  rating: number | null;
-  reviews: number;
   posted: string;
+  /** For the sort — `posted` above is already worded for reading. */
+  createdAt: string;
   // Live booking status, the same answer a guest browsing today gets: "" when
   // the villa is free right now, otherwise why it isn't.
   unavailable: string;
   rooms: string;
 };
+
+// The list is the same kind of object every other page in Manage Account shows:
+// one row per thing, the same facts in the same column on every row, read down
+// rather than across. It is built exactly like the Bookings and Rent Requests
+// tables — one grid template shared by the headings and every row, a minimum
+// width so the columns keep their proportions, and the whole thing scrolling
+// sideways inside its card rather than crushing itself on a narrow screen.
+// No rating anywhere on this page. This is the owner's own listing — what they
+// come here to do is check, edit and price their properties, and a score is a
+// verdict guests pass on one, read where guests read it. A column of "4.8" and
+// "New" only bought width from the two columns that actually truncate.
+// "Availability" and not "Occupancy": the cell under it counts what is still
+// FREE, and a heading pointing the other way would have every figure in the
+// column reading backwards.
+const COLUMNS = ["Property", "Listing Type", "Location", "Price", "Availability", ""];
+
+//        property  type   location  price availability actions
+// Two kinds of track, deliberately:
+//
+// The flexible ones are `minmax(0, …fr)` rather than a bare `…fr`, because a
+// bare fr track refuses to go narrower than its content — one long villa name
+// would push its own column wider on that row alone and every heading would
+// stop lining up with the cells under it. With a 0 floor each track is exactly
+// its share on every row.
+//
+// The rest are fixed pixels. The headings are their own grid container, so an
+// `auto` track would be measured separately there and the columns would drift
+// apart; a pixel width is the only kind that is identical in both. Type and
+// price are sized to hold their longest real value outright, and the actions
+// track is exactly the three 32px buttons plus their gaps — the column used to
+// take a share of the row and spend it on empty space to the left of the icons.
+//
+// The rating column's 92px went to the property column, which is one of the two
+// that actually truncate, and the rest came off the row's floor.
+const ROW_GRID =
+  "grid-cols-[minmax(0,2.5fr)_150px_minmax(0,1.7fr)_86px_minmax(0,1.25fr)_112px]";
+const ROW_MINW = "min-w-[990px]";
+// Each column after the first is nudged off the one before it — headings and
+// cells alike, never one without the other, or the two drift apart.
+const CELL_PAD = "pl-4";
+
+function ColumnHeadings() {
+  return (
+    // `border border-transparent`: every row below is a bordered card, so its
+    // cells start one pixel in from where a borderless heading's would. An
+    // invisible border of the same width gives the heading the identical box.
+    <div
+      className={`mt-6 grid ${ROW_MINW} ${ROW_GRID} border border-transparent px-4 text-[11px] font-semibold uppercase tracking-wide text-muted`}
+    >
+      {COLUMNS.map((c, i) => (
+        <span key={c || `col-${i}`} className={c === "" ? "text-right" : i > 0 ? CELL_PAD : ""}>
+          {c || "Action"}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function SortDropdown({ sort, onToggle }: { sort: "desc" | "asc"; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="flex items-center gap-2 rounded-md border border-line px-3 py-1.5 text-[12px] text-body transition-colors hover:border-primary/40"
+    >
+      Sort: {sort === "desc" ? "Newest first" : "Oldest first"}
+      <ChevronDown size={14} className="text-muted" />
+    </button>
+  );
+}
+
+/**
+ * How much of a listing's booking window is still open: what is free, against
+ * the nights already booked and the ones the host has closed by hand. This is
+ * the one fact about a property a host cannot get from anywhere else on the
+ * page — "Available" only ever answered for tonight, which is a yes on almost
+ * every row and says nothing about how much of the window is left to sell.
+ *
+ * `undefined` while the window is still being read, `null` when it couldn't be.
+ */
+type Occupancy = { booked: number; blocked: number; total: number };
+
+/**
+ * How much of the window is still FREE, banded by colour — green with plenty of
+ * dates left, amber around half, red when there is barely anything left to sell.
+ *
+ * Judged on the free nights and not the booked ones, so the colour and the
+ * figure beside it always point the same way: everything coloured on this cell
+ * is talking about what is still open. Ordered high to low and read with
+ * `.find`, so the first band whose floor the figure clears is the one that
+ * applies.
+ */
+const OCCUPANCY_BANDS = [
+  { from: 67, word: "High", track: "bg-green-500", text: "text-green-600" },
+  { from: 34, word: "Medium", track: "bg-amber-400", text: "text-amber-600" },
+  { from: 0, word: "Low", track: "bg-red-400", text: "text-red-500" },
+];
+
+function OccupancyCell({ load }: { load: Occupancy | null | undefined }) {
+  if (load === undefined) {
+    return (
+      <span className={`flex min-w-0 flex-col gap-1.5 ${CELL_PAD}`}>
+        <span className="skeleton h-3 w-16 rounded" />
+        <span className="skeleton h-1.5 w-full rounded-full" />
+      </span>
+    );
+  }
+  if (load === null || load.total <= 0) {
+    return <span className={`text-[13px] text-muted/60 ${CELL_PAD}`}>—</span>;
+  }
+  const { booked, blocked, total } = load;
+  const pct = Math.round((booked / total) * 100);
+  const blockedPct = Math.round((blocked / total) * 100);
+  const free = Math.max(0, total - booked - blocked);
+  const freePct = Math.round((free / total) * 100);
+  const band = OCCUPANCY_BANDS.find((b) => freePct >= b.from) ?? OCCUPANCY_BANDS[2];
+  return (
+    <span
+      className={`flex min-w-0 flex-col gap-1 ${CELL_PAD}`}
+      title={`${band.word} availability — next ${total} nights: ${free} free · ${booked} booked · ${blocked} closed by you`}
+    >
+      {/* Colour-coded by how much is still free: green with plenty of dates
+          left to sell, amber around half, red when the window is nearly gone.
+          Only the two ends get a word instead of a figure — a calendar with
+          nothing left and one with nothing on it are the two readings worth
+          naming outright. */}
+      <span className={`truncate text-[12.5px] font-semibold ${band.text}`}>
+        {free === 0
+          ? "Nothing free"
+          : free === total
+            ? "All nights free"
+            : `${freePct}% free`}
+      </span>
+      {/* The bar says the same thing the colour does. The nights taken are dark
+          and quiet — booked, then the ones the host closed themselves, which are
+          not free either but nobody is paying for them — and what is left
+          showing through IS the free stretch, in the band's colour. */}
+      <span className={`flex h-1.5 w-full overflow-hidden rounded-full ${band.track}`}>
+        <span className="h-full bg-ink/55" style={{ width: `${Math.min(100, pct)}%` }} />
+        <span
+          className="h-full bg-ink/20"
+          style={{ width: `${Math.min(100 - Math.min(100, pct), blockedPct)}%` }}
+        />
+      </span>
+      <span className="truncate text-[11px] text-muted">
+        {booked} of {total} booked
+      </span>
+    </span>
+  );
+}
+
+/**
+ * One listing, as the table prints it. The same row anatomy as the booking
+ * tables: a photo and the name carrying the row, a quieter second line under
+ * each cell for the fact that qualifies it, and the actions gathered at the
+ * right-hand end.
+ */
+function PropertyRow({
+  p,
+  load,
+  onRemove,
+  removing,
+}: {
+  p: Row;
+  load: Occupancy | null | undefined;
+  onRemove: (id: string, label: string) => void;
+  removing: boolean;
+}) {
+  const label = `${p.city}${p.country ? ", " + p.country : ""}`;
+  // The address is what the column shows; city/country only stand in for a
+  // listing that has no address on it at all.
+  const place = p.address || [p.city, p.country].filter(Boolean).join(", ");
+  return (
+    <div
+      // Only the state worth interrupting for is marked: a taken villa keeps a
+      // red rail down its left edge. An available one is simply a row — being
+      // bookable is the normal state of nearly every listing here, and a rail
+      // repeated down the whole list marked nothing at all.
+      className={`${ROW_MINW} rounded-xl border border-line bg-white transition-all duration-200 hover:border-ink/20 hover:shadow-[0_3px_14px_-9px_rgba(20,20,45,0.4)] ${
+        p.unavailable ? "border-l-[3px] border-l-red-400" : ""
+      }`}
+    >
+      <div className={`grid ${ROW_GRID} items-center px-4 py-4 text-[13px]`}>
+        {/* The property: thumbnail, name, and what it holds. The name is the
+            row's identity, so it carries the weight and the link. */}
+        <Link
+          href={`/villa/${p.id}`}
+          // The listing's age lives here now rather than in a column of its
+          // own: it is a thing a host looks up occasionally, not something to
+          // read down a whole page for.
+          title={`${p.title} · ${p.posted}`}
+          className="group flex min-w-0 items-center gap-3 pr-3"
+        >
+          <span className="h-11 w-11 shrink-0 overflow-hidden rounded-xl bg-page ring-1 ring-ink/[0.07]">
+            <Img
+              src={p.image}
+              alt={p.title}
+              fallback={PLACEHOLDER_IMG}
+              className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-[1.12]"
+            />
+          </span>
+          <span className="flex min-w-0 flex-col gap-[3px]">
+            <span className="truncate text-[13.5px] font-semibold text-ink transition-colors group-hover:text-primary">
+              {p.title}
+            </span>
+            {/* What the villa holds, in full. NOT truncated: this line is a
+                list of the property's own rooms and beds, and cutting it at
+                "3 rooms · 2 single be…" hides the one part that differs from
+                the row above. It wraps onto a second line instead — the row is
+                a little taller and the fact is all there. */}
+            {p.rooms && (
+              <span className="text-[11.5px] leading-[15px] text-muted">{p.rooms}</span>
+            )}
+          </span>
+        </Link>
+
+        {/* Listing type — a chip, because it is one of a small set of values
+            and reads as a tag rather than as a sentence. The whole value is
+            shown, always: a host who typed their own type under "Others" gets
+            a chip two lines tall rather than one with the end cut off. The
+            column is sized to hold the longest of the built-in types outright,
+            so wrapping is the exception and not the look of the page. */}
+        <span className={`flex min-w-0 ${CELL_PAD}`}>
+          <span className="w-fit max-w-full whitespace-normal break-words rounded-md border border-line bg-page px-2 py-[3px] text-[11.5px] font-medium leading-[15px] text-body">
+            {p.type}
+          </span>
+        </span>
+
+        {/* Where it is — the address the host typed, which is the only line
+            that reliably has anything in it. Two lines at most, since an
+            address is a sentence and this is a table; the full text is on the
+            hover. A listing with no address at all falls back to city/country,
+            and says nothing rather than printing a stray ", India". */}
+        <span className={`min-w-0 ${CELL_PAD}`}>
+          {place ? (
+            <span className="line-clamp-2 text-[12.5px] leading-[16px] text-body" title={place}>
+              {place}
+            </span>
+          ) : (
+            <span className="text-[13px] text-muted/60">—</span>
+          )}
+        </span>
+
+        {/* The nightly rate, with its unit under it rather than trailing it —
+            the number is what the eye is scanning down this column for. */}
+        <span className={`flex min-w-0 flex-col gap-[3px] ${CELL_PAD}`}>
+          <span className="truncate text-[13.5px] font-semibold text-ink">${p.price}</span>
+          <span className="text-[11.5px] text-muted">per night</span>
+        </span>
+
+        {/* How much of the booking window is spoken for. This replaced a
+            "Status" column that read "Available" on nearly every row: it
+            answered only for tonight, so it was the same word almost all of the
+            time and told a host nothing about how their property is doing.
+            Whether a villa is free RIGHT NOW is still marked — it is the red
+            rail down the left edge of the row. */}
+        <OccupancyCell load={load} />
+
+        {/* Icon buttons. Three text links on every row read as a paragraph of
+            controls; the icons are the conventional ones for these actions, and
+            each keeps its name for screen readers and as a hover tooltip. */}
+        <div className="flex shrink-0 items-center justify-end gap-1.5">
+          <Link
+            href={`/settings/property/add?edit=${p.id}`}
+            aria-label={`Edit ${label || p.title}`}
+            title="Edit"
+            className="flex h-8 w-8 items-center justify-center rounded-lg border border-line text-body transition-colors hover:border-primary hover:bg-primary/5 hover:text-primary"
+          >
+            <Pencil size={15} aria-hidden />
+          </Link>
+          <Link
+            href={`/villa/${p.id}`}
+            aria-label={`View ${label || p.title}`}
+            title="View"
+            className="flex h-8 w-8 items-center justify-center rounded-lg border border-line text-body transition-colors hover:border-primary hover:bg-primary/5 hover:text-primary"
+          >
+            <Eye size={15} aria-hidden />
+          </Link>
+          <button
+            type="button"
+            onClick={() => onRemove(p.id, label || p.title)}
+            disabled={removing}
+            aria-busy={removing}
+            aria-label={`Remove ${label || p.title}`}
+            title="Remove"
+            className="flex h-8 w-8 items-center justify-center rounded-lg border border-line text-body transition-colors hover:border-red-300 hover:bg-red-50 hover:text-red-500 disabled:opacity-50"
+          >
+            {removing ? (
+              <span className="spinner block" aria-hidden />
+            ) : (
+              <Trash2 size={15} aria-hidden />
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // "3 weeks ago" style relative time from an ISO string.
 function timeAgo(iso: string): string {
@@ -62,17 +377,19 @@ function villaToRow(v: Villa): Row {
     id: v.id,
     title: v.title,
     image: v.coverImage || PLACEHOLDER_IMG,
+    // Older listings predate the field; "Villa" is what the rest of the site
+    // shows for them, so the table says the same thing rather than an empty
+    // cell that reads as a missing answer.
+    type: v.propertyType || "Villa",
+    address: v.address || "",
     // The city only. It used to fall back to the title, which printed the
     // property's name a second time directly under itself on any listing with
     // no city set — the line simply goes quiet instead.
     city: v.city || "",
     country: v.country || "",
     price: v.pricePerNight,
-    // The villa's real review aggregate. No reviews yet → null, which the card
-    // shows as "New" rather than a misleading 0.0.
-    rating: v.reviewsCount > 0 ? v.rating : null,
-    reviews: v.reviewsCount,
     posted: timeAgo(v.createdAt),
+    createdAt: v.createdAt,
     unavailable: v.isAvailable ? "" : v.unavailableReason || "Booked",
     rooms: [
       `${v.bedrooms} room${v.bedrooms === 1 ? "" : "s"}`,
@@ -97,6 +414,13 @@ export default function MyPropertyPage() {
   const [loadError, setLoadError] = useState("");
   const [banner, setBanner] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  // Per-villa occupancy, keyed by villa id. A key that is absent means "still
+  // reading" and a `null` value means "couldn't read it" — the two look
+  // different in the row, and neither holds the rest of the table up.
+  const [loads, setLoads] = useState<Record<string, Occupancy | null>>({});
+  // Newest listing first by default — the one just added is the one the host
+  // came back to look at.
+  const [sort, setSort] = useState<"desc" | "asc">("desc");
 
   // Delete a villa the user owns, after confirming. On success drop it from the
   // list; the villa's images are removed server-side too.
@@ -160,6 +484,50 @@ export default function MyPropertyPage() {
     if (ready && user) load();
   }, [ready, user, load]);
 
+  // How much of each villa's window is taken. A second read, on purpose: the
+  // list itself must not wait on it — every other column is already on screen
+  // while these land, and each row shows a placeholder bar until its own
+  // answer arrives. One request per property, in parallel; a host has a handful
+  // of them, and the alternative is a booking-shaped calculation done in the
+  // browser off data the list query doesn't carry.
+  useEffect(() => {
+    if (!villas || villas.length === 0) return;
+    let cancelled = false;
+    Promise.all(
+      villas.map((v) => {
+        // The host's own window, which is what "how booked is it" has to be
+        // measured against — a 30-day window half full is not the same property
+        // as a 365-day one half full. Clamped so a wild value can't ask the
+        // server for years of dates.
+        const days = Math.min(Math.max(v.availabilityDays || 30, 7), 365);
+        return fetchVillaAvailability(v.id, days)
+          .then((a) => {
+            // `total` is the window the server actually answered for, counted
+            // off its own two ends rather than assumed from `days` — the two
+            // differ whenever the host's bookable-until date lands first.
+            const start = new Date(a.windowStart).getTime();
+            const end = new Date(a.windowEnd).getTime();
+            const nights =
+              Number.isNaN(start) || Number.isNaN(end)
+                ? days
+                : Math.max(1, Math.round((end - start) / 86_400_000));
+            const load: Occupancy = {
+              booked: a.bookedDates?.length ?? 0,
+              blocked: a.blockedDates?.length ?? 0,
+              total: nights,
+            };
+            return [v.id, load] as const;
+          })
+          .catch(() => [v.id, null] as const);
+      })
+    ).then((entries) => {
+      if (!cancelled) setLoads(Object.fromEntries(entries));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [villas]);
+
   function retryLoad() {
     setLoadError("");
     setVillas(null);
@@ -187,7 +555,17 @@ export default function MyPropertyPage() {
   }
 
   // Only the user's real villas — no dummy fallback. `null` = still loading.
-  const rows: Row[] | null = villas ? villas.map(villaToRow) : null;
+  // Ordered by when each was listed. An unreadable date sorts as 0 rather than
+  // returning NaN from the comparator, which would leave the order undefined.
+  const stamp = (r: Row) => {
+    const t = new Date(r.createdAt).getTime();
+    return Number.isNaN(t) ? 0 : t;
+  };
+  const rows: Row[] | null = villas
+    ? villas
+        .map(villaToRow)
+        .sort((a, b) => (sort === "desc" ? stamp(b) - stamp(a) : stamp(a) - stamp(b)))
+    : null;
 
   return (
     <div className="mx-auto w-full max-w-body px-5 pb-16 pt-4 lg:px-7">
@@ -237,13 +615,27 @@ export default function MyPropertyPage() {
               banner ? "" : "-mt-6 sm:-mt-8"
             }`}
           >
-            <h2 className="text-[16px] font-bold text-ink">Property Owned</h2>
-            <Link
-              href="/settings/property/add"
-              className="rounded-lg bg-primary px-4 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-primary-dark"
-            >
-              Add Property
-            </Link>
+            {/* Label first, count as a pill after it — the same heading shape
+                the Bookings and Rent Requests tables carry. */}
+            <h2 className="flex items-center gap-2 text-[16px] font-bold text-ink">
+              Property Owned
+              {rows !== null && <CountPill value={rows.length} />}
+            </h2>
+            <div className="flex items-center gap-2.5">
+              {/* Nothing to order until there is more than one listing. */}
+              {rows !== null && rows.length > 1 && (
+                <SortDropdown
+                  sort={sort}
+                  onToggle={() => setSort((s) => (s === "desc" ? "asc" : "desc"))}
+                />
+              )}
+              <Link
+                href="/settings/property/add"
+                className="rounded-lg bg-primary px-4 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-primary-dark"
+              >
+                Add Property
+              </Link>
+            </div>
           </div>
 
           {/* Property list */}
@@ -261,154 +653,44 @@ export default function MyPropertyPage() {
                 Try again
               </button>
             </div>
-          ) : rows === null ? (
-            <div className="mt-6 space-y-4">
-              {Array.from({ length: 3 }, (_, i) => (
-                <div key={i} className="skeleton h-[130px] rounded-xl" />
-              ))}
-            </div>
-          ) : rows.length === 0 ? (
-            <div className="mt-6 flex flex-col items-center rounded-xl border border-dashed border-line px-4 py-14 text-center">
-              <p className="text-[15px] font-semibold text-ink">
-                No properties yet
-              </p>
-              {/* No call to action here on purpose — "Add Property" already
-                  sits in the header right above this panel. */}
-              <p className="mt-1 max-w-[320px] text-[13px] text-muted">
-                You haven&apos;t listed any villa. Use “Add Property” above to
-                list your first one and start hosting.
-              </p>
-            </div>
           ) : (
-          <div className="mt-6 space-y-4">
-            {rows.map((p) => {
-              const label = `${p.city}${p.country ? ", " + p.country : ""}`;
-              return (
-              <div
-                key={p.id}
-                // A rail down the left edge, not a badge in the corner. "Available"
-                // was printed on almost every row of the list — a label that is
-                // true nearly all of the time stops being read, and a green pill
-                // repeated eight times is just noise the eye has to step over.
-                // The colour of the row's own edge says the same thing without
-                // spending a word on it, and the one state worth interrupting
-                // for — this villa is taken, and until when — keeps its pill.
-                className={`flex gap-5 rounded-xl border border-l-[3px] border-line/70 p-3 shadow-[0_1px_3px_rgba(0,0,0,0.04)] ${
-                  p.unavailable ? "border-l-red-400" : "border-l-green-500"
-                }`}
-                title={p.unavailable ? p.unavailable : "Available to book"}
-              >
-                {/* Thumbnail — <Img> rather than next/image so uploaded villa
-                    photos (served from the backend/Cloudinary) render directly,
-                    without remotePatterns/dev-restart getting in the way. */}
-                {/* Square, and stretched to the row's full height so its bottom
-                    edge lines up with the status pills and action links
-                    opposite it rather than stopping short. */}
-                <div className="img-frame relative aspect-square w-[132px] shrink-0 self-stretch overflow-hidden rounded-lg bg-page">
-                  <Img
-                    src={p.image}
-                    alt={`${p.city}, ${p.country}`}
-                    fallback={PLACEHOLDER_IMG}
-                    className="h-full w-full object-cover"
-                  />
-                </div>
+            /* The table itself. It scrolls sideways inside the card rather than
+               letting seven columns crush each other on a narrow window — the
+               same treatment the Bookings and Rent Requests tables get. */
+            <div className="overflow-x-auto">
+              <ColumnHeadings />
 
-                {/* Details */}
-                <div className="flex min-w-0 flex-1 flex-col">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-[14px] font-bold text-ink" title={p.title}>
-                        {p.title}
-                      </p>
-                      {/* Where it is. Either half can be missing, so the comma
-                          belongs to the pair and the whole line goes away when
-                          there is no location at all — rather than leaving a
-                          stray ", India" or an empty row. */}
-                      {(p.city || p.country) && (
-                        <p className="mt-0.5 truncate text-[13px] text-body">
-                          {p.city}
-                          {p.city && p.country ? ", " : ""}
-                          {p.country && <span className="text-primary">{p.country}</span>}
-                        </p>
-                      )}
-                      <p className="mt-0.5 text-[13px] text-muted">
-                        ${p.price}/night
-                      </p>
-                      <p className="mt-0.5 text-[12px] text-muted">{p.rooms}</p>
-                    </div>
-                    {/* Rating sits at the top of the card, opposite the title —
-                        where a listing normally carries it. */}
-                    <span className="flex shrink-0 items-center gap-1 text-[13px]">
-                      <Star size={13} className="fill-star text-star" aria-hidden />
-                      {p.rating !== null ? (
-                        <>
-                          <span className="font-semibold text-ink">{p.rating.toFixed(1)}</span>
-                          <span className="text-muted">({p.reviews})</span>
-                        </>
-                      ) : (
-                        <span className="text-muted">New</span>
-                      )}
-                    </span>
+              <div className="mt-2.5 space-y-3">
+                {rows === null ? (
+                  // 76px is what a real row measures: py-4 either side of a
+                  // 44px thumbnail. A shorter placeholder makes the whole list
+                  // jump the moment the data lands.
+                  Array.from({ length: 3 }, (_, i) => (
+                    <div key={i} className={`skeleton h-[76px] rounded-xl ${ROW_MINW}`} />
+                  ))
+                ) : rows.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-line px-4 py-14 text-center">
+                    <p className="text-[15px] font-semibold text-ink">No properties yet</p>
+                    {/* No call to action here on purpose — "Add Property"
+                        already sits in the header right above this panel. */}
+                    <p className="mx-auto mt-1 max-w-[320px] text-[13px] text-muted">
+                      You haven&apos;t listed any villa. Use “Add Property” above to
+                      list your first one and start hosting.
+                    </p>
                   </div>
-
-                  {/* Bottom row: posted pill + remove */}
-                  <div className="mt-auto flex items-end justify-between gap-3 pt-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded-md bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary">
-                        {p.posted}
-                      </span>
-                      {/* Only the state that interrupts: this villa is taken,
-                          and until when. A free villa says nothing here — the
-                          row's green edge has already said it. */}
-                      {p.unavailable && (
-                        <span className="rounded-md bg-red-50 px-2.5 py-1 text-[11px] font-semibold text-red-600">
-                          {p.unavailable}
-                        </span>
-                      )}
-                    </div>
-                    {/* Icon buttons. Three text links on every row read as a
-                        paragraph of controls; the icons are the conventional
-                        ones for these actions, and each keeps its name for
-                        screen readers and as a hover tooltip. */}
-                    <div className="flex shrink-0 items-center gap-2">
-                      <Link
-                        href={`/settings/property/add?edit=${p.id}`}
-                        aria-label={`Edit ${label}`}
-                        title="Edit"
-                        className="flex h-9 w-9 items-center justify-center rounded-lg border border-line text-body transition-colors hover:border-primary hover:bg-primary/5 hover:text-primary"
-                      >
-                        <Pencil size={16} aria-hidden />
-                      </Link>
-                      <Link
-                        href={`/villa/${p.id}`}
-                        aria-label={`View ${label}`}
-                        title="View"
-                        className="flex h-9 w-9 items-center justify-center rounded-lg border border-line text-body transition-colors hover:border-primary hover:bg-primary/5 hover:text-primary"
-                      >
-                        <Eye size={16} aria-hidden />
-                      </Link>
-                      <button
-                        type="button"
-                        onClick={() => handleRemove(p.id, label)}
-                        disabled={removingId === p.id}
-                        aria-busy={removingId === p.id}
-                        aria-label={`Remove ${label}`}
-                        title="Remove"
-                        className="flex h-9 w-9 items-center justify-center rounded-lg border border-line text-body transition-colors hover:border-red-300 hover:bg-red-50 hover:text-red-500 disabled:opacity-50"
-                      >
-                        {removingId === p.id ? (
-                          <span className="spinner block" aria-hidden />
-                        ) : (
-                          <Trash2 size={16} aria-hidden />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                </div>
+                ) : (
+                  rows.map((p) => (
+                    <PropertyRow
+                      key={p.id}
+                      p={p}
+                      load={loads[p.id]}
+                      onRemove={handleRemove}
+                      removing={removingId === p.id}
+                    />
+                  ))
+                )}
               </div>
-              );
-            })}
-          </div>
+            </div>
           )}
         </div>
       </div>

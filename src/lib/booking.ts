@@ -13,7 +13,21 @@ import { useEffect, useMemo, useState } from "react";
 
 export type BookingStatusTone = "green" | "blue" | "red" | "muted" | "orange";
 
-export type BookingStatus = { label: string; tone: BookingStatusTone };
+export type BookingStatus = {
+  label: string;
+  tone: BookingStatusTone;
+  /**
+   * The status is waiting on somebody to DO something — right now that is only
+   * the open check-in window: the guest is due, the door is open, and nobody
+   * has been checked in yet. Drawn with a slow breath (`animate-soft-pulse`) so
+   * it reads as live rather than as one more settled label in the column.
+   *
+   * It stops the instant the check-in lands. "Staying" is the same green in the
+   * same place — the movement is the only thing that goes, which is exactly
+   * what makes it mean something while it is there.
+   */
+  pending?: boolean;
+};
 
 // The lifecycle values the backend sends (Booking.LIFECYCLE_*).
 export type Lifecycle =
@@ -81,7 +95,7 @@ const STATUS_BY_LIFECYCLE: Record<Lifecycle, BookingStatus> = {
   // "awaiting_checkin" is the check-in WINDOW: from the check-in time until the
   // grace period runs out. It's a good state, not a late one — being late is
   // what the sharper reading in `bookingStatus` below says.
-  awaiting_checkin: { label: "Check-in window open", tone: "green" },
+  awaiting_checkin: { label: "Check-in window open", tone: "green", pending: true },
   upcoming: { label: "Confirmed", tone: "green" },
 };
 
@@ -97,8 +111,14 @@ export function bookingStatus(b: BookingLike, nowMs?: number): BookingStatus {
     const gate = checkInGate(b, nowMs);
     // The window's closing stretch: say how long is left, not just that it's
     // open — after this the booking becomes a no-show on its own.
+    // Still the open window, said more sharply — so it keeps breathing. Going
+    // still here would read as "settled" at the one moment it is least settled.
     if (gate.tone === "yellow") {
-      return { label: `Check-in closes in ${gate.minutesLeft}m`, tone: "orange" };
+      return {
+        label: `Check-in closes in ${gate.minutesLeft}m`,
+        tone: "orange",
+        pending: true,
+      };
     }
   }
   if (life === "no_show" && b.lateCheckInAllowed) {
@@ -362,6 +382,35 @@ export function forcedCheckOut(
 }
 
 /**
+ * Does closing this stay still need the guest's 4-digit PIN?
+ *
+ * Only until the hour they booked to stay until. The code exists to stop a host
+ * putting a guest out EARLY; past that hour there is nothing left for it to
+ * protect, and the platform is going to close the stay itself half an hour
+ * later anyway (see `forcedCheckOut`). So the host gets one press instead — the
+ * mirror of Booking.check_out_pin_required, which is what actually enforces it.
+ *
+ * Derived from the clock rather than read off the payload for the same reason
+ * `checkInGate` is: a dashboard sits open across the hour, and the button has
+ * to change at the hour without anyone reloading the page.
+ *
+ * `checkOutAt` is the CURRENT part's end, so a split stay is judged on the part
+ * in front of the host — an early part still takes a PIN even when a later one
+ * would not.
+ *
+ * Says "yes" whenever it cannot tell. A missing hour must not be the thing that
+ * waives a code; the server refuses the PIN-free path in that case anyway.
+ */
+export function checkOutPinRequired(
+  b: { checkOutAt?: string },
+  nowMs: number
+): boolean {
+  const endsAt = parseWall(b.checkOutAt || "");
+  if (Number.isNaN(endsAt) || Number.isNaN(nowMs)) return true;
+  return nowMs < endsAt;
+}
+
+/**
  * The single stay action available to the HOST on a booking, as a small state
  * machine: check the guest in → then out → then it's done. A cancelled booking
  * has no action. Drives the one button shown in the list and the detail popup.
@@ -386,11 +435,15 @@ function currentPartStamps(b: {
 
 export function stayAction(b: {
   status: string;
+  lifecycleStatus?: string;
   checkedInAt?: string;
   checkedOutAt?: string;
   segments?: { checkedInAt?: string; checkedOutAt?: string }[];
 }): StayAction {
-  if (b.status === "cancelled") return null;
+  // Either reading of "cancelled" is enough. `status` is the booking's own
+  // field and the lifecycle is the server's verdict; a payload that carries
+  // only the second one must not come back offering to check anybody in.
+  if (b.status === "cancelled" || b.lifecycleStatus === "cancelled") return null;
   // Per PART: closing part one of a split stay ends that part, not the stay —
   // the guest is due back, so the button has to return to "check in" for the
   // next part instead of settling on "done".
@@ -403,6 +456,48 @@ export function stayAction(b: {
   if (part.checkedOutAt) return "done";
   if (part.checkedInAt) return "check_out";
   return "check_in";
+}
+
+/**
+ * Is this booking finished for good — the guest checked out, or it was called
+ * off? These are the two states that put a booking in Booking History with
+ * "Checked out" or "Cancelled" against it, and NOTHING can be done to one
+ * afterwards: no check-in, no check-out, no cancelling, no adding to it.
+ *
+ * Every action button on both sides asks this first, so a closed booking can
+ * never offer one by accident — however the payload it was built from happens
+ * to be shaped, and whichever of the gates below would otherwise have said yes.
+ * (Leaving a review is not an action on the stay; it is the record of one, and
+ * it belongs to exactly these bookings.)
+ *
+ * A no-show is deliberately NOT closed: nobody arrived, and the host may still
+ * decide to take the guest in late — see `checkInGate`.
+ *
+ * This is the lifecycle and NOTHING else. It is deliberately the same question
+ * the status label answers — `completed` is printed as "Checked out" and
+ * `cancelled` as "Cancelled" — so the rule holds exactly as it reads: a row
+ * that says one of those two words has no buttons on it.
+ *
+ * It does NOT second-guess the lifecycle by re-deriving a stay action from the
+ * stamps. It used to, to protect a split stay whose guest is still due back,
+ * and that let the very thing this exists to stop straight through: a booking
+ * whose last part was closed on the server's side but whose stamps still read
+ * "checked in, not out" came back as open and offered Check out under a
+ * "Checked out" label. The guard is unnecessary anyway — the server only
+ * reports `completed` once every part of the stay is behind the guest (see
+ * Booking.lifecycle_status, which reaches it only when `current_part` is None),
+ * so there is no half-finished split stay for it to protect.
+ */
+export function bookingClosed(b: {
+  status: string;
+  checkIn: string;
+  checkOut: string;
+  lifecycleStatus?: string;
+  checkedInAt?: string;
+  checkedOutAt?: string;
+}): boolean {
+  const life = lifecycleOf(b);
+  return life === "completed" || life === "cancelled" || b.status === "cancelled";
 }
 
 /* ------------------------------------------------------------------ */
@@ -1020,6 +1115,65 @@ export function stayProgress(
     allDone,
     label,
   };
+}
+
+/**
+ * The dates this stay actually covers NOW — the first night still held, and the
+ * morning after the last one.
+ *
+ * NOT `checkIn`/`checkOut`. Those are the outer bounds the booking was MADE
+ * with, and the server freezes them there on purpose: they sit beside the money
+ * as the record of what was bought, and the gap between them and the segments is
+ * the record of what was given back. Printed in a row that answers "when am I
+ * going?", though, they are simply wrong — a guest who handed back the first
+ * three nights of 1 → 5 would still read "1 → 5" the morning they were meant to
+ * arrive. The segments are what the booking holds, and what it holds is the stay.
+ *
+ * On a split stay these still only BRACKET it: the part chips underneath are
+ * what say the middle belongs to somebody else.
+ */
+export function stayDates(b: {
+  checkIn: string;
+  checkOut: string;
+  segments?: { checkIn: string; checkOut: string }[];
+}): { checkIn: string; checkOut: string } {
+  const parts = b.segments || [];
+  if (!parts.length) return { checkIn: b.checkIn, checkOut: b.checkOut };
+  return {
+    checkIn: parts[0].checkIn,
+    checkOut: parts[parts.length - 1].checkOut,
+  };
+}
+
+/**
+ * May the guest still change this stay right now — add services, add nights?
+ *
+ * Up to the hour they are due, yes: the trip is still a plan and re-planning it
+ * is what the button is for. ON that hour the door shuts, whether or not they
+ * turned up, because a stay whose check-in has come round with nobody verified
+ * in it is not yet anything to add to — the host is at the door and the grace
+ * period is running. Checking in settles it and the door opens again.
+ *
+ * Judged on the part in FRONT of the guest, the same one the server judges (see
+ * additions.blocked_reason): a part they have arrived for is open even if a
+ * later hour has since come round, and a part nobody ever arrived for is behind
+ * us and says nothing about the parts still to come.
+ *
+ * Derived from the clock rather than read off the server's flags alone, so the
+ * button goes the moment the hour passes instead of at the next refetch. The
+ * server refuses either way; this only stops drawing a door it would refuse.
+ */
+export function stayChangeable(
+  b: Parameters<typeof stayProgress>[0],
+  nowMs: number
+): boolean {
+  const outstanding = stayProgress(b, nowMs).parts.find(
+    (part) =>
+      part.status === "current" ||
+      part.status === "awaiting" ||
+      part.status === "upcoming"
+  );
+  return !!outstanding && outstanding.status !== "awaiting";
 }
 
 /** "Fri, 29 Jul · 2:00 PM" — a part's arrival or departure moment. */

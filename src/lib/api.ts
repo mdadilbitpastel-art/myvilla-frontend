@@ -448,6 +448,57 @@ export async function fetchMyVillasCount(): Promise<number> {
   return data.myVillasCount;
 }
 
+/**
+ * Everything the account sidebar counts, in ONE request: villas owned, stays
+ * booked, rent requests received, coupons created.
+ *
+ * One request on purpose: the sidebar draws itself once, complete, when these
+ * land. Asked for separately they arrive milliseconds apart, and the nav
+ * assembled itself in front of the reader — the host-only sections dropping in
+ * after everything else had already settled.
+ *
+ * Everything but `villas` is null when the server is an older one that doesn't
+ * answer for the counts (the whole query fails, and the villa count — which
+ * decides which sections EXIST — is asked for again on its own). The sidebar
+ * treats null as "don't know" and says nothing, rather than claiming the user
+ * has none of something.
+ */
+export type AccountCounts = {
+  villas: number;
+  bookings: number | null;
+  rentRequests: number | null;
+  coupons: number | null;
+};
+
+export async function fetchAccountCounts(): Promise<AccountCounts> {
+  try {
+    const data = await gql<{
+      myVillasCount: number;
+      myBookingsCount: number;
+      myVillaBookingsCount: number;
+      myCouponsCount: number;
+    }>(
+      `query AccountCounts {
+         myVillasCount myBookingsCount myVillaBookingsCount myCouponsCount
+       }`,
+      {}
+    );
+    return {
+      villas: data.myVillasCount,
+      bookings: data.myBookingsCount,
+      rentRequests: data.myVillaBookingsCount,
+      coupons: data.myCouponsCount,
+    };
+  } catch {
+    return {
+      villas: await fetchMyVillasCount(),
+      bookings: null,
+      rentRequests: null,
+      coupons: null,
+    };
+  }
+}
+
 /* ---- Coupons (host-created discount codes) ---- */
 
 export type CouponDiscountType = "percent" | "fixed";
@@ -1102,6 +1153,11 @@ export type BookingEditOptions = {
   maxCheckOut: string;
   unavailableDates: string[];
   ownNights: string[];
+  /** Nights this booking gave back and hasn't taken again. Free like any other
+   *  free date, but the guest who gave them up should read them as theirs to
+   *  reclaim — and they are taken back one at a time, not swept up by a range,
+   *  because they sit inside the stay with nights kept either side of them. */
+  cancelledNights: string[];
   checkInTime: string;
   serverNow: string;
 };
@@ -1378,7 +1434,7 @@ export async function fetchBookingEditOptions(
          canAddServices canAddNights blockedReason
          chargeableNights pricePerNight
          acceptedPayments savedPaymentMethod savedPaymentReference
-         firstDate lastDate maxCheckOut unavailableDates ownNights
+         firstDate lastDate maxCheckOut unavailableDates ownNights cancelledNights
          checkInTime serverNow
        }
      }`,
@@ -1394,22 +1450,26 @@ export async function fetchBookingEditOptions(
  * Both halves go in the same call because they are bought in the same breath: a
  * service added alongside two extra nights runs over those nights too, which is
  * not something two separate quotes could work out.
+ *
+ * `nights` are dates picked one at a time — the guest taking back single nights
+ * they had given up — and are added to whatever the range covers.
  */
 export async function fetchChangesQuote(
   id: string,
   services: string[],
   checkIn: string,
-  checkOut: string
+  checkOut: string,
+  nights: string[] = []
 ): Promise<ChangesQuote> {
   const data = await gql<{ bookingChangesQuote: ChangesQuote }>(
-    `query BookingChangesQuote($id: ID!, $services: [String!], $checkIn: String, $checkOut: String) {
-       bookingChangesQuote(id: $id, services: $services, checkIn: $checkIn, checkOut: $checkOut) {
+    `query BookingChangesQuote($id: ID!, $services: [String!], $checkIn: String, $checkOut: String, $nights: [String!]) {
+       bookingChangesQuote(id: $id, services: $services, checkIn: $checkIn, checkOut: $checkOut, nights: $nights) {
          services { ${SERVICE_QUOTE_SELECTION} }
          nights { ${NIGHTS_QUOTE_SELECTION} }
          amount allowed message error
        }
      }`,
-    { id, services, checkIn: checkIn || null, checkOut: checkOut || null }
+    { id, services, checkIn: checkIn || null, checkOut: checkOut || null, nights }
   );
   return data.bookingChangesQuote;
 }
@@ -1428,15 +1488,23 @@ export async function addToBooking(
   services: string[],
   checkIn: string,
   checkOut: string,
-  payment: AddonPayment
+  payment: AddonPayment,
+  nights: string[] = []
 ): Promise<Booking> {
   const data = await gql<{ addToBooking: Booking }>(
-    `mutation AddToBooking($id: ID!, $services: [String!], $checkIn: String, $checkOut: String, $payment: AddonPaymentInput!) {
-       addToBooking(id: $id, services: $services, checkIn: $checkIn, checkOut: $checkOut, payment: $payment) {
+    `mutation AddToBooking($id: ID!, $services: [String!], $checkIn: String, $checkOut: String, $nights: [String!], $payment: AddonPaymentInput!) {
+       addToBooking(id: $id, services: $services, checkIn: $checkIn, checkOut: $checkOut, nights: $nights, payment: $payment) {
          ${BOOKING_SELECTION}
        }
      }`,
-    { id, services, checkIn: checkIn || null, checkOut: checkOut || null, payment }
+    {
+      id,
+      services,
+      checkIn: checkIn || null,
+      checkOut: checkOut || null,
+      nights,
+      payment,
+    }
   );
   return data.addToBooking;
 }
@@ -1527,6 +1595,21 @@ export async function verifyCheckOut(id: string, pin: string): Promise<Booking> 
     { id, pin }
   );
   return data.verifyCheckOut;
+}
+
+/**
+ * Close a stay whose booked check-out hour has already passed — one press, no
+ * PIN. Refused by the server while that hour is still ahead: checking a guest
+ * out early is the one thing the code exists to stop.
+ */
+export async function checkOutNow(id: string): Promise<Booking> {
+  const data = await gql<{ checkOutNow: Booking }>(
+    `mutation CheckOutNow($id: ID!) {
+       checkOutNow(id: $id) { ${BOOKING_SELECTION} }
+     }`,
+    { id }
+  );
+  return data.checkOutNow;
 }
 
 /* ---- Reviews ---- */

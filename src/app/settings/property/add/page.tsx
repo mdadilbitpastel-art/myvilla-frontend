@@ -624,15 +624,32 @@ function Wizard() {
               disabled={busy}
               className="rounded-lg bg-primary px-6 py-2.5 text-[14px] font-semibold text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-70"
             >
-              {busy
-                ? "Please wait…"
-                : stepsOn
-                  ? editMode
-                    ? "Update & Next"
-                    : "Save and Next"
-                  : editMode
-                    ? "Update Property"
-                    : "Host your Property"}
+              {/* Both labels are laid on top of each other in one grid cell, so
+                  the button is always as wide as the WIDER of the two and never
+                  resizes at the moment it is pressed. Sizing it to whichever
+                  label happened to be showing made "Update Property" shrink to
+                  "Please wait…" under the cursor — the button moving out from
+                  under the click that started it. `invisible`, not unmounted:
+                  the hidden label still has to hold the width open. */}
+              <span className="grid place-items-center">
+                <span
+                  className={`col-start-1 row-start-1 whitespace-nowrap ${busy ? "invisible" : ""}`}
+                >
+                  {stepsOn
+                    ? editMode
+                      ? "Update & Next"
+                      : "Save and Next"
+                    : editMode
+                      ? "Update Property"
+                      : "Host your Property"}
+                </span>
+                <span
+                  aria-hidden={!busy}
+                  className={`col-start-1 row-start-1 whitespace-nowrap ${busy ? "" : "invisible"}`}
+                >
+                  Please wait…
+                </span>
+              </span>
             </button>
           </div>
         </div>
@@ -1480,9 +1497,20 @@ function PaymentStep({
   return (
     <div>
       <h2 className="text-[16px] font-bold text-ink">Add payment method for guests.</h2>
-      <p className="mt-4 text-[14px] text-ink">Guests can pay using:</p>
+      <p className="mt-4 text-[14px] text-ink">
+        Guests can pay using: <span className="text-red-500">*</span>
+      </p>
+      <p className="mt-1 text-[12.5px] text-muted">
+        Pick at least one — a guest can&apos;t book a villa there is no way to pay for.
+      </p>
 
-      <div className="mt-3 grid max-w-[420px] grid-cols-2 gap-3">
+      <div
+        className={`mt-3 grid max-w-[420px] grid-cols-2 gap-3 rounded-xl ${
+          invalidField === "acceptedPayments"
+            ? "border border-red-400 p-2.5"
+            : ""
+        }`}
+      >
         {PAYMENT_METHODS.map((m) => {
           const on = accepted.includes(m);
           return (

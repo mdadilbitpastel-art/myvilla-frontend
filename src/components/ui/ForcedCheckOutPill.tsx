@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import { AlertTriangle } from "lucide-react";
 import type { Booking } from "@/lib/api";
-import { forcedCheckOut, useServerWallClock } from "@/lib/booking";
+import { bookingClosed, forcedCheckOut, useServerWallClock } from "@/lib/booking";
 
 /**
  * The half hour a stay has left to be closed by hand before the platform closes
@@ -12,8 +12,12 @@ import { forcedCheckOut, useServerWallClock } from "@/lib/booking";
  * The warning is the point. A forced check-out is not a punishment and costs
  * nobody anything, but it IS the platform ending something on the host's behalf,
  * and neither side should meet that as a surprise: the host gets half an hour in
- * which pressing Check out still means the guest handed over a PIN, and the
- * guest can see exactly when their stay stops being open.
+ * which closing the stay is still their own act, with their name on the record,
+ * and the guest can see exactly when it stops being open.
+ *
+ * No PIN is involved in that half hour — the code only ever existed to stop a
+ * stay being ended EARLY (see `checkOutPinRequired`), and this countdown starts
+ * at the very hour that stops being possible.
  *
  * Ticks every second off the SERVER's wall clock — the hour belongs to the
  * property, and the browser may sit in another time zone. When the clock runs
@@ -37,7 +41,11 @@ export default function ForcedCheckOutPill({
   variant?: "text" | "banner";
 }) {
   const now = useServerWallClock(booking.serverNow, 1_000);
-  const state = forcedCheckOut(booking, now);
+  // A stay that has already been checked out or cancelled cannot be overrunning
+  // — there is nothing left for the platform to close. Guarded here as well as
+  // on the server's own flag so a history row can never sit there counting down
+  // (and asking the page to refetch) against a booking that is already over.
+  const state = bookingClosed(booking) ? null : forcedCheckOut(booking, now);
   // One call, not one per tick: the countdown sits at zero until the refetch
   // lands, and a refresh fired every second in that gap is a small flood.
   const fired = useRef(false);
@@ -72,10 +80,10 @@ export default function ForcedCheckOutPill({
             "The check-out grace period is over — this stay is being closed automatically."
           ) : (
             <>
-              Check-out is overdue. This stay closes automatically in{" "}
-              <span className="tabular-nums font-bold">{state.when}</span> — after
-              that no PIN is needed, and the departure is recorded as the
-              platform&apos;s.
+              Check-out is overdue, so no PIN is needed any more — the host can
+              close this stay in one press. Left alone it closes automatically in{" "}
+              <span className="tabular-nums font-bold">{state.when}</span>, and the
+              departure is recorded as the platform&apos;s.
             </>
           )}
         </span>

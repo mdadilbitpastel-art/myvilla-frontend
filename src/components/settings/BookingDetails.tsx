@@ -25,6 +25,7 @@ import ForcedCheckOutPill from "@/components/ui/ForcedCheckOutPill";
 import ReviewForm from "@/components/reviews/ReviewForm";
 import type { Booking } from "@/lib/api";
 import {
+  bookingClosed,
   bookingStatus,
   cancellationGate,
   checkInCountdown,
@@ -327,6 +328,11 @@ export function StayActionButton({
       window.removeEventListener("resize", hide);
     };
   }, [tip]);
+
+  // Over and done with — checked out or cancelled. There is no arrival left to
+  // take and no departure left to close, so this renders nothing at all: not the
+  // green button, and not the "Allow late check-in" one below it either.
+  if (bookingClosed(booking)) return null;
 
   const gate = checkInGate(booking, now);
   const action = stayAction(booking);
@@ -695,6 +701,11 @@ export default function BookingDetails({
   // of its own to say.
   const countdown = checkInCountdown(booking, now);
   const cancelled = booking.status === "cancelled";
+  // Checked out or cancelled: the panel is a record of a stay, not a place to
+  // do anything to it. Every action the header can hold is gated on this, so a
+  // booking sitting in Booking History cannot show one whatever the flags on it
+  // say. Only Hide — and the review, which is what these bookings are for.
+  const closed = bookingClosed(booking);
 
   // The runs this stay is really made of. Older payloads carry none, in which
   // case the booking's own two dates ARE the single run — the same fallback the
@@ -733,6 +744,25 @@ export default function BookingDetails({
       : `Guest left ${plural(booking.releasedNights, "night")} early. No refund is due, and ${
           booking.releasedNights === 1 ? "that night is" : "those nights are"
         } back on your calendar for other guests to book.`;
+
+  // And the other way a part can end without being stayed in: nobody ever
+  // arrived, and its hour to be vacated came round anyway. "Missed" on the chip
+  // says it happened; it does not say what it COST, and that is the half a guest
+  // reads the panel for — the nights were paid for, the window to claim them has
+  // shut, and nothing comes back. Left unsaid, a red chip reads like a booking
+  // that quietly refunded itself.
+  const missedNote = (nights: number) =>
+    role === "guest"
+      ? `No-show — nobody checked in before the check-in window closed, so ${plural(
+          nights,
+          "night"
+        )} went unstayed. Nothing is refunded for ${
+          nights === 1 ? "it" : "them"
+        }; the stay was paid for in full.`
+      : `No-show — the guest never checked in before the window closed, so ${plural(
+          nights,
+          "night"
+        )} went unstayed. No refund is due to them.`;
 
   // Every change made to this booking after it was paid for, oldest first —
   // nights given up on one side, services and nights bought on the other. They
@@ -906,9 +936,20 @@ export default function BookingDetails({
               naming. */}
           {!(role === "owner" && countdown) && (
             <span
-              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold ${PILL_CLASS[status.tone]}`}
+              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold ${
+                PILL_CLASS[status.tone]
+              }`}
             >
-              <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden />
+              {/* Only the dot breathes here, not the whole chip: this pill sits
+                  on a tinted background, and fading the tint in and out would
+                  pulse a block of colour rather than a status. The dot is the
+                  same reading as the list's, at the size this panel wants. */}
+              <span
+                className={`h-1.5 w-1.5 rounded-full bg-current ${
+                  status.pending ? "animate-soft-pulse" : ""
+                }`}
+                aria-hidden
+              />
               {status.label}
             </span>
           )}
@@ -923,7 +964,7 @@ export default function BookingDetails({
               already answering. Renders nothing outside a stay under way. */}
           <StayCountdownPill booking={booking} />
 
-          {onCheckIn && onCheckOut && (
+          {!closed && onCheckIn && onCheckOut && (
             <StayActionButton
               booking={booking}
               onCheckIn={onCheckIn}
@@ -938,7 +979,7 @@ export default function BookingDetails({
               and "less of it" — and a guest who opens their booking to add two
               nights should not have to go looking for the door. In the brand
               colour rather than the warning one: this one grows the stay. */}
-          {onEdit && (
+          {!closed && onEdit && (
             <button
               type="button"
               onClick={onEdit}
@@ -956,7 +997,7 @@ export default function BookingDetails({
               of the panel: the guest reads "Confirmed" and the way to undo it
               is right there. Outlined rather than filled — it belongs beside
               the pill without shouting over it. */}
-          {onCancel && (
+          {!closed && onCancel && (
             <button
               type="button"
               onClick={onCancel}
@@ -1015,14 +1056,17 @@ export default function BookingDetails({
           already was. */}
       <ForcedCheckOutPill booking={booking} variant="banner" />
 
-      {role === "guest" && booking.checkinPin && (
+      {/* The live stay codes, and only while the stay is live: a code left on a
+          booking that has already been checked out or cancelled is a door that
+          no longer opens, offered to a guest who would go and read it out. */}
+      {role === "guest" && !closed && booking.checkinPin && (
         <StayPinCard
           mode="in"
           pin={booking.checkinPin}
           expiresIn={booking.checkinPinExpiresIn}
         />
       )}
-      {role === "guest" && booking.checkoutPin && (
+      {role === "guest" && !closed && booking.checkoutPin && (
         <StayPinCard
           mode="out"
           pin={booking.checkoutPin}
@@ -1272,6 +1316,15 @@ export default function BookingDetails({
                           {earlyNote}
                         </p>
                       )}
+
+                      {/* And the part nobody turned up for. Same place, same
+                          voice: what happened to THIS part and what it cost,
+                          inside the card it happened to. */}
+                      {s.status === "missed" && (
+                        <p className="mt-2 rounded-md bg-red-50 px-2.5 py-1.5 text-[11px] leading-4 text-red-600">
+                          {missedNote(s.nights)}
+                        </p>
+                      )}
                     </li>
 
                     {/* The nights between two parts: a rule with the fact on it,
@@ -1321,6 +1374,16 @@ export default function BookingDetails({
                 value={
                   booking.checkedInAt ? (
                     <span className="text-green-600">{fmtDateTime(booking.checkedInAt)}</span>
+                  ) : segments[0]?.status === "missed" ? (
+                    // An unbroken stay has no part card to carry this, so its
+                    // arrival line does — the line that would otherwise sit on
+                    // "Not yet" forever, on a stay that can never be arrived at.
+                    <>
+                      <span className="text-red-600">Never arrived</span>
+                      <span className="mt-0.5 block text-[11px] font-normal leading-4 text-red-600">
+                        {missedNote(segments[0].nights)}
+                      </span>
+                    </>
                   ) : (
                     <span className="text-muted">Not yet</span>
                   )

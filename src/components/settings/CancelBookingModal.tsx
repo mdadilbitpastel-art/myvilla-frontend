@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AlertTriangle, CalendarX2, Loader2, Lock } from "lucide-react";
+import { AlertTriangle, CalendarX2, Loader2, Lock, X } from "lucide-react";
 import {
   cancelBookingNights,
   fetchNightsCancellationQuote,
@@ -35,6 +35,23 @@ function fmtWeekday(iso: string): string {
   return DAYS[parseDay(iso).getDay()];
 }
 
+/**
+ * "12–16 Sep" for a run of nights. The end printed is the morning AFTER the
+ * last night — the day the guest actually leaves — which is how every other
+ * date range in the product reads.
+ */
+function rangeLabel(nights: { date: string }[]): string {
+  if (!nights.length) return "";
+  const first = parseDay(nights[0].date);
+  const last = parseDay(nights[nights.length - 1].date);
+  last.setDate(last.getDate() + 1);
+  const sameMonth =
+    first.getMonth() === last.getMonth() && first.getFullYear() === last.getFullYear();
+  return sameMonth
+    ? `${first.getDate()}–${last.getDate()} ${MONTHS[last.getMonth()]}`
+    : `${first.getDate()} ${MONTHS[first.getMonth()]} – ${last.getDate()} ${MONTHS[last.getMonth()]}`;
+}
+
 /** Every night of one run of the stay: the nights slept, so the last date is
  *  the morning the guest leaves and is NOT one of them. */
 function nightsOf(checkIn: string, checkOut: string): string[] {
@@ -51,46 +68,25 @@ function nightsOf(checkIn: string, checkOut: string): string[] {
 }
 
 /**
- * Keep what's LEFT of each part in one unbroken run.
+ * Would giving up `selected` leave a hole in this part — nights kept on BOTH
+ * sides of a night handed back?
  *
- * A stay is nights the guest is physically present for, so dropping one out of
- * the middle would mean packing up, leaving and coming back — the server
- * refuses it, and rather than let the guest build a selection that will be
- * rejected, a tap in the middle takes everything from there to the nearer end
- * of that part with it. That is what "trim your stay" means on every travel
- * site, and it is the only shape the server will accept.
+ * A hole is allowed: the part becomes the two runs either side of it, which is
+ * the same shape a stay booked around somebody else's nights already has. It is
+ * worth saying out loud all the same, because the guest has to check out before
+ * the gap and check back in after it, on a fresh PIN — so the picker owns up to
+ * that here rather than letting them find out at the door.
  *
- * Nights that can't go count as KEPT while this is worked out. On a part the
- * guest is already living in, tonight is theirs and stays; the run may then only
- * be trimmed from the far end, so picking the middle of what's left reaches
- * forward to the end of the stay rather than backwards into a night already
- * being slept in.
+ * Nights already given up are not holes: they left one when they went, and the
+ * run either side of them is what the stay is now.
  */
-function trimToEdges(partNights: BookingNightOption[], selected: Set<string>): string[] {
-  const picked = partNights
-    .map((night, i) => (night.cancellable && selected.has(night.date) ? i : -1))
+function splitsPart(partNights: BookingNightOption[], selected: Set<string>): boolean {
+  const kept = partNights
+    .filter((night) => night.state !== "cancelled")
+    .map((night, i) => (night.cancellable && selected.has(night.date) ? -1 : i))
     .filter((i) => i >= 0);
-  if (picked.length === 0) return [];
-  const first = picked[0];
-  const last = picked[picked.length - 1];
-  const dates = (from: number, to: number) =>
-    partNights.slice(from, to).map((night) => night.date);
-  // Which ends are actually free: an end is only an end if everything between
-  // it and the furthest pick can go at all.
-  const headFree = partNights.slice(0, last + 1).every((n) => n.cancellable);
-  const tailFree = partNights.slice(first).every((n) => n.cancellable);
-  if (headFree && tailFree) {
-    // Both open — fall to whichever end is closer, so the tap costs the guest
-    // as few nights as it can while still leaving them somewhere to sleep.
-    return first <= partNights.length - 1 - last
-      ? dates(0, last + 1)
-      : dates(first, partNights.length);
-  }
-  if (headFree) return dates(0, last + 1);
-  if (tailFree) return dates(first, partNights.length);
-  // No shape of this part works. Send what was picked and let the server say so
-  // rather than silently dropping the guest's choice.
-  return picked.map((i) => partNights[i].date);
+  if (kept.length < 2) return false;
+  return kept[kept.length - 1] - kept[0] + 1 !== kept.length;
 }
 
 /**
@@ -121,14 +117,6 @@ function nightRows(booking: Booking): BookingNightOption[] {
   );
 }
 
-const STATE_NOTE: Record<string, string> = {
-  started:
-    "This night has already begun — it's yours. The nights that haven't started can still be given up.",
-  expired:
-    "This night has already begun, so it can no longer be cancelled. The nights that haven't started can.",
-  cancelled: "This night has already been cancelled.",
-};
-
 /**
  * The cancel screen: the whole stay, night by night, and what giving any of it
  * up costs right now.
@@ -155,10 +143,6 @@ export default function CancelBookingModal({
   onCancelled: (updated: Booking, quote: NightsCancellationQuote) => void;
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  // The line under the picker: what the last tap meant. A night that can't go
-  // says why here rather than only in a tooltip, and a tap that had to take
-  // its neighbours with it explains itself instead of just moving the chips.
-  const [note, setNote] = useState("");
   // The last answer the server gave, tagged with the selection it was FOR. A
   // quote is only ever shown against its own selection, so changing the picker
   // needs nothing cleared: the stale figure simply stops matching and the
@@ -188,27 +172,52 @@ export default function CancelBookingModal({
       .map(([index, nights]) => ({ index, nights }));
   }, [rows]);
 
+  // What the picker lays out: the nights that can still go, and the ones
+  // already given up — in date order, whichever part they belong to.
+  //
+  // Nights that have simply run out of time (a stay under way, an arrival hour
+  // gone by) are NOT here. They can't be chosen and they can't be undone, so
+  // all they did was pad the screen with things to be refused. A night already
+  // handed back is different: it IS an answer to "what have I cancelled?", and
+  // it comes back struck through and disabled rather than pretending the
+  // booking was always this length.
+  const shownRows = useMemo(
+    () =>
+      rows
+        .filter((row) => row.cancellable || row.state === "cancelled")
+        .sort((a, b) => a.date.localeCompare(b.date)),
+    [rows]
+  );
+
+  // The stay in one line, for the header — what the guest is looking at before
+  // they change any of it. Nights already handed back are not part of it.
+  const stayLabel = useMemo(() => {
+    const held = rows.filter((row) => row.state !== "cancelled");
+    if (!held.length) return "";
+    return `${rangeLabel(held)} · ${held.length} night${held.length === 1 ? "" : "s"}`;
+  }, [rows]);
+
   const openNights = useMemo(
     () => rows.filter((row) => row.cancellable).map((row) => row.date),
     [rows]
   );
   const anySelectable = openNights.length > 0;
 
-  // What is actually being given up: the picked nights, trimmed per part so
-  // what's left of each is one unbroken run.
+  // What is actually being given up: exactly the nights tapped, and nothing
+  // else. Each night stands on its own — one out of the middle of a part is a
+  // perfectly good choice, it just breaks that part in two — so a tap never
+  // moves a chip the guest didn't touch.
   const effective = useMemo(
-    () =>
-      parts.flatMap((part) =>
-        // Only the nights the booking still holds shape the run — one already
-        // given up is no longer in the way of anything.
-        trimToEdges(
-          part.nights.filter((n) => n.state !== "cancelled"),
-          selected
-        )
-      ),
-    [parts, selected]
+    () => rows.filter((row) => row.cancellable && selected.has(row.date)).map((r) => r.date),
+    [rows, selected]
   );
   const effectiveSet = useMemo(() => new Set(effective), [effective]);
+  // Parts this selection would break in two, so the guest is told before the
+  // button that they'd be leaving and coming back across the gap.
+  const splitParts = useMemo(
+    () => parts.filter((part) => splitsPart(part.nights, selected)).length,
+    [parts, selected]
+  );
   // The selection as one comparable value — what a quote is tagged with, and
   // what the effect below watches (the array itself is rebuilt every render).
   const selectionKey = effective.join(",");
@@ -257,35 +266,26 @@ export default function CancelBookingModal({
     };
   }, [booking.id, selectionKey]);
 
-  /** A night the guest tapped. One that can't go answers on the spot; one that
-   *  can joins (or leaves) the selection and says what it costs. */
-  const tapNight = useCallback(
-    (row: BookingNightOption) => {
-      setError("");
-      if (!row.cancellable) {
-        setNote(row.message || STATE_NOTE[row.state] || "This night can't be cancelled.");
-        return;
-      }
-      setNote(row.message ? `${fmtDay(row.date)} — ${row.message}` : "");
-      setSelected((prev) => {
-        const next = new Set(prev);
-        if (next.has(row.date)) next.delete(row.date);
-        else next.add(row.date);
-        return next;
-      });
-    },
-    []
-  );
+  /** A night the guest tapped: it joins the selection, or leaves it. Every
+   *  night in the picker can go — the ones that can't are not shown — so there
+   *  is nothing left to refuse and nothing to explain. */
+  const tapNight = useCallback((row: BookingNightOption) => {
+    setError("");
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(row.date)) next.delete(row.date);
+      else next.add(row.date);
+      return next;
+    });
+  }, []);
 
   const selectAll = useCallback(() => {
     setError("");
-    setNote("");
     setSelected(new Set(openNights));
   }, [openNights]);
 
   const clearAll = useCallback(() => {
     setError("");
-    setNote("");
     setSelected(new Set());
   }, []);
 
@@ -308,19 +308,20 @@ export default function CancelBookingModal({
 
   const full = quote?.full ?? false;
   const blocked = !!quote && !quote.allowed;
-  // A tap that had to take its neighbours with it — worth saying out loud, or
-  // the picker looks like it selected dates on its own.
-  const pulledAlong = effective.filter((n) => !selected.has(n)).length;
-  // The dialog is as wide as the stay needs and no wider: a weekend doesn't
-  // deserve a hall, and a long stay would otherwise stack its dates into a
-  // column taller than the screen. Width is what buys the height back.
-  const panelWidth = rows.length <= 7 ? 640 : rows.length <= 16 ? 800 : 940;
+  // As wide as the stay needs and no wider. Width is what buys the height back:
+  // the dates lay themselves out in as many columns as the panel gives them, so
+  // a long booking gets a wide dialog rather than a tall one — and neither the
+  // picker nor the page ends up with a scrollbar.
+  // Sized to what is actually on show — the nights that can still go — not to
+  // the whole booking: a month-long stay with three nights left to give up
+  // needs a small dialog, not a hall with three chips in it.
+  const shown = shownRows.length;
+  const panelWidth = shown <= 7 ? 620 : shown <= 14 ? 780 : shown <= 24 ? 920 : 1080;
+  // Past a month the chips themselves give ground, so another column or two
+  // fits across rather than the dialog growing another row.
+  const chipWidth = shown > 24 ? 66 : 78;
 
   return createPortal(
-    // The dialog never scrolls inside itself: a picker with its own scrollbar
-    // hides dates behind an edge the guest has to find. The panel is as tall as
-    // the stay needs, and on the rare booking too long to fit, the whole dialog
-    // moves under the OVERLAY's scroll — one scrollbar, in the usual place.
     <div
       role="dialog"
       aria-modal="true"
@@ -330,39 +331,52 @@ export default function CancelBookingModal({
       <div
         aria-hidden
         onClick={() => !busy && onClose()}
-        className="animate-fade-in fixed inset-0 bg-ink/45 backdrop-blur-[2px]"
+        className="animate-fade-in fixed inset-0 bg-ink/50 backdrop-blur-[3px]"
       />
 
       <div className="relative flex min-h-full items-center justify-center px-5 py-6">
         <div
           ref={panelRef}
           style={{ maxWidth: panelWidth }}
-          className="animate-toast-in relative w-full overflow-hidden rounded-2xl border border-line bg-white shadow-2xl"
+          className="animate-toast-in relative w-full overflow-hidden rounded-2xl border border-line bg-white shadow-[0_30px_80px_-24px_rgba(20,20,45,0.5)]"
         >
-          {/* Header */}
-          <div className="flex items-start gap-3.5 border-b border-line px-6 py-4">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-50 text-red-500">
-              <CalendarX2 size={20} aria-hidden />
+          {/* Header — the stay it is about, and a way out of the corner. */}
+          <div className="flex items-center gap-3.5 border-b border-line bg-gradient-to-r from-red-50/80 to-transparent px-5 py-3.5 sm:px-6">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-red-500 ring-1 ring-red-100">
+              <CalendarX2 size={19} aria-hidden />
             </span>
-            <div className="min-w-0">
-              <h2 id={titleId} className="text-[16px] font-bold text-ink">
+            <div className="min-w-0 flex-1">
+              <h2 id={titleId} className="text-[16px] font-bold leading-tight text-ink">
                 Cancel dates
               </h2>
-              <p className="mt-0.5 truncate text-[13px] text-body">{booking.villaTitle}</p>
+              <p className="mt-0.5 truncate text-[12.5px] text-body">
+                {booking.villaTitle}
+                {stayLabel && <span className="text-muted"> · {stayLabel}</span>}
+              </p>
             </div>
+            <button
+              type="button"
+              onClick={() => !busy && onClose()}
+              disabled={busy}
+              aria-label="Close"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-page hover:text-ink disabled:opacity-50"
+            >
+              <X size={17} aria-hidden />
+            </button>
           </div>
 
-          {/* Two columns where there's room: the stay on the left, the money on
-              the right. Side by side the dialog is wide rather than tall, which
-              is what keeps a long stay on one screen without a scrollbar. */}
-          <div className="px-6 py-4 md:flex md:items-start md:gap-6">
+          {/* The stay on the left, the money on the right. Side by side the
+              dialog is wide rather than tall, which is what keeps a long stay
+              on one screen. */}
+          <div className="px-5 py-4 sm:px-6 md:flex md:items-start md:gap-6">
             <div className="min-w-0 md:flex-1">
-              {/* The whole stay, night by night. Nothing is hidden: the dates
-                  that can't go are here too, disabled, reason a tap away. */}
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-[12.5px] font-semibold uppercase tracking-wide text-muted">
-                  Your booked dates
-                </p>
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                <div className="flex items-center gap-3">
+                  <p className="text-[12px] font-semibold uppercase tracking-wide text-muted">
+                    Your nights
+                  </p>
+                  <Legend />
+                </div>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
@@ -383,64 +397,68 @@ export default function CancelBookingModal({
                 </div>
               </div>
 
-              {parts.map((part) => (
-                <div key={part.index} className="mt-3">
-                  {parts.length > 1 && (
-                    <p className="mb-1.5 text-[12px] font-semibold text-body">
-                      Part {part.index} of {parts.length}
-                    </p>
-                  )}
-                  <div className="flex flex-wrap gap-1.5">
-                    {part.nights.map((row) => (
+              {/* One run of dates, in date order — not a block per part. The
+                  parts are still what the stay IS, and the line under the
+                  picker owns up to a gap, but heading each one cost a row of
+                  its own: a stay cut into five one-night pieces became five
+                  lines with a single chip on each and the whole right of the
+                  dialog blank beside them. The dates say it themselves. */}
+              <div className="mt-2.5 rounded-2xl border border-line/70 bg-gradient-to-b from-page/70 to-white p-2.5">
+                {shownRows.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {shownRows.map((row) => (
                       <NightChip
                         key={row.date}
                         row={row}
+                        width={chipWidth}
                         picked={effectiveSet.has(row.date)}
                         busy={busy}
                         onTap={() => tapNight(row)}
                       />
                     ))}
                   </div>
-                </div>
-              ))}
+                ) : (
+                  <p className="px-1 py-3 text-center text-[12.5px] text-muted">
+                    No nights left to cancel.
+                  </p>
+                )}
+              </div>
 
-              <Legend />
-
-              {/* Why the last tap did what it did — a night that can't go, or
-                  one that took its neighbours with it. */}
-              {(note || pulledAlong > 0) && (
-                <p className="mt-2.5 text-[12px] leading-5 text-body" role="status">
-                  {pulledAlong > 0
-                    ? `A stay can't have a gap you leave and come back across, so ${pulledAlong} night${
-                        pulledAlong === 1 ? " next to your pick was" : "s next to your picks were"
-                      } added — nights are given up from the start or the end of a stay.`
-                    : note}
-                </p>
-              )}
-
-              {!anySelectable && (
-                <p className="mt-2.5 text-[12px] leading-5 text-body">
-                  None of these nights can be cancelled any more. If your stay is under
-                  way, check out early instead — the nights go back on the calendar, but
-                  nothing is refunded.
-                </p>
-              )}
+              {/* One line, and the space for it is always there so nothing
+                  below jumps as the guest taps around. It says the one thing
+                  the money can't: that this choice would break the stay in two.
+                  Nothing else — not a count of the nights that aren't on offer
+                  (they aren't being cancelled, so they are not this screen's
+                  business), and not the per-night policy sentence, which read
+                  as if it described the whole selection: "Free cancellation
+                  available." sitting above a summary charging 10%. Each date
+                  wears its own share, and the summary is what adds up. */}
+              <p
+                role="status"
+                className="mt-2 min-h-[17px] text-[12px] leading-[17px] text-muted"
+              >
+                {splitParts > 0
+                  ? "Leaves a gap — your stay splits, with a new PIN after it."
+                  : !anySelectable && shownRows.length > 0
+                    ? "No nights left to cancel."
+                    : ""}
+              </p>
             </div>
 
-            <div className="mt-4 md:mt-0 md:w-[276px] md:shrink-0">
+            <div className="mt-3 md:mt-0 md:w-[272px] md:shrink-0">
               {/* What it costs. Every number here is the server's. */}
               <div className="rounded-xl border border-line bg-page px-4 py-3">
                 {effective.length === 0 ? (
-                  <p className="text-[13px] text-body">
-                    Pick the dates you want to cancel to see what comes back.
+                  <p className="text-[12.5px] leading-5 text-body">
+                    Pick the nights to cancel — the refund shows up here.
                   </p>
                 ) : quoting && !quote ? (
-                  <p className="flex items-center gap-2 text-[13px] text-body">
-                    <Loader2 size={15} className="animate-spin" aria-hidden /> Working out
-                    your refund…
+                  <p className="flex items-center gap-2 text-[12.5px] text-body">
+                    <Loader2 size={15} className="animate-spin" aria-hidden />
+                    Working out your refund…
                   </p>
                 ) : blocked ? (
-                  <p className="flex items-start gap-2 text-[13px] leading-5 text-red-600">
+                  <p className="flex items-start gap-2 text-[12.5px] leading-5 text-red-600">
                     <AlertTriangle size={15} className="mt-0.5 shrink-0" aria-hidden />
                     {quote?.error}
                   </p>
@@ -449,67 +467,56 @@ export default function CancelBookingModal({
                     <Line
                       label={
                         quote.full
-                          ? `Whole booking — ${quote.nightsCount} night${quote.nightsCount === 1 ? "" : "s"}`
-                          : `${quote.nightsCount} night${quote.nightsCount === 1 ? "" : "s"} of ${booking.activeNights}`
+                          ? `Whole booking · ${quote.nightsCount} night${quote.nightsCount === 1 ? "" : "s"}`
+                          : `${quote.nightsCount} of ${booking.activeNights} nights`
                       }
                       value={money(quote.stayValue)}
                     />
-                    {/* The services on those nights, called out because they
-                        do NOT follow the ladder: the host was going to do
-                        something on a night that is no longer happening, so
-                        there is nothing to keep a percentage of and it comes
-                        back whole. Without this line a guest reading "25%
-                        back" beside a bigger number would think the sum was
-                        wrong. */}
+                    {/* Services on those nights come back whole — they don't
+                        follow the ladder, and the sum reads wrong without it. */}
                     {quote.extrasValue > 0 && (
-                      <Line
-                        label="Extra services (refunded in full)"
-                        value={`+ ${money(quote.extrasValue)}`}
-                      />
+                      <Line label="Extras (full)" value={`+ ${money(quote.extrasValue)}`} />
                     )}
                     <Line
-                      label={`Cancellation charge (${100 - quote.refundPercentage}%)`}
+                      label={`Charge (${100 - quote.refundPercentage}%)`}
                       value={`− ${money(quote.cancellationFee)}`}
                       tone="red"
                     />
                     <div className="mt-2 flex items-center justify-between border-t border-line pt-2">
-                      <span className="text-[13px] font-semibold text-ink">
-                        Refund to you
-                      </span>
+                      <span className="text-[13px] font-semibold text-ink">Refund</span>
                       <span
-                        className={`text-[15px] font-bold ${
+                        className={`text-[16px] font-bold ${
                           quote.refundAmount > 0 ? "text-green-600" : "text-red-600"
                         }`}
                       >
                         {quote.refundAmount > 0 ? money(quote.refundAmount) : "No refund"}
                       </span>
                     </div>
-                    <p className="mt-2 text-[12px] leading-5 text-muted">{quote.message}</p>
                   </div>
                 ) : null}
               </div>
 
               {error && (
-                <p className="mt-3 text-[12.5px] font-medium text-red-600" role="alert">
+                <p className="mt-2.5 text-[12.5px] font-medium text-red-600" role="alert">
                   {error}
                 </p>
               )}
 
-              <p className="mt-2.5 text-[12px] leading-5 text-muted">
+              <p className="mt-2 text-[11.5px] leading-[17px] text-muted">
                 {full
-                  ? "The booking is called off and the nights go back on the villa's calendar. This can't be undone."
-                  : "The rest of your stay is unaffected; the nights you give up go back on the villa's calendar. This can't be undone."}
+                  ? "The booking is called off. This can't be undone."
+                  : "The rest of your stay is unaffected. This can't be undone."}
               </p>
             </div>
           </div>
 
           {/* Actions */}
-          <div className="flex justify-end gap-3 border-t border-line px-6 py-3.5">
+          <div className="flex justify-end gap-3 border-t border-line bg-page/40 px-5 py-3 sm:px-6">
             <button
               type="button"
               onClick={onClose}
               disabled={busy}
-              className="rounded-lg border border-line px-4 py-2.5 text-[13px] font-semibold text-body transition-colors hover:border-primary/40 hover:text-ink disabled:opacity-60"
+              className="rounded-lg border border-line bg-white px-4 py-2.5 text-[13px] font-semibold text-body transition-colors hover:border-primary/40 hover:text-ink disabled:opacity-60"
             >
               Keep booking
             </button>
@@ -536,78 +543,125 @@ export default function CancelBookingModal({
 }
 
 /**
- * One night. What it says depends on what may be done with it: an open night
- * wears the share it would hand back, a shut one wears a lock and answers when
- * tapped, and one already given up is struck through.
+ * One night: the day, the date, and the share it would hand back.
  *
- * Shut nights are NOT `disabled` — a disabled button swallows the tap, and the
- * whole point is that tapping is how the guest is told why the night can't go.
+ * A shut night is NOT `disabled` — a disabled button swallows the tap, and
+ * tapping is how the guest is told why that night can't go.
  */
 function NightChip({
   row,
+  width,
   picked,
   busy,
   onTap,
 }: {
   row: BookingNightOption;
+  /** Every chip in the dialog is the same width, whatever part it belongs to —
+   *  that is what lets the parts sit beside each other and still line up. */
+  width: number;
   picked: boolean;
   busy: boolean;
   onTap: () => void;
 }) {
-  const open = row.cancellable;
   const gone = row.state === "cancelled";
-  const badge = open
-    ? row.refundPercentage > 0
-      ? `${row.refundPercentage}% back`
-      : "No refund"
+  const pct = row.refundPercentage;
+  const badge = gone ? "Cancelled" : pct >= 100 ? "Full refund" : pct > 0 ? `${pct}% back` : "No refund";
+  // The one number on the chip that decides anything, so it is the one thing
+  // wearing a colour — and it wears THREE, not two. Green for a night that
+  // comes back whole, amber for one that comes back short, red for one that
+  // doesn't come back at all. At two colours a 50% night was the same green as
+  // a free one, which read as "all good" for a night that costs half its price
+  // to give up. On a chip already picked the pill goes white-on-red: the chip
+  // itself is the state by then, and a green pill inside a red one only
+  // fights it.
+  const badgeClass = picked
+    ? "bg-white/20 text-white"
     : gone
-      ? "Cancelled"
-      : null;
+      ? "text-muted"
+      : pct >= 100
+        ? "bg-green-50 text-green-700"
+        : pct > 0
+          ? "bg-amber-50 text-amber-700"
+          : "bg-red-50 text-red-600";
+
+  const face = (
+    <>
+      <span
+        className={`block text-[9.5px] uppercase tracking-wide ${
+          picked ? "text-white/70" : "text-muted"
+        }`}
+      >
+        {fmtWeekday(row.date)}
+      </span>
+      <span
+        className={`block text-[12.5px] font-bold leading-[16px] ${gone ? "line-through" : ""}`}
+      >
+        {fmtDay(row.date)}
+      </span>
+      <span
+        className={`mx-auto mt-0.5 flex w-fit items-center justify-center gap-0.5 rounded px-1 py-px text-[9px] font-bold uppercase tracking-wide ${badgeClass}`}
+      >
+        {gone && <Lock size={8} aria-hidden />}
+        {badge}
+      </span>
+    </>
+  );
+
+  const shell =
+    "shrink-0 rounded-xl border px-1 py-2 text-center transition-all duration-150 ease-out";
+
+  // A night already handed back is not a button at all — there is nothing to
+  // press it for. Drawn as a plain <span>, deliberately: a `disabled` button
+  // takes no pointer events in any browser, so the one thing the guest WOULD
+  // want from it — hovering to be told it is cancelled — never happened.
+  if (gone) {
+    return (
+      <span
+        title={`Cancelled${row.message ? ` — ${row.message}` : ""}`}
+        aria-label={`${fmtDay(row.date)} — cancelled`}
+        style={{ width }}
+        className={`${shell} cursor-not-allowed border-dashed border-line bg-page text-muted opacity-80`}
+      >
+        {face}
+      </span>
+    );
+  }
 
   return (
     <button
       type="button"
-      aria-pressed={open ? picked : undefined}
-      aria-disabled={!open}
+      aria-pressed={picked}
       disabled={busy}
       onClick={onTap}
       title={row.message || undefined}
-      className={`w-[84px] rounded-lg border px-2 py-1.5 text-center transition-colors disabled:opacity-60 ${
+      style={{ width }}
+      className={`${shell} ${
         picked
-          ? "border-red-500 bg-red-50 text-red-600"
-          : open
-            ? "border-line text-ink hover:border-red-300 hover:bg-red-50/40"
-            : "cursor-not-allowed border-dashed border-line bg-page text-muted"
-      }`}
+          ? "-translate-y-px border-red-500 bg-gradient-to-b from-red-500 to-red-600 text-white shadow-[0_6px_14px_-6px_rgba(229,72,77,0.8)]"
+          : "border-line bg-white text-ink shadow-[0_1px_2px_rgba(20,20,45,0.04)] hover:-translate-y-px hover:border-red-300 hover:shadow-[0_5px_12px_-6px_rgba(20,20,45,0.35)] active:translate-y-0"
+      } disabled:opacity-60`}
     >
-      <span className="block text-[10px] uppercase tracking-wide">
-        {fmtWeekday(row.date)}
-      </span>
-      <span className={`block text-[12.5px] font-semibold ${gone ? "line-through" : ""}`}>
-        {fmtDay(row.date)}
-      </span>
-      <span className="mt-0.5 flex items-center justify-center gap-0.5 text-[9.5px] font-semibold uppercase tracking-wide">
-        {!open && !gone && <Lock size={9} aria-hidden />}
-        {badge ?? "Locked"}
-      </span>
+      {face}
     </button>
   );
 }
 
+/** Three dots and three words, inline beside the picker's heading — a legend
+ *  set as a list of its own cost more height than the thing it explained. */
 function Legend() {
   return (
-    <ul className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] text-muted">
-      <LegendItem className="border-line bg-white" label="Can be cancelled" />
-      <LegendItem className="border-red-500 bg-red-50" label="Selected to cancel" />
-      <LegendItem className="border-dashed border-line bg-page" label="Locked — tap to see why" />
+    <ul className="flex items-center gap-2.5 text-[11px] text-muted">
+      <LegendItem className="border-line bg-white" label="Open" />
+      <LegendItem className="border-red-500 bg-red-500" label="Cancelling" />
+      <LegendItem className="border-dashed border-line bg-page" label="Locked" />
     </ul>
   );
 }
 
 function LegendItem({ className, label }: { className: string; label: string }) {
   return (
-    <li className="flex items-center gap-1.5">
-      <span className={`h-3 w-3 rounded border ${className}`} aria-hidden />
+    <li className="flex items-center gap-1">
+      <span className={`h-2.5 w-2.5 rounded-[3px] border ${className}`} aria-hidden />
       {label}
     </li>
   );

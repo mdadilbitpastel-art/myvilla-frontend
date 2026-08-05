@@ -53,6 +53,51 @@ const inputCls =
 type Tab = "services" | "nights";
 
 /**
+ * What one date on the calendar IS, to this booking.
+ *
+ * `last` outranks everything, and `gone` outranks all the rest — `own`
+ * included. A night that has already begun cannot be bought, kept or given back
+ * by anybody, so it is drawn as spent rather than as part of a stay still being
+ * arranged; but the night the stay ENDS on is the landmark the whole screen is
+ * read against ("where does the extension start?"), so it keeps its mark even
+ * once its hour has passed and everything around it has gone grey.
+ */
+type DayState = "last" | "gone" | "own" | "taken" | "given" | "free" | "outside";
+
+/** How each kind of date is drawn, and what it says when tapped or hovered. */
+const DAY_LOOK: Record<DayState, { cls: string; title?: string }> = {
+  last: {
+    // Not selectable — it is already bought — so it is marked rather than
+    // offered: the deepest green on the grid, ringed, with the date in bold.
+    cls: "cursor-default border-green-600 bg-green-100 font-bold text-green-800 ring-1 ring-inset ring-green-600/35",
+    title: "Your last night — the stay ends here. Add nights from the next date on.",
+  },
+  gone: {
+    cls: "cursor-not-allowed border-transparent bg-transparent text-muted/45 line-through",
+    title: "This night has already begun",
+  },
+  own: {
+    cls: "border-green-500/40 bg-green-50 text-green-700",
+    title: "Already yours",
+  },
+  taken: {
+    cls: "cursor-not-allowed border-red-200 bg-red-50/70 text-red-400 line-through",
+    title: "Not available — taken by someone else",
+  },
+  given: {
+    cls: "border-dashed border-amber-400/70 bg-amber-50 text-amber-700 hover:border-primary/60 hover:bg-primary/[0.07]",
+    title: "Cancelled by you — tap to take this night back",
+  },
+  free: {
+    cls: "border-line text-ink hover:border-primary/60 hover:bg-primary/[0.07]",
+  },
+  outside: {
+    cls: "cursor-not-allowed border-transparent bg-transparent text-muted/35",
+    title: "Outside the host's open dates",
+  },
+};
+
+/**
  * Every date of one month, with blanks for the days before the 1st — and
  * always six rows of them.
  *
@@ -139,6 +184,15 @@ export default function EditBookingModal({
   // it is what gets added — see `selection` below, which is where that is
   // worked out; this is only the one date they chose.
   const [target, setTarget] = useState("");
+  // Nights the guest had GIVEN UP and is taking back, tapped one at a time.
+  //
+  // Its own state, and not `target`, because it is its own gesture. A given-back
+  // night sits inside the stay with nights kept either side of it, so "extend up
+  // to here" cannot reach one without dragging its neighbours in; and a guest
+  // reclaiming three separate nights is making three decisions, not replacing
+  // one. Keeping them apart is also what stops a tap on the extend date from
+  // wiping a reclaimed night, and the other way round.
+  const [refill, setRefill] = useState<string[]>([]);
   const [cursor, setCursor] = useState<{ y: number; m: number } | null>(null);
   const [note, setNote] = useState("");
 
@@ -202,7 +256,12 @@ export default function EditBookingModal({
         // option worth defaulting to — but a booking without one has to choose.
         setUseSaved(!!next.savedPaymentMethod);
         setMethod(next.acceptedPayments[0] || "");
-        const start = next.ownNights[0] || next.firstDate;
+        // Open on the month where something can be done: the stay's first night
+        // that is still ahead of the guest, else the first date the villa is
+        // open for. Never a month behind the window — on a stay under way that
+        // would be a page of dates every one of which has already begun.
+        const start =
+          next.ownNights.find((d) => d >= next.firstDate) || next.firstDate;
         const [y, m] = start.split("-").map(Number);
         setCursor({ y, m: m - 1 });
       } catch (e) {
@@ -216,16 +275,41 @@ export default function EditBookingModal({
 
   const own = useMemo(() => new Set(options?.ownNights ?? []), [options]);
   const taken = useMemo(() => new Set(options?.unavailableDates ?? []), [options]);
+  // Nights this guest gave back. Still free — that is what giving them back did
+  // — so they are bookable like any other date; they are only drawn and tapped
+  // differently, because to the person who gave them up they are not a stranger's
+  // dates but their own, waiting.
+  const given = useMemo(() => new Set(options?.cancelledNights ?? []), [options]);
+  // The night the stay ends on — the date every extension is measured from.
+  const lastNight = useMemo(() => {
+    const nights = options?.ownNights ?? [];
+    return nights.length ? nights[nights.length - 1] : "";
+  }, [options]);
 
   const dayState = useCallback(
-    (day: string): "own" | "taken" | "free" | "outside" => {
-      if (own.has(day)) return "own";
+    (day: string): DayState => {
       if (!options) return "outside";
-      if (day < options.firstDate || day > options.lastDate) return "outside";
+      // The stay's own last night, marked before anything else can grey it out.
+      // It is where the guest reads the answer to "so where do I add from?", and
+      // on a stay already under way every date around it has begun and gone
+      // flat — which is precisely when the landmark is worth the most.
+      if (day && day === lastNight) return "last";
+      // A night that has already begun is spent, and it is spent for EVERYONE —
+      // the guest's own nights included. `firstDate` is the villa's own answer
+      // to "what is the earliest date anybody can still arrive for": today while
+      // the check-in hour is ahead, tomorrow once it has passed. Drawing a night
+      // behind that line in the green of "already yours" would offer a stay that
+      // is being slept in as something still to be arranged. Asked ahead of
+      // `own`, so a past night of this booking's own greys out with the rest —
+      // only the last night above is allowed past it.
+      if (day < options.firstDate) return "gone";
+      if (own.has(day)) return "own";
+      if (day > options.lastDate) return "outside";
       if (taken.has(day)) return "taken";
-      return "free";
+      // A given-back night the host is still open for and nobody else has taken.
+      return given.has(day) ? "given" : "free";
     },
-    [options, own, taken]
+    [options, own, taken, given, lastNight]
   );
 
   /**
@@ -263,11 +347,26 @@ export default function EditBookingModal({
     return {
       from,
       to,
-      days: daysInclusive(from, to).filter((d) => dayState(d) === "free"),
+      // A night the guest gave back is free like any other, so a range reaching
+      // across one takes it: the range has to JOIN the stay, and a hole punched
+      // in it where a given-back night sits would leave the rest detached. They
+      // are only picked ONE AT A TIME when no range is reaching them, which is
+      // every given-back night in the middle of a stay.
+      days: daysInclusive(from, to).filter((d) => {
+        const state = dayState(d);
+        return state === "free" || state === "given";
+      }),
     };
   }, [target, options, dayState]);
 
-  const selected = useMemo(() => new Set(selection.days), [selection]);
+  // The range's own nights, and then everything being bought: the range plus the
+  // given-back nights reclaimed one by one. Two gestures, one purchase.
+  const ranged = useMemo(() => new Set(selection.days), [selection]);
+  const nights = useMemo(
+    () => [...new Set([...selection.days, ...refill])].sort(),
+    [selection.days, refill]
+  );
+  const selected = useMemo(() => new Set(nights), [nights]);
   const checkIn = selection.from;
   const checkOut = selection.to ? addDays(selection.to, 1) : "";
 
@@ -278,13 +377,16 @@ export default function EditBookingModal({
   // buying, only which half of it they're looking at.
   const servicesKey = picked.join(",");
   const nightsKey = checkIn && checkOut ? `${checkIn}:${checkOut}` : "";
-  const choiceKey = `${servicesKey}|${nightsKey}`;
-  const chose = servicesKey !== "" || nightsKey !== "";
+  // The reclaimed nights the range doesn't already cover — what the server has
+  // to be told about separately.
+  const extraKey = refill.filter((d) => !ranged.has(d)).sort().join(",");
+  const choiceKey = `${servicesKey}|${nightsKey}|${extraKey}`;
+  const chose = servicesKey !== "" || nightsKey !== "" || extraKey !== "";
 
   useEffect(() => {
     if (!chose) return;
     let live = true;
-    const [names, dates] = choiceKey.split("|");
+    const [names, dates, extras] = choiceKey.split("|");
     const [from = "", to = ""] = dates ? dates.split(":") : [];
     const timer = setTimeout(async () => {
       try {
@@ -292,7 +394,8 @@ export default function EditBookingModal({
           booking.id,
           names ? names.split(",") : [],
           from,
-          to
+          to,
+          extras ? extras.split(",") : []
         );
         if (live) setPriced({ key: choiceKey, quote });
       } catch (e) {
@@ -318,7 +421,7 @@ export default function EditBookingModal({
   const quoting = chose && !quote;
   const serviceQuote = quote?.services ?? null;
   const nightsQuote = quote?.nights ?? null;
-  const addedNights = nightsQuote?.nightsCount ?? selection.days.length;
+  const addedNights = nightsQuote?.nightsCount ?? nights.length;
   const serviceNights = (options?.chargeableNights ?? 0) + addedNights;
   const amount = quote?.allowed ? quote.amount : 0;
   const ready = !!quote?.allowed && !quoting;
@@ -333,34 +436,63 @@ export default function EditBookingModal({
   }, []);
 
   /**
-   * A tap on the calendar: "extend my stay up to here".
+   * A tap on the calendar. Which of two things it means depends on the date.
    *
-   * One tap does the whole thing (see `selection`), so a night that can't be
-   * had is the only case with anything to explain — and it explains itself
-   * rather than silently doing nothing.
+   * On a free date it is "extend my stay up to here", and one tap does the whole
+   * run (see `selection`) — the gesture this screen has always had.
+   *
+   * On a night the guest GAVE BACK it is "I'll take that one again", and it
+   * toggles just that night. They accumulate, one tap each, and they do not
+   * touch the extend target: reclaiming three scattered nights is three
+   * decisions, and picking a date to extend to must not undo them.
+   *
+   * A night that can't be had explains itself rather than silently doing
+   * nothing.
    */
   const tapDay = useCallback(
-    (day: string, kind: "own" | "taken" | "free" | "outside") => {
+    (day: string, kind: DayState) => {
       setError("");
+      if (kind === "last") {
+        setNote(`${prettyDate(day)} is your last night — add from the next date on.`);
+        return;
+      }
+      if (kind === "gone") {
+        setNote(`${prettyDate(day)} has already begun.`);
+        return;
+      }
       if (kind === "taken") {
-        setNote(
-          `${prettyDate(day)} is taken by someone else. Pick a date past it — the ` +
-            "nights in between that are free will be added, and that one skipped."
-        );
+        setNote(`${prettyDate(day)} is taken — pick a date past it and it's skipped.`);
         return;
       }
       if (kind === "outside") {
-        setNote(`${prettyDate(day)} is outside the dates this villa is open for.`);
+        setNote(`${prettyDate(day)} is outside the host's open dates.`);
         return;
       }
       if (kind === "own") {
-        setNote(`${prettyDate(day)} is already part of your stay.`);
+        setNote(`${prettyDate(day)} is already yours.`);
+        return;
+      }
+      if (kind === "given") {
+        // Already swept up by the run the guest is extending over — toggling it
+        // here would change nothing, so say that instead of doing nothing.
+        if (ranged.has(day)) {
+          setNote(`${prettyDate(day)} is already coming back with your new nights.`);
+          return;
+        }
+        setRefill((prev) =>
+          prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]
+        );
+        setNote(
+          refill.includes(day)
+            ? ""
+            : `${prettyDate(day)} added back — tap any others one by one.`
+        );
         return;
       }
       setNote("");
       setTarget((prev) => (prev === day ? "" : day));
     },
-    []
+    [ranged, refill]
   );
 
   // --- Paying ---
@@ -420,7 +552,8 @@ export default function EditBookingModal({
         names,
         checkIn,
         checkOut,
-        payment()
+        payment(),
+        refill.filter((d) => !ranged.has(d))
       );
       // One line for one purchase, however many halves it had.
       const nights = nightsQuote?.nightsCount ?? 0;
@@ -454,24 +587,37 @@ export default function EditBookingModal({
       />
 
       <div className="relative flex min-h-full items-center justify-center px-5 py-6">
-        <div className="animate-toast-in relative w-full max-w-[860px] overflow-hidden rounded-2xl border border-line bg-white shadow-2xl">
-          {/* Header */}
-          <div className="flex items-start gap-3.5 border-b border-line px-6 py-4">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
-              <CalendarPlus size={20} aria-hidden />
+        <div className="animate-toast-in relative w-full max-w-[860px] overflow-hidden rounded-2xl border border-line bg-white shadow-[0_24px_60px_-20px_rgba(20,20,45,0.45)]">
+          {/* Header. A wash of the brand colour rather than plain white: this is
+              the one band the guest sees on every screen of the dialog, and it
+              is what makes the panel read as one thing rather than three stacked
+              boxes. */}
+          <div className="flex items-center gap-3.5 border-b border-line bg-gradient-to-r from-primary/[0.09] via-primary/[0.035] to-transparent px-6 py-4">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-primary shadow-[0_1px_3px_rgba(20,20,45,0.12)] ring-1 ring-primary/15">
+              <CalendarPlus size={19} aria-hidden />
             </span>
-            <div className="min-w-0">
-              <h2 id={titleId} className="text-[16px] font-bold text-ink">
+            <div className="min-w-0 flex-1">
+              <h2 id={titleId} className="text-[16px] font-bold leading-tight text-ink">
                 {step === "pay"
                   ? "Confirm and pay"
                   : extendOnly
                     ? "Extend stay"
                     : "Edit booking"}
               </h2>
-              <p className="mt-0.5 truncate text-[13px] text-body">
+              <p className="mt-0.5 truncate text-[12.5px] text-body">
                 {booking.villaTitle} · {shortRange(booking.checkIn, booking.checkOut)}
               </p>
             </div>
+            {/* Where the guest is in the two steps. Two words and a rule between
+                them — enough to say "there is one more screen after this", which
+                is the only thing a two-step flow has to promise. */}
+            {options && (canServices || canNights) && (
+              <div className="hidden shrink-0 items-center gap-2 sm:flex">
+                <StepDot label="Choose" done={step === "pay"} active={step === "choose"} />
+                <span className="h-px w-5 bg-line" aria-hidden />
+                <StepDot label="Pay" active={step === "pay"} />
+              </div>
+            )}
           </div>
 
           {/* Every state below stands in the same box. The dialog's height is
@@ -479,25 +625,25 @@ export default function EditBookingModal({
               that grew as the guest paged the calendar, or shrank when they
               reached payment, walked the buttons out from under the cursor. */}
           {!options && !loadError && (
-            <p className="flex items-center gap-2 px-6 py-10 text-[13.5px] text-body md:h-[506px]">
-              <Loader2 size={16} className="animate-spin" aria-hidden />
-              Loading what can be changed…
+            <p className="flex items-center justify-center gap-2 px-6 py-10 text-[13.5px] text-body md:min-h-[418px]">
+              <Loader2 size={16} className="animate-spin text-primary" aria-hidden />
+              Loading…
             </p>
           )}
 
           {loadError && (
             <p
-              className="flex items-start gap-2 px-6 py-8 text-[13.5px] text-red-600 md:h-[506px]"
+              className="flex items-center justify-center gap-2 px-6 py-10 text-[13.5px] text-red-600 md:min-h-[418px]"
               role="alert"
             >
-              <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden />
+              <AlertTriangle size={16} className="shrink-0" aria-hidden />
               {loadError}
             </p>
           )}
 
           {options && !canServices && !canNights && (
-            <div className="px-6 py-8 md:h-[506px]">
-              <p className="text-[13.5px] leading-6 text-body">
+            <div className="flex px-6 py-10 md:min-h-[418px] md:items-center md:justify-center">
+              <p className="max-w-[420px] text-center text-[13.5px] leading-6 text-body">
                 {options.blockedReason ||
                   "There is nothing left to add to this booking."}
               </p>
@@ -513,7 +659,7 @@ export default function EditBookingModal({
               {/* Rendered on the payment screen too, greyed out rather than
                   taken away — a strip that disappears is 41px of height the
                   dialog would lose the moment the guest pressed Continue. */}
-              <div className="flex gap-4 border-b border-line px-6 pt-4">
+              <div className="flex gap-1 border-b border-line px-6 pb-3 pt-3.5">
                 {canServices && (
                   <TabButton
                     active={tab === "services"}
@@ -540,13 +686,19 @@ export default function EditBookingModal({
                     }}
                     icon={<CalendarPlus size={14} aria-hidden />}
                     label="Add nights"
-                    count={nightsQuote?.nightsCount ?? selection.days.length}
+                    count={nightsQuote?.nightsCount ?? nights.length}
                   />
                 )}
               </div>
 
-              <div className="px-6 py-4 md:flex md:h-[465px] md:items-stretch md:gap-6 md:overflow-hidden">
-                <div className="min-w-0 md:flex-1 md:overflow-y-auto md:pr-1">
+              {/* Nothing inside this dialog scrolls. Every panel is written to
+                  fit — the calendar especially, because a grid you have to
+                  scroll to reach the end of the month hides the date you were
+                  looking for. `min-h` rather than `h`: it holds the buttons
+                  still at the height the calendar needs, and gives rather than
+                  clips on the rare payment form that runs longer. */}
+              <div className="px-6 py-4 md:flex md:min-h-[418px] md:items-start md:gap-6">
+                <div className="min-w-0 md:flex-1">
                   {step === "pay" ? (
                     <PaymentStep
                       options={options}
@@ -584,25 +736,18 @@ export default function EditBookingModal({
                     />
                   ) : tab === "services" ? (
                     <>
-                      <p className="text-[12.5px] font-semibold uppercase tracking-wide text-muted">
-                        Services you can still add
-                      </p>
-                      <p className="mt-1.5 text-[12.5px] leading-5 text-body">
-                        Charged per night for the{" "}
-                        <span className="font-semibold text-ink">
-                          {plural(serviceNights, "night")}
-                        </span>{" "}
-                        of your stay that haven&apos;t started yet
-                        {addedNights > 0 && (
-                          <>
-                            {" "}
-                            — including the {plural(addedNights, "night")} you&apos;re
-                            adding
-                          </>
-                        )}
-                        . Anything already on this booking stays as it is.
-                      </p>
-                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      <div className="flex items-baseline justify-between gap-3">
+                        <p className="text-[12.5px] font-semibold uppercase tracking-[0.05em] text-muted">
+                          Add services
+                        </p>
+                        <p className="text-[11.5px] text-muted">
+                          Per night ·{" "}
+                          <span className="font-semibold text-body">
+                            {plural(serviceNights, "night")}
+                          </span>
+                        </p>
+                      </div>
+                      <div className="mt-2.5 grid gap-2 sm:grid-cols-2">
                         {options.availableServices.map((service) => (
                           <ServiceChoice
                             key={service.name}
@@ -616,9 +761,9 @@ export default function EditBookingModal({
                         ))}
                       </div>
                       {booking.extraServices?.length > 0 && (
-                        <p className="mt-3 flex flex-wrap items-center gap-1.5 text-[12px] text-muted">
+                        <p className="mt-3 flex flex-wrap items-center gap-1.5 text-[11.5px] text-muted">
                           <Lock size={11} aria-hidden />
-                          Already on this booking:
+                          Already yours:
                           {booking.extraServices.map((s) => (
                             <span
                               key={s.name}
@@ -632,18 +777,20 @@ export default function EditBookingModal({
                     </>
                   ) : (
                     <>
-                      <p className="text-[12.5px] font-semibold uppercase tracking-wide text-muted">
-                        Pick the nights to add
-                      </p>
-                      <p className="mt-1 text-[12px] leading-[18px] text-body">
-                        Tap the date you&apos;d like to stay until — every free night in
-                        between is added, and nights someone else has are skipped.
-                      </p>
+                      <div className="flex items-baseline justify-between gap-3">
+                        <p className="text-[12.5px] font-semibold uppercase tracking-[0.05em] text-muted">
+                          Pick the nights
+                        </p>
+                        <p className="text-[11.5px] text-muted">
+                          Tap the date to stay until
+                        </p>
+                      </div>
                       {cursor && (
                         <Calendar
                           cursor={cursor}
                           setCursor={setCursor}
                           options={options}
+                          lastNight={lastNight}
                           dayState={dayState}
                           selected={selected}
                           onTap={tapDay}
@@ -651,7 +798,10 @@ export default function EditBookingModal({
                         />
                       )}
                       {note && (
-                        <p className="mt-1.5 text-[11.5px] leading-4 text-body" role="status">
+                        <p
+                          className="mt-2 rounded-lg bg-page px-2.5 py-1.5 text-[11.5px] leading-[15px] text-body"
+                          role="status"
+                        >
                           {note}
                         </p>
                       )}
@@ -659,14 +809,25 @@ export default function EditBookingModal({
                   )}
                 </div>
 
-                {/* What it costs. Every number here is the server's. */}
-                <div className="mt-4 md:mt-0 md:w-[286px] md:shrink-0 md:overflow-y-auto">
-                  <div className="rounded-xl border border-line bg-page px-4 py-3">
-                    <Summary quoting={quoting} quote={quote} chose={chose} />
+                {/* What it costs. Every number here is the server's. Set apart
+                    from the picker beside it by a tinted card with its own
+                    heading — the money is the answer, not another control. */}
+                <div className="mt-4 md:mt-0 md:w-[286px] md:shrink-0">
+                  <div className="overflow-hidden rounded-xl border border-line bg-gradient-to-b from-page to-white shadow-[0_1px_2px_rgba(20,20,45,0.04)]">
+                    <p className="border-b border-line/70 px-4 py-2 text-[10.5px] font-bold uppercase tracking-[0.07em] text-muted">
+                      What you&apos;re adding
+                    </p>
+                    <div className="px-4 py-3">
+                      <Summary quoting={quoting} quote={quote} chose={chose} />
+                    </div>
                   </div>
 
                   {error && (
-                    <p className="mt-3 text-[12.5px] font-medium text-red-600" role="alert">
+                    <p
+                      className="mt-3 flex items-start gap-1.5 rounded-lg bg-red-50 px-3 py-2 text-[12.5px] font-medium leading-5 text-red-600"
+                      role="alert"
+                    >
+                      <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden />
                       {error}
                     </p>
                   )}
@@ -675,22 +836,25 @@ export default function EditBookingModal({
                     <button
                       type="button"
                       onClick={onCancelDates}
-                      className="mt-3 text-left text-[12px] leading-5 text-muted underline-offset-2 hover:text-ink hover:underline"
+                      className="mt-3 w-full rounded-xl border border-dashed border-line px-3.5 py-2 text-left text-[11.5px] leading-[16px] text-muted transition-colors hover:border-primary/40 hover:bg-primary/[0.03] hover:text-body"
                     >
-                      Want fewer nights instead? Cancel dates — the refund depends on how
-                      near your stay is.
+                      <span className="block font-semibold text-body">
+                        Want fewer nights?
+                      </span>
+                      Cancel dates instead.
                     </button>
                   )}
                 </div>
               </div>
 
-              {/* Actions */}
-              <div className="flex justify-end gap-3 border-t border-line px-6 py-3.5">
+              {/* Actions. On the page's own tint rather than white, so the foot
+                  of the dialog reads as a bar the buttons sit in. */}
+              <div className="flex items-center justify-end gap-3 border-t border-line bg-page/60 px-6 py-3.5">
                 <button
                   type="button"
                   onClick={() => (step === "pay" ? setStep("choose") : onClose())}
                   disabled={busy}
-                  className="rounded-lg border border-line px-4 py-2.5 text-[13px] font-semibold text-body transition-colors hover:border-primary/40 hover:text-ink disabled:opacity-60"
+                  className="rounded-lg border border-line bg-white px-4 py-2.5 text-[13px] font-semibold text-body transition-colors hover:border-primary/40 hover:text-ink disabled:opacity-60"
                 >
                   {step === "pay" ? "Back" : "Close"}
                 </button>
@@ -699,7 +863,7 @@ export default function EditBookingModal({
                   onClick={() => (step === "pay" ? submit() : setStep("pay"))}
                   disabled={busy || !ready}
                   aria-busy={busy}
-                  className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-[13px] font-semibold text-white shadow-sm transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-[13px] font-semibold text-white shadow-[0_2px_8px_-2px_rgba(93,63,211,0.55)] transition-all hover:bg-primary-dark hover:shadow-[0_4px_12px_-2px_rgba(93,63,211,0.6)] disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none"
                 >
                   {busy && <span className="spinner" aria-hidden />}
                   {busy
@@ -717,6 +881,39 @@ export default function EditBookingModal({
       </div>
     </div>,
     document.body
+  );
+}
+
+/** One of the two steps, in the header: a dot and its word. */
+function StepDot({
+  label,
+  active = false,
+  done = false,
+}: {
+  label: string;
+  active?: boolean;
+  done?: boolean;
+}) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 text-[11.5px] font-semibold ${
+        active ? "text-primary" : done ? "text-body" : "text-muted"
+      }`}
+    >
+      <span
+        className={`flex h-[15px] w-[15px] items-center justify-center rounded-full text-[9px] font-bold ${
+          active
+            ? "bg-primary text-white"
+            : done
+              ? "bg-primary/15 text-primary"
+              : "bg-ink/[0.07] text-muted"
+        }`}
+        aria-hidden
+      >
+        {done ? <Check size={9} strokeWidth={3.5} /> : "•"}
+      </span>
+      {label}
+    </span>
   );
 }
 
@@ -743,16 +940,22 @@ function TabButton({
       onClick={onClick}
       disabled={disabled}
       aria-pressed={active}
-      className={`-mb-px inline-flex items-center gap-1.5 border-b-2 px-1 pb-2.5 text-[13px] font-semibold transition-colors disabled:opacity-45 ${
+      // A pill rather than an underline: two doors side by side read as a choice
+      // when one of them is filled in, and as a heading when both are just text.
+      className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12.5px] font-semibold transition-colors disabled:opacity-45 ${
         active
-          ? "border-primary text-primary"
-          : "border-transparent text-body hover:text-ink"
+          ? "bg-primary/10 text-primary ring-1 ring-inset ring-primary/20"
+          : "text-body hover:bg-ink/[0.04] hover:text-ink"
       }`}
     >
       {icon}
       {label}
       {count > 0 && (
-        <span className="rounded-full bg-primary px-1.5 py-px text-[10px] font-bold text-white">
+        <span
+          className={`min-w-[17px] rounded-full px-1 py-px text-center text-[10px] font-bold tabular-nums ${
+            active ? "bg-primary text-white" : "bg-ink/10 text-body"
+          }`}
+        >
           {count}
         </span>
       )}
@@ -818,6 +1021,7 @@ function Calendar({
   cursor,
   setCursor,
   options,
+  lastNight,
   dayState,
   selected,
   onTap,
@@ -826,15 +1030,21 @@ function Calendar({
   cursor: { y: number; m: number };
   setCursor: (next: { y: number; m: number }) => void;
   options: BookingEditOptions;
-  dayState: (day: string) => "own" | "taken" | "free" | "outside";
+  /** The night the stay ends on — marked, and always reachable by paging. */
+  lastNight: string;
+  dayState: (day: string) => DayState;
   selected: Set<string>;
-  onTap: (day: string, state: "own" | "taken" | "free" | "outside") => void;
+  onTap: (day: string, state: DayState) => void;
   busy: boolean;
 }) {
-  // The months worth paging through: from the earliest thing on screen (the
-  // stay's own first night, which may be behind the window on a stay under way)
-  // to the last date the host is open for.
-  const first = (options.ownNights[0] || options.firstDate).slice(0, 7);
+  // The months worth paging through: from the first date anybody can still
+  // arrive for — or the month the stay ENDS in, when that is further back — to
+  // the last the host is open for. No further than that: every date behind the
+  // window has begun, and a month of them is a page with nothing on it to press.
+  // The stay's last night is the exception, because it is the one thing on such a
+  // page worth walking back to see.
+  const floor = lastNight && lastNight < options.firstDate ? lastNight : options.firstDate;
+  const first = floor.slice(0, 7);
   const last = options.lastDate.slice(0, 7);
   const current = `${cursor.y}-${String(cursor.m + 1).padStart(2, "0")}`;
   const shift = (by: number) => {
@@ -843,99 +1053,108 @@ function Calendar({
   };
 
   return (
-    // Deliberately tight. Six rows of dates, a header, a weekday strip and a
-    // legend have to sit inside the panel's fixed height WITHOUT a scrollbar of
-    // their own: a calendar you have to scroll to reach the end of the month is
-    // a calendar that hides the date you were looking for.
-    <div className="mt-2 rounded-xl border border-line p-2.5">
-      <div className="flex items-center justify-between">
+    // Deliberately tight, and it NEVER scrolls: six rows of dates, a month bar,
+    // a weekday strip and a legend all sit inside the panel's height. A calendar
+    // you have to scroll to reach the end of the month is a calendar that hides
+    // the date you were looking for. Always six rows (see `monthCells`), so
+    // paging months moves nothing.
+    <div className="mt-2 overflow-hidden rounded-xl border border-line shadow-[0_1px_2px_rgba(20,20,45,0.04)]">
+      {/* The month bar sits on its own tinted strip so the grid below reads as
+          the calendar and this reads as the control over it. */}
+      <div className="flex items-center justify-between border-b border-line bg-page/70 px-2.5 py-2">
         <button
           type="button"
           onClick={() => shift(-1)}
           disabled={busy || current <= first}
           aria-label="Previous month"
-          className="rounded-md border border-line p-1 text-body transition-colors hover:border-primary/40 hover:text-ink disabled:opacity-40"
+          className="rounded-lg border border-line bg-white p-1 text-body transition-colors hover:border-primary/50 hover:text-primary disabled:opacity-35 disabled:hover:border-line disabled:hover:text-body"
         >
           <ChevronLeft size={15} aria-hidden />
         </button>
-        <p className="text-[13px] font-semibold text-ink">
-          {MONTHS[cursor.m]} {cursor.y}
+        <p className="text-[13px] font-bold tracking-[0.01em] text-ink">
+          {MONTHS[cursor.m]}{" "}
+          <span className="font-medium text-muted">{cursor.y}</span>
         </p>
         <button
           type="button"
           onClick={() => shift(1)}
           disabled={busy || current >= last}
           aria-label="Next month"
-          className="rounded-md border border-line p-1 text-body transition-colors hover:border-primary/40 hover:text-ink disabled:opacity-40"
+          className="rounded-lg border border-line bg-white p-1 text-body transition-colors hover:border-primary/50 hover:text-primary disabled:opacity-35 disabled:hover:border-line disabled:hover:text-body"
         >
           <ChevronRight size={15} aria-hidden />
         </button>
       </div>
 
-      <div className="mt-1.5 grid grid-cols-7 gap-[3px] text-center text-[10px] font-semibold uppercase text-muted">
-        {WEEKDAYS.map((d, i) => (
-          <span key={`${d}-${i}`}>{d}</span>
-        ))}
-      </div>
+      <div className="px-2.5 pb-2.5 pt-2">
+        <div className="grid grid-cols-7 gap-[3px] text-center text-[10px] font-bold uppercase tracking-[0.06em] text-muted/80">
+          {WEEKDAYS.map((d, i) => (
+            <span key={`${d}-${i}`}>{d}</span>
+          ))}
+        </div>
 
-      <div className="mt-1 grid grid-cols-7 gap-[3px]">
-        {monthCells(cursor.y, cursor.m).map((day, i) => {
-          if (!day) return <span key={`blank-${i}`} />;
-          const state = dayState(day);
-          const on = selected.has(day);
-          const dim = state === "outside" || state === "taken";
-          return (
-            <button
-              key={day}
-              type="button"
-              disabled={busy}
-              aria-pressed={on}
-              aria-disabled={dim}
-              onClick={() => onTap(day, state)}
-              title={
-                state === "own"
-                  ? "Already yours"
-                  : state === "taken"
-                    ? "Not available — taken by someone else"
-                    : state === "outside"
-                      ? "Outside the host's open dates"
-                      : undefined
-              }
-              // Green is "already yours", red is "you can't have this", and the
-              // brand colour is what this tap is buying. The three are never
-              // confusable at a glance, which is the whole job of this grid.
-              className={`h-8 rounded-md border text-[12px] font-medium transition-colors disabled:opacity-60 ${
-                on
-                  ? "border-primary bg-primary text-white"
-                  : state === "own"
-                    ? "border-green-500/40 bg-green-50 text-green-700"
-                    : state === "taken"
-                      ? "cursor-not-allowed border-red-300 bg-red-50 text-red-500 line-through"
-                      : state === "free"
-                        ? "border-line text-ink hover:border-primary/50 hover:bg-primary/5"
-                        : "cursor-not-allowed border-dashed border-line bg-page text-muted/60"
-              }`}
-            >
-              {Number(day.slice(-2))}
-            </button>
-          );
-        })}
-      </div>
+        <div className="mt-1 grid grid-cols-7 gap-[3px]">
+          {monthCells(cursor.y, cursor.m).map((day, i) => {
+            if (!day) return <span key={`blank-${i}`} />;
+            const state = dayState(day);
+            const on = selected.has(day);
+            const look = DAY_LOOK[state];
+            const dim =
+              state === "outside" ||
+              state === "taken" ||
+              state === "gone" ||
+              state === "last";
+            return (
+              <button
+                key={day}
+                type="button"
+                disabled={busy}
+                aria-pressed={on}
+                aria-disabled={dim}
+                onClick={() => onTap(day, state)}
+                title={look.title}
+                // Green is "already yours", red is "you can't have this", amber
+                // is "you gave this one back — it's still here", plain grey is a
+                // night already behind us, and the brand colour is what this tap
+                // is buying. None is confusable with another at a glance, which
+                // is the whole job of this grid. A date being ADDED is lifted off
+                // the page, so the run just picked reads as one block rather than
+                // as seven separate purple squares.
+                className={`h-8 rounded-lg border text-[12px] font-semibold tabular-nums transition-all disabled:opacity-60 ${
+                  on
+                    ? "border-primary bg-primary text-white shadow-[0_1px_3px_rgba(93,63,211,0.35)] ring-1 ring-inset ring-white/25"
+                    : look.cls
+                }`}
+              >
+                {Number(day.slice(-2))}
+              </button>
+            );
+          })}
+        </div>
 
-      <ul className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10.5px] text-muted">
-        <LegendItem className="border-line bg-white" label="Free to add" />
-        <LegendItem className="border-primary bg-primary" label="Adding" />
-        <LegendItem className="border-green-500/40 bg-green-50" label="Already yours" />
-        <LegendItem className="border-red-300 bg-red-50" label="Not available" />
-      </ul>
+        <ul className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-line/70 pt-2 text-[10.5px] font-medium text-muted">
+          <LegendItem className="border-line bg-white" label="Free" />
+          <LegendItem className="border-primary bg-primary" label="Adding" />
+          <LegendItem className="border-green-500/40 bg-green-50" label="Yours" />
+          <LegendItem className="border-green-600 bg-green-100" label="Last night" />
+          {/* Only worth a chip when there is one on the calendar to explain. */}
+          {options.cancelledNights?.length > 0 && (
+            <LegendItem
+              className="border-dashed border-amber-400/70 bg-amber-50"
+              label="Cancelled by you"
+            />
+          )}
+          <LegendItem className="border-red-200 bg-red-50" label="Taken" />
+        </ul>
+      </div>
     </div>
   );
 }
 
 function LegendItem({ className, label }: { className: string; label: string }) {
   return (
-    <li className="flex items-center gap-1.5">
-      <span className={`h-3 w-3 rounded border ${className}`} aria-hidden />
+    <li className="inline-flex items-center gap-1.5 rounded-full bg-page/80 px-2 py-[3px]">
+      <span className={`h-2.5 w-2.5 rounded-[3px] border ${className}`} aria-hidden />
       {label}
     </li>
   );
@@ -962,15 +1181,16 @@ function Summary({
 }) {
   if (!chose) {
     return (
-      <p className="text-[13px] text-body">
-        Pick the nights or services you&apos;d like to add to see what they cost.
+      <p className="text-[12.5px] leading-[18px] text-muted">
+        Pick nights or services to see the price.
       </p>
     );
   }
   if (quoting) {
     return (
-      <p className="flex items-center gap-2 text-[13px] text-body">
-        <Loader2 size={15} className="animate-spin" aria-hidden /> Working out the price…
+      <p className="flex items-center gap-2 text-[12.5px] text-body">
+        <Loader2 size={14} className="animate-spin text-primary" aria-hidden /> Working
+        it out…
       </p>
     );
   }
@@ -1016,26 +1236,24 @@ function Summary({
       <Total value={money(quote.amount)} />
 
       {nights && nights.skipped.length > 0 && (
-        <p className="mt-2 text-[12px] leading-5 text-red-600">
-          {nights.skipped.length} night{nights.skipped.length === 1 ? " is" : "s are"}{" "}
-          taken by someone else and skipped — you check out and back in around{" "}
-          {nights.skipped.length === 1 ? "it" : "them"}.
+        <p className="mt-2 text-[11.5px] leading-[16px] text-red-600">
+          {nights.skipped.length} night{nights.skipped.length === 1 ? "" : "s"} taken
+          and skipped.
         </p>
       )}
       {nights && nights.kept.length > 0 && (
-        <p className="mt-2 text-[12px] leading-5 text-muted">
-          {nights.kept.length} night{nights.kept.length === 1 ? "" : "s"} in those dates{" "}
-          {nights.kept.length === 1 ? "is" : "are"} already yours — not charged again.
+        <p className="mt-1.5 text-[11.5px] leading-[16px] text-muted">
+          {nights.kept.length} already yours — not charged again.
         </p>
       )}
       {nights && (
-        <p className="mt-1.5 text-[12px] leading-5 text-muted">
-          Your stay becomes {shortRange(nights.checkIn, nights.checkOut)} ·{" "}
-          {nights.totalNights} night{nights.totalNights === 1 ? "" : "s"}.
+        <p className="mt-2 border-t border-line/70 pt-2 text-[11.5px] leading-[16px] text-muted">
+          Stay becomes{" "}
+          <span className="font-semibold text-body">
+            {shortRange(nights.checkIn, nights.checkOut)}
+          </span>{" "}
+          · {plural(nights.totalNights, "night")}
         </p>
-      )}
-      {services && (
-        <p className="mt-1.5 text-[12px] leading-5 text-muted">{services.message}</p>
       )}
     </div>
   );
@@ -1166,8 +1384,8 @@ function PaymentStep({
 
       {!useSaved && isCard && (
         <>
-          <div className="mt-3 overflow-hidden rounded-xl border border-line">
-            <div className="px-4 py-2.5">
+          <div className="mt-2.5 overflow-hidden rounded-xl border border-line">
+            <div className="px-4 py-2">
               <input
                 id={`${uid}-card`}
                 value={cardNumber}
@@ -1181,7 +1399,7 @@ function PaymentStep({
               />
             </div>
             <div className="grid grid-cols-2 border-t border-line">
-              <div className="border-r border-line px-4 py-2.5">
+              <div className="border-r border-line px-4 py-2">
                 <input
                   id={`${uid}-exp`}
                   value={expiration}
@@ -1194,7 +1412,7 @@ function PaymentStep({
                   className={inputCls}
                 />
               </div>
-              <div className="px-4 py-2.5">
+              <div className="px-4 py-2">
                 <input
                   id={`${uid}-cvv`}
                   value={cvv}
@@ -1210,11 +1428,11 @@ function PaymentStep({
             </div>
           </div>
 
-          <p className="mt-3 text-[12.5px] font-semibold uppercase tracking-wide text-muted">
+          <p className="mt-2.5 text-[12.5px] font-semibold uppercase tracking-wide text-muted">
             Billing address
           </p>
           <div className="mt-2 overflow-hidden rounded-xl border border-line">
-            <div className="px-4 py-2.5">
+            <div className="px-4 py-2">
               <input
                 value={street}
                 onChange={(e) => setStreet(e.target.value)}
@@ -1225,7 +1443,7 @@ function PaymentStep({
               />
             </div>
             <div className="grid grid-cols-2 border-t border-line">
-              <div className="border-r border-line px-4 py-2.5">
+              <div className="border-r border-line px-4 py-2">
                 <input
                   value={apartment}
                   onChange={(e) => setApartment(e.target.value)}
@@ -1235,7 +1453,7 @@ function PaymentStep({
                   className={inputCls}
                 />
               </div>
-              <div className="px-4 py-2.5">
+              <div className="px-4 py-2">
                 <input
                   value={city}
                   onChange={(e) => setCity(e.target.value)}
@@ -1247,7 +1465,7 @@ function PaymentStep({
               </div>
             </div>
             <div className="grid grid-cols-2 border-t border-line">
-              <div className="border-r border-line px-4 py-2.5">
+              <div className="border-r border-line px-4 py-2">
                 <input
                   value={state}
                   onChange={(e) => setState(e.target.value)}
@@ -1257,7 +1475,7 @@ function PaymentStep({
                   className={inputCls}
                 />
               </div>
-              <div className="px-4 py-2.5">
+              <div className="px-4 py-2">
                 <input
                   value={zip}
                   onChange={(e) => setZip(e.target.value)}
@@ -1268,7 +1486,7 @@ function PaymentStep({
                 />
               </div>
             </div>
-            <div className="border-t border-line px-4 py-2.5">
+            <div className="border-t border-line px-4 py-2">
               <select
                 value={country}
                 onChange={(e) => setCountry(e.target.value)}
@@ -1289,7 +1507,7 @@ function PaymentStep({
       )}
 
       {!useSaved && !isCard && method && (
-        <div className="mt-3 overflow-hidden rounded-xl border border-line px-4 py-2.5">
+        <div className="mt-3 overflow-hidden rounded-xl border border-line px-4 py-2">
           <input
             id={`${uid}-detail`}
             value={detail}
@@ -1306,9 +1524,9 @@ function PaymentStep({
         </div>
       )}
 
-      <p className="mt-3 text-[12px] leading-5 text-muted">
-        You&apos;re paying only for what you&apos;re adding. The rest of this booking —
-        the nights and services you already have — is untouched.
+      <p className="mt-3 text-[11.5px] leading-[17px] text-muted">
+        You&apos;re paying only for what you&apos;re adding. The rest of the booking
+        is untouched.
       </p>
     </div>
   );
@@ -1325,9 +1543,9 @@ function Line({ label, value }: { label: string; value: string }) {
 
 function Total({ value }: { value: string }) {
   return (
-    <div className="mt-2 flex items-center justify-between border-t border-line pt-2">
-      <span className="text-[13px] font-semibold text-ink">To pay now</span>
-      <span className="text-[15px] font-bold text-ink">{value}</span>
+    <div className="mt-2.5 flex items-center justify-between rounded-lg bg-primary/[0.07] px-2.5 py-2">
+      <span className="text-[12.5px] font-semibold text-ink">To pay now</span>
+      <span className="text-[16px] font-bold tabular-nums text-primary">{value}</span>
     </div>
   );
 }

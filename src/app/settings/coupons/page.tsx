@@ -7,7 +7,7 @@ import { TicketPercent, Pencil, Trash2, Plus, X, CalendarClock } from "lucide-re
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/lib/toast";
 import { useConfirm } from "@/lib/confirm";
-import { useVillaCount } from "@/lib/useProperty";
+import { useVillaCount, setCouponCount } from "@/lib/useProperty";
 import SettingsSidebar from "@/components/settings/SettingsSidebar";
 import DateField from "@/components/ui/DateField";
 import {
@@ -123,6 +123,13 @@ export default function CouponsPage() {
   useEffect(() => {
     if (ready && user) load();
   }, [ready, user, load]);
+
+  // Keep the sidebar's "0 coupons" mark honest. Watched rather than set inside
+  // `load`, so creating the first coupon or deleting the last one moves the
+  // mark straight away instead of at the next visit.
+  useEffect(() => {
+    if (coupons && user) setCouponCount(user.id, coupons.length);
+  }, [coupons, user]);
 
   function startCreate() {
     setForm(EMPTY_FORM);
