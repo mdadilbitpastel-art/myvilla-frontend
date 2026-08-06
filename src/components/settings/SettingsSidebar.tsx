@@ -129,15 +129,22 @@ export default function SettingsSidebar({ active }: { active?: string }) {
     );
   }
 
-  // Host-only sections appear only once the user owns a property. Until then
-  // (and after the last one is removed) they're kept out of the nav entirely.
+  // Host-only sections appear once the user owns a property. Until they do,
+  // they're kept out of the nav entirely.
   //
-  // The section you're actually on is the exception: it can be open on a
-  // refresh that resolves to "no properties" (the last one was just removed),
-  // and dropping it would leave the nav with nothing highlighted — as if the
-  // refresh had moved you elsewhere.
+  // Rent requests count too, and have to: a host who removes their last
+  // property still has the stays booked on it to see through — those guests
+  // are still checked in and out from that section, because a removal on
+  // MyVilla takes the LISTING down, not the bookings. Gating on the villa
+  // count alone would hide the section from the one host who most needs it,
+  // the moment they need it.
+  //
+  // The section you're actually on is the last exception: it can be open on a
+  // refresh that resolves to neither, and dropping it would leave the nav with
+  // nothing highlighted — as if the refresh had moved you elsewhere.
+  const hosts = (villas ?? 0) > 0 || (rentRequests ?? 0) > 0;
   const items = ITEMS.filter(
-    (item) => !item.hostOnly || (villas ?? 0) > 0 || item.label === current
+    (item) => !item.hostOnly || hosts || item.label === current
   );
 
   // The count that decides whether a section is empty. Null means the server

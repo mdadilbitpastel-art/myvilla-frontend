@@ -272,6 +272,23 @@ export type ExtraService = {
   /** On an addition's receipt: this service was already on the booking and was
    *  carried on over the nights being added, not bought in that purchase. */
   carried?: boolean;
+  /** On a booking's own list: the guest has since dropped this service and been
+   *  refunded for the nights of it that hadn't started. `nights`/`amount` above
+   *  stay what it was CHARGED over — the payment column adds those up — and
+   *  `refunded` is how much of it came back. */
+  removed?: boolean;
+  refunded?: number;
+};
+
+/** One extra service on a booking that can still be dropped, and what dropping
+ *  it hands back: `nights` are the nights of it that haven't started (refunded
+ *  in full, `amount`), `kept` the ones already under way that stay charged. */
+export type RemovableService = {
+  name: string;
+  price: number;
+  nights: number;
+  amount: number;
+  kept: number;
 };
 
 export type VillaInput = {
@@ -901,6 +918,16 @@ export type Booking = {
   villaCover: string;
   villaCity: string;
   villaCountry: string;
+  /** The host has taken this listing off MyVilla. The stay is untouched by it —
+   *  it still checks in and out, cancels and gets reviewed on the terms it was
+   *  booked on — but the property is no longer somewhere anyone can go and
+   *  look at, so its name stops being a link and its photo goes grey.
+   *  `villaRemovedMessage` is worded for whoever asked: the host is told THEY
+   *  removed it, the guest is told it is no longer listed. */
+  villaRemoved: boolean;
+  /** ISO instant of the removal, or "". */
+  villaRemovedAt: string;
+  villaRemovedMessage: string;
   guestName: string;
   guestAvatar: string;
   guestEmail: string;
@@ -1135,8 +1162,13 @@ export type AddonPayment = {
 export type BookingEditOptions = {
   bookingId: string;
   availableServices: ExtraService[];
+  /** The services this stay HAS that can still be dropped, each with what
+   *  dropping it refunds. Empty means there is nothing to give back — no
+   *  services, or every night of them already under way. */
+  removableServices: RemovableService[];
   canAddServices: boolean;
   canAddNights: boolean;
+  canRemoveServices: boolean;
   /** The one sentence explaining a shut door ("" when both are open). */
   blockedReason: string;
   /** Nights a service bought now would be charged over (the stay's nights that
@@ -1175,6 +1207,21 @@ export type ServiceQuote = {
   error: string;
 };
 
+/** What dropping a set of extra services would hand back, priced by the server
+ *  with the same code the removal runs — the mirror of ServiceQuote. Refunded
+ *  in full: a service the host hasn't started costs them nothing to drop. */
+export type ServiceRemovalQuote = {
+  services: RemovableService[];
+  /** The nights being refunded over. The stay still holds every one of them —
+   *  only the service on them is going. */
+  nights: string[];
+  nightsCount: number;
+  amount: number;
+  allowed: boolean;
+  message: string;
+  error: string;
+};
+
 /** Everything being added in one go, and the single figure it comes to. Either
  *  half may be null — what is never split is the payment: `amount` is what the
  *  button charges, and `allowed` false means none of it goes through. */
@@ -1197,6 +1244,9 @@ export type NightsQuote = {
   /** Nights inside the range somebody else holds — skipped, not refused: the
    *  stay extends around them and the guest checks out and back in. */
   skipped: string[];
+  /** Nights inside the range the guest had given back — passed over on purpose.
+   *  A range never reclaims one; only tapping the night itself does. */
+  declined: string[];
   accommodation: number;
   serviceFee: number;
   tax: number;
@@ -1237,10 +1287,15 @@ export type BookingNightOption = {
 /** One cancellation event on a booking — the whole stay, or nights of it. */
 export type BookingCancellation = {
   id: string;
-  /** "full" — the stay was called off — or "partial", some of its nights. */
+  /** "full" — the stay was called off — "partial", some of its nights, or
+   *  "services", an extra service dropped off the nights it hadn't been
+   *  delivered on. On a services row the stay is untouched: `nights` are the
+   *  nights it was refunded OVER and `nightsCount` is 0. */
   kind: string;
   nights: string[];
   nightsCount: number;
+  /** What was dropped, on a services row. Empty on the other two kinds. */
+  services: ExtraService[];
   /** stayValue = cancellationFee + refundAmount, always. */
   stayValue: number;
   cancellationFee: number;
@@ -1277,11 +1332,12 @@ export type NightsCancellationQuote = {
 
 const BOOKING_SELECTION = `
   id villaId villaTitle villaCover villaCity villaCountry
+  villaRemoved villaRemovedAt villaRemovedMessage
   guestName guestAvatar guestEmail
   checkIn checkOut nights segments { index checkIn checkOut nights checkInAt checkOutAt checkedInAt checkedOutAt checkedInGuests } guests
   checkedInGuests guestCapacity
   pricePerNight subtotal discount couponCode discountLabel serviceFee tax
-  extraServices { name price nights amount } extrasTotal total
+  extraServices { name price nights amount removed refunded } extrasTotal total
   availableServices { name price } canAddServices canAddNights additionsTotal
   additions { id kind services { name price nights amount carried } nights nightsCount
               accommodation serviceFee tax extras amount
@@ -1292,7 +1348,8 @@ const BOOKING_SELECTION = `
   cancelFeeNow refundAmountNow cancellationFee refundAmount
   cancellableNights cancelledNights activeNights partiallyCancelled refundedTotal
   nightOptions { date partIndex state cancellable refundPercentage stayValue refundAmount cancellationFee message }
-  cancellations { id kind nights nightsCount stayValue cancellationFee refundAmount refundPercentage extrasRefund message createdAt }
+  cancellations { id kind nights nightsCount services { name price nights amount }
+                  stayValue cancellationFee refundAmount refundPercentage extrasRefund message createdAt }
   bookingStatus checkinAvailable buttonState buttonVisible
   gracePeriodRemainingMinutes otpRequired checkinMessage graceEndsAt
   noShowAt lateCheckInAllowed
@@ -1418,7 +1475,7 @@ const SERVICE_QUOTE_SELECTION = `
   allowed message error`;
 
 const NIGHTS_QUOTE_SELECTION = `
-  nights nightsCount kept skipped accommodation serviceFee tax extras
+  nights nightsCount kept skipped declined accommodation serviceFee tax extras
   services { name price nights amount } amount
   checkIn checkOut totalNights allowed message error`;
 
@@ -1431,7 +1488,8 @@ export async function fetchBookingEditOptions(
     `query BookingEditOptions($id: ID!) {
        bookingEditOptions(id: $id) {
          bookingId availableServices { name price }
-         canAddServices canAddNights blockedReason
+         removableServices { name price nights amount kept }
+         canAddServices canAddNights canRemoveServices blockedReason
          chargeableNights pricePerNight
          acceptedPayments savedPaymentMethod savedPaymentReference
          firstDate lastDate maxCheckOut unavailableDates ownNights cancelledNights
@@ -1507,6 +1565,51 @@ export async function addToBooking(
     }
   );
   return data.addToBooking;
+}
+
+/**
+ * Price dropping a set of extra services from a booking — the refund half of
+ * the edit screen. Read-only, so it is safe to call as the guest ticks.
+ *
+ * Its own call and not part of `fetchChangesQuote` because it is its own act:
+ * money coming back is not netted off money about to be paid, and a refund
+ * needs no payment method to settle it.
+ */
+export async function fetchServiceRemovalQuote(
+  id: string,
+  services: string[]
+): Promise<ServiceRemovalQuote> {
+  const data = await gql<{ bookingServiceRemovalQuote: ServiceRemovalQuote }>(
+    `query BookingServiceRemovalQuote($id: ID!, $services: [String!]) {
+       bookingServiceRemovalQuote(id: $id, services: $services) {
+         services { name price nights amount kept }
+         nights nightsCount amount allowed message error
+       }
+     }`,
+    { id, services }
+  );
+  return data.bookingServiceRemovalQuote;
+}
+
+/**
+ * Drop extra services off a booking and refund them.
+ *
+ * Only the nights of each that haven't started come back — those are the ones
+ * the host hasn't delivered — and they come back in full. Re-decided on the
+ * server at the moment the button is pressed: a night may have begun since the
+ * screen was drawn.
+ */
+export async function removeBookingServices(
+  id: string,
+  services: string[]
+): Promise<Booking> {
+  const data = await gql<{ removeBookingServices: Booking }>(
+    `mutation RemoveBookingServices($id: ID!, $services: [String!]!) {
+       removeBookingServices(id: $id, services: $services) { ${BOOKING_SELECTION} }
+     }`,
+    { id, services }
+  );
+  return data.removeBookingServices;
 }
 
 /**

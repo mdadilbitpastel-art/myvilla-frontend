@@ -422,13 +422,25 @@ export default function MyPropertyPage() {
   // came back to look at.
   const [sort, setSort] = useState<"desc" | "asc">("desc");
 
-  // Delete a villa the user owns, after confirming. On success drop it from the
-  // list; the villa's images are removed server-side too.
+  // Take a villa off the platform, after confirming. On success drop it from
+  // this list.
+  //
+  // The confirmation says what actually happens, which is not a deletion: the
+  // listing stops being findable and bookable, and the stays already booked on
+  // it carry on to their end — the host still checks those guests in and out
+  // from Rent Requests. Telling a host their property will be "permanently
+  // deleted" while their calendar still holds paid stays would be a promise
+  // the platform can't keep, and would talk hosts out of a removal that is in
+  // fact safe to make.
   async function handleRemove(id: string, label: string) {
     if (removingId) return;
     const ok = await confirm({
       title: "Remove this property?",
-      message: `"${label}" will be permanently deleted, along with its photos. This can't be undone.`,
+      message:
+        `"${label}" will stop appearing in search and on MyVilla, and no one ` +
+        `will be able to book it. Any stays already booked go ahead as normal ` +
+        `— you'll still check those guests in and out from Rent Requests. ` +
+        `Its discount codes will be switched off.`,
       confirmLabel: "Remove",
       tone: "danger",
     });

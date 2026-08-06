@@ -1,7 +1,6 @@
 "use client";
 
 import { Fragment, useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import {
   LogIn,
   LogOut,
@@ -23,6 +22,12 @@ import CheckInCountdownPill from "@/components/ui/CheckInCountdownPill";
 import StayCountdownPill from "@/components/ui/StayCountdownPill";
 import ForcedCheckOutPill from "@/components/ui/ForcedCheckOutPill";
 import ReviewForm from "@/components/reviews/ReviewForm";
+import {
+  PropertyLink,
+  RemovedNote,
+  REMOVED_IMG,
+} from "@/components/settings/RemovedProperty";
+import { useToast } from "@/lib/toast";
 import type { Booking } from "@/lib/api";
 import {
   bookingClosed,
@@ -687,6 +692,7 @@ export default function BookingDetails({
   reviewBusy?: boolean;
 }) {
   const [editingReview, setEditingReview] = useState(false);
+  const toast = useToast();
   // Same ticking server clock the row uses, so the pill here and the label in
   // the collapsed row above can never disagree about how late a guest is.
   const now = useServerWallClock(booking.serverNow);
@@ -803,24 +809,38 @@ export default function BookingDetails({
       id: `cancel-${c.id}`,
       at: c.createdAt,
       kind: "cancel" as const,
+      // A services row is not a night going: the stay is untouched and what was
+      // given back is named, because "0 nights cancelled" is not what happened.
       label:
         c.kind === "full"
           ? "Booking cancelled"
-          : `${plural(c.nightsCount, "night")} cancelled`,
+          : c.kind === "services"
+            ? `${c.services.map((s) => s.name).join(", ") || "Extra services"} removed`
+            : `${plural(c.nightsCount, "night")} cancelled`,
       // WHICH nights went, in as little room as that can be said in — the one
       // question "3 nights cancelled" leaves the guest with — and, when there
       // were services on those nights, that their money is in the refund too.
       // It doesn't follow the cancellation ladder: a service on a night that
       // is no longer happening comes back whole, so a refund bigger than the
       // tier suggests would otherwise look like a mistake.
+      //
+      // On a services row the same dates mean the opposite thing — the nights
+      // the guest KEEPS, minus the service — so they are worded as such.
       dates:
-        fmtNights(c.nights) +
-        (c.extrasRefund > 0
-          ? ` · incl. ${money(c.extrasRefund)} for extra services`
-          : ""),
+        c.kind === "services"
+          ? `for ${fmtNights(c.nights)} · refunded in full`
+          : fmtNights(c.nights) +
+            (c.extrasRefund > 0
+              ? ` · incl. ${money(c.extrasRefund)} for extra services`
+              : ""),
       detail: [
+        c.kind === "services"
+          ? c.services
+              .map((s) => `${s.name} ${money(s.price)} × ${s.nights ?? 0}`)
+              .join(", ")
+          : "",
         c.nights.map((n) => fmtDate(n)).join(", "),
-        c.extrasRefund > 0
+        c.kind !== "services" && c.extrasRefund > 0
           ? `${money(c.extrasRefund)} of extra services refunded in full`
           : "",
         c.cancellationFee > 0 ? `${money(c.cancellationFee)} cancellation charge` : "",
@@ -887,6 +907,12 @@ export default function BookingDetails({
   // gets a gender-based placeholder; the guest column falls back to neutral.
   const contactGender = role === "owner" ? undefined : booking.hostGender;
 
+  // A removed listing is marked on the panel — greyed photo, plain name, the
+  // note near the top — only for the host who removed it. The guest's panel
+  // stays exactly as it was, and only answers if they press the property.
+  const hostRemovedView = booking.villaRemoved && role === "owner";
+  const onRemovedProperty = (message: string) => toast.info(message);
+
   return (
     <div className="space-y-3.5">
       {/* Property header — the villa's title & location, and on the right the
@@ -903,16 +929,26 @@ export default function BookingDetails({
                 column of its own further down. `items-baseline` keeps the mono
                 digits on the name's baseline instead of riding high. */}
             <div className="flex min-w-0 items-baseline gap-2">
-              <Link
-                href={`/villa/${booking.villaId}`}
+              <PropertyLink
+                villaId={booking.villaId}
+                removed={booking.villaRemoved}
+                message={booking.villaRemovedMessage}
+                // The guest keeps a working-looking link that answers when
+                // pressed; the host's goes plain, because the note above has
+                // already told them the listing is theirs and gone, and a name
+                // still asking to be clicked would contradict it.
+                onRemovedClick={role === "guest" ? onRemovedProperty : undefined}
                 // Ink at rest and ink on hover: the underline is what says
                 // it's a link. Turning the villa's name blue under the cursor
                 // put the loudest thing on the panel in the same colour as
                 // every button around it.
-                className="truncate text-[16px] font-bold text-ink underline-offset-4 transition-colors hover:decoration-ink/40 hover:underline"
+                className={`truncate text-[16px] font-bold text-ink underline-offset-4 transition-colors ${
+                  hostRemovedView ? "" : "hover:decoration-ink/40 hover:underline"
+                }`}
+                removedClassName="text-ink/70"
               >
                 {booking.villaTitle}
-              </Link>
+              </PropertyLink>
               <span
                 className="shrink-0 font-mono text-[12px] tracking-wide text-muted"
                 title="Booking ID"
@@ -1056,6 +1092,23 @@ export default function BookingDetails({
           already was. */}
       <ForcedCheckOutPill booking={booking} variant="banner" />
 
+      {/* The HOST's panel only. They took the property down, so their own
+          rent-request rows say so outright, dated, and say what it does NOT
+          change — because that is the question it raises: the stay is still
+          on, still checks in and out, still cancels and gets reviewed on the
+          terms it was booked on. Only the listing has closed.
+
+          The guest is told nothing here. Their stay is going ahead perfectly
+          normally, and a notice on it would read as trouble with the booking.
+          They hear it only if they press the property expecting a listing —
+          see the header link above. */}
+      {booking.villaRemoved && role === "owner" && (
+        <RemovedNote
+          message={booking.villaRemovedMessage}
+          at={booking.villaRemovedAt}
+        />
+      )}
+
       {/* The live stay codes, and only while the stay is live: a code left on a
           booking that has already been checked out or cancelled is a door that
           no longer opens, offered to a guest who would go and read it out. */}
@@ -1122,8 +1175,20 @@ export default function BookingDetails({
             inside it: it's the property, not the person the group is about. */}
         <div className="flex min-w-0 flex-col">
           {/* The villa, down from the header and leading this column. */}
-          <Link
-            href={`/villa/${booking.villaId}`}
+          {/* Black and white on the HOST's panel once they've taken the
+              property down — the fastest reading there is, saying before a
+              word is read that this one is off the platform, and it keeps the
+              real picture rather than a placeholder because this is still the
+              record of a stay on it.
+
+              Full colour on the guest's. Their booking hasn't changed, and a
+              greyed-out photo of the place they are going to would say it
+              had. */}
+          <PropertyLink
+            villaId={booking.villaId}
+            removed={booking.villaRemoved}
+            message={booking.villaRemovedMessage}
+            onRemovedClick={role === "guest" ? onRemovedProperty : undefined}
             title={booking.villaTitle}
             className="img-frame group mb-3 block aspect-[16/9] w-full overflow-hidden rounded-xl"
           >
@@ -1131,9 +1196,11 @@ export default function BookingDetails({
               src={booking.villaCover}
               alt={booking.villaTitle}
               fallback={PLACEHOLDER_IMG}
-              className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-[1.06]"
+              className={`h-full w-full object-cover transition-transform duration-500 ease-out ${
+                hostRemovedView ? REMOVED_IMG : "group-hover:scale-[1.06]"
+              }`}
             />
-          </Link>
+          </PropertyLink>
 
           {/* The property's own hours. On a split stay every part opens and
               closes on these same two, so they are stated once here rather than
@@ -1410,10 +1477,14 @@ export default function BookingDetails({
                           the record: this departure was never witnessed by
                           either side, and a month from now that is exactly what
                           somebody querying it needs to know. */}
+                      {/* Said in the voice of whoever is reading it: to the host
+                          this is a record of who ended the stay, to the guest it
+                          is news about their own departure. */}
                       {booking.forcedCheckOut && (
                         <span className="mt-0.5 block text-[11px] font-normal leading-4 text-muted">
-                          Closed automatically — the check-out time passed with
-                          nobody checked out.
+                          {role === "guest"
+                            ? "You were checked out automatically — your check-out hour passed with the stay still open."
+                            : "Closed automatically — the check-out time passed with nobody checked out."}
                         </span>
                       )}
                     </>
@@ -1445,7 +1516,7 @@ export default function BookingDetails({
             )}
             <Pair label="Service fee" value={money(booking.serviceFee)} />
             <Pair label="Tax" value={money(booking.tax)} />
-            {booking.extraServices?.map((s) => {
+            {booking.extraServices?.map((s, i) => {
               // Over how many nights this one was actually charged. A service
               // ticked at checkout ran the whole stay; one bought afterwards
               // runs only from the night it was bought, and a stay that has
@@ -1454,11 +1525,22 @@ export default function BookingDetails({
               // payloads carry neither, and fall back to what they always said.
               const nights = s.nights || booking.nights;
               const amount = s.amount ?? s.price * nights;
+              // A service the guest has since dropped keeps its line: this is
+              // the CHARGE, and what came back off it is in the refund below
+              // with every other refund. The line only says that it went — and
+              // the key is positional, because a service dropped and bought
+              // again quite legitimately appears twice.
               return (
-                <div key={s.name} className="flex items-baseline justify-between gap-3 py-[3px]">
+                <div
+                  key={`${s.name}-${i}`}
+                  className="flex items-baseline justify-between gap-3 py-[3px]"
+                >
                   <span className="min-w-0 truncate text-[12px] text-muted">
-                    {s.name}
+                    <span className={s.removed ? "line-through" : ""}>{s.name}</span>
                     <span className="text-muted/70"> ({money(s.price)} × {nights})</span>
+                    {s.removed && (
+                      <span className="text-muted/70"> · removed</span>
+                    )}
                   </span>
                   <span className="shrink-0 text-[12.5px] font-medium text-ink">
                     {money(amount)}

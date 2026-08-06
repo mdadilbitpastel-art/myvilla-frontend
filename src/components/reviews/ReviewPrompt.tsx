@@ -2,10 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import Link from "next/link";
 import { X } from "lucide-react";
 import Img from "@/components/ui/Img";
 import ReviewForm from "@/components/reviews/ReviewForm";
+import { PropertyLink } from "@/components/settings/RemovedProperty";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/lib/toast";
 import { fetchPendingReview, submitReview, type Booking } from "@/lib/api";
@@ -96,6 +96,10 @@ export default function ReviewPrompt() {
 
         {/* Villa header */}
         <div className="flex items-center gap-3 border-b border-line p-4">
+          {/* A stay is still reviewable after the host takes the listing down —
+              the guest was there, and what they have to say about it is theirs.
+              So this prompt looks exactly as it always does; it just has no
+              listing to open if the name is pressed, and says so then. */}
           <div className="img-frame h-[52px] w-[76px] shrink-0 overflow-hidden rounded-lg bg-page">
             <Img
               src={booking.villaCover}
@@ -107,12 +111,15 @@ export default function ReviewPrompt() {
             <p className="text-[12px] font-semibold uppercase tracking-wide text-primary">
               How was your stay?
             </p>
-            <Link
-              href={`/villa/${booking.villaId}`}
-              className="block truncate text-[15px] font-bold text-ink hover:text-primary"
+            <PropertyLink
+              villaId={booking.villaId}
+              removed={booking.villaRemoved}
+              message={booking.villaRemovedMessage}
+              onRemovedClick={(message) => toast.info(message)}
+              className="block w-full truncate text-[15px] font-bold text-ink hover:text-primary"
             >
               {booking.villaTitle}
-            </Link>
+            </PropertyLink>
             {place && <p className="truncate text-[12px] text-muted">{place}</p>}
           </div>
         </div>

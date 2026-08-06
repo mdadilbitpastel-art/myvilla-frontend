@@ -9,6 +9,7 @@ import { setBookingCount } from "@/lib/useProperty";
 import { useToast } from "@/lib/toast";
 import SettingsSidebar from "@/components/settings/SettingsSidebar";
 import BookingDetails from "@/components/settings/BookingDetails";
+import { PropertyLink } from "@/components/settings/RemovedProperty";
 import CancelBookingModal from "@/components/settings/CancelBookingModal";
 import EditBookingModal from "@/components/settings/EditBookingModal";
 import CountPill from "@/components/ui/CountPill";
@@ -16,6 +17,7 @@ import StayPartChips from "@/components/ui/StayPartChips";
 import CheckInCountdownPill from "@/components/ui/CheckInCountdownPill";
 import StayCountdownPill from "@/components/ui/StayCountdownPill";
 import ForcedCheckOutPill from "@/components/ui/ForcedCheckOutPill";
+import AutoCheckOutNote from "@/components/ui/AutoCheckOutNote";
 import Img from "@/components/ui/Img";
 import SortMenu, {
   ACTION_SORTS,
@@ -171,10 +173,15 @@ function greetingText(b: Booking): string {
           ...b.extraServices.map(
             // Over the nights this one was actually charged for — a service
             // bought after checkout runs from the night it was bought, not the
-            // whole stay (older payloads carry neither and fall back).
+            // whole stay (older payloads carry neither and fall back). One since
+            // dropped keeps its line — that is what was charged — and says what
+            // came back off it.
             (s) => {
               const n = s.nights || b.nights;
-              return `   • ${s.name} — ${money(s.price)} × ${n} = ${money(s.amount ?? s.price * n)}`;
+              return (
+                `   • ${s.name} — ${money(s.price)} × ${n} = ${money(s.amount ?? s.price * n)}` +
+                (s.removed ? ` (removed, ${money(s.refunded ?? 0)} refunded)` : "")
+              );
             }
           ),
         ]
@@ -266,6 +273,11 @@ function BookingRow({
   // start refusing it, rather than offering a cancellation that can't happen.
   const now = useServerWallClock(booking.serverNow);
   const status = bookingStatus(booking, now);
+  // The one place a guest hears that the host has taken this property down:
+  // when they press its name or photo expecting a listing. Nothing else in
+  // this row mentions it — see RemovedProperty for why.
+  const toast = useToast();
+  const onRemovedProperty = (message: string) => toast.info(message);
   // How far through a split stay this is — the row shows a chip per part, the
   // expanded panel below spells each one out with its dates.
   const progress = stayProgress(booking, now);
@@ -310,23 +322,19 @@ function BookingRow({
   // The guest's stay code, in the row where they can reach it without opening
   // anything — a code you have to hunt for is a code that expires first.
   //
-  // ARRIVING, the slot appears the moment the window opens rather than when the
-  // host presses Check in — until the code exists it holds `****`. A guest
-  // standing at the door needs to know the code is coming and where it will
-  // appear; an empty row that sprouts a PIN for sixty seconds is one they can
-  // miss entirely.
-  //
-  // LEAVING, there is no such placeholder: it waits for a real code. A guest who
-  // has just checked in is not standing at any door, and four grey asterisks
-  // parked on their booking for a week of holiday only ever read as something
-  // broken. What answers for the stay meanwhile is the countdown in the Status
-  // column, and the digits appear here the moment the host actually starts the
-  // check-out.
+  // Either end of the stay, the slot waits for a REAL code: it appears when the
+  // host starts the check-in or check-out and the server issues digits, and not
+  // a moment before. There used to be a `****` placeholder on the way in, to
+  // show a guest at the door where their code would land — but a booking is
+  // read for days before anyone is at any door, and four grey asterisks sitting
+  // on it that whole time only ever read as a code that failed to load, or as
+  // one the guest has already missed. Nothing to miss now: the slot's very
+  // presence means there are digits in it.
   const checkin = checkInGate(booking, now);
   const action = stayAction(booking);
   const pinMode: "in" | "out" | null = closed
     ? null
-    : action === "check_in" && checkin.visible && checkin.open
+    : action === "check_in" && checkin.visible && checkin.open && booking.checkinPin
       ? "in"
       : action === "check_out" && booking.checkoutAvailable && booking.checkoutPin
         ? "out"
@@ -338,6 +346,15 @@ function BookingRow({
   // Where the villa is, for the line under its name. The city alone when that
   // is all the payload has; nothing at all rather than a stray comma.
   const place = [booking.villaCity, booking.villaCountry].filter(Boolean).join(", ");
+  // The extra services this stay still HAS. One the guest has since dropped was
+  // refunded and is not theirs any more, so the chip below must not count it —
+  // what it was charged is still in the panel's payment column, with the refund
+  // under it.
+  const liveExtras = (booking.extraServices ?? []).filter((s) => !s.removed);
+  const liveExtrasTotal = liveExtras.reduce(
+    (sum, s) => sum + (s.amount ?? s.price * (s.nights || booking.nights)),
+    0
+  );
   // The card element itself — an <article>, so typed as the base HTMLElement.
   const rowRef = useRef<HTMLElement>(null);
 
@@ -391,8 +408,15 @@ function BookingRow({
             {/* The property. A real photograph at a real size: this is a trip,
                 and the picture is most of what makes the card recognisable at a
                 glance in a list of them. */}
-            <Link
-              href={`/villa/${booking.villaId}`}
+            {/* If the host has since taken the listing down, this still looks
+                and behaves exactly as it always did — the guest's booking is
+                unaffected, and a greyed-out photo on their trip would say
+                otherwise. Pressing it says there's no listing to open. */}
+            <PropertyLink
+              villaId={booking.villaId}
+              removed={booking.villaRemoved}
+              message={booking.villaRemovedMessage}
+              onRemovedClick={onRemovedProperty}
               title={booking.villaTitle}
               className="group relative block h-[140px] w-full shrink-0 overflow-hidden rounded-xl bg-page ring-1 ring-ink/[0.07] sm:h-[104px] sm:w-[140px]"
             >
@@ -401,7 +425,7 @@ function BookingRow({
                 alt={booking.villaTitle}
                 className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-[1.07]"
               />
-            </Link>
+            </PropertyLink>
 
             <div className="flex min-w-0 flex-1 flex-col">
               {/* Name, where it is, and how the stay is doing. The status sits
@@ -409,27 +433,30 @@ function BookingRow({
                   looks for first, at the two ends of the card's top edge. */}
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <Link
-                    href={`/villa/${booking.villaId}`}
-                    className="block truncate text-[15px] font-bold text-ink transition-colors hover:text-primary"
+                  <PropertyLink
+                    villaId={booking.villaId}
+                    removed={booking.villaRemoved}
+                    message={booking.villaRemovedMessage}
+                    onRemovedClick={onRemovedProperty}
                     title={booking.villaTitle}
+                    className="block w-full truncate text-[15px] font-bold text-ink transition-colors hover:text-primary"
                   >
                     {booking.villaTitle}
-                  </Link>
+                  </PropertyLink>
                   <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-muted">
                     {place && <span className="truncate">{place}</span>}
                     {place && <span className="text-muted/40" aria-hidden>·</span>}
                     <span className="whitespace-nowrap">ID #{booking.id}</span>
-                    {booking.extraServices?.length > 0 && (
+                    {liveExtras.length > 0 && (
                       <>
                         <span className="text-muted/40" aria-hidden>·</span>
                         <span
                           className="whitespace-nowrap"
-                          title={booking.extraServices.map((s) => s.name).join(", ")}
+                          title={liveExtras.map((s) => s.name).join(", ")}
                         >
-                          ✨ {booking.extraServices.length} extra
-                          {booking.extraServices.length === 1 ? "" : "s"} · +
-                          {money(booking.extrasTotal)}
+                          ✨ {liveExtras.length} extra
+                          {liveExtras.length === 1 ? "" : "s"} · +
+                          {money(liveExtrasTotal)}
                         </span>
                       </>
                     )}
@@ -513,6 +540,12 @@ function BookingRow({
                   closes itself half an hour later — the guest sees exactly when
                   their booking stops being live, rather than finding it closed. */}
               <ForcedCheckOutPill booking={booking} onDue={onRefresh} />
+              {/* And once it has: the guest was not at the door for this
+                  departure and nobody read them a code, so the card has to be
+                  the thing that tells them their stay was closed — in the foot,
+                  where the countdown they last saw stood, without opening
+                  anything. */}
+              <AutoCheckOutNote booking={booking} variant="note" />
 
               {/* The stay code, where it can be reached without opening
                   anything — a code you have to hunt for is a code that expires
@@ -521,16 +554,8 @@ function BookingRow({
                   the same colour. */}
               {pinMode && (
                 <span
-                  title={
-                    pin
-                      ? `Read this out to your host to be checked ${pinMode}`
-                      : `Your host starts check-${pinMode} — your code appears here`
-                  }
-                  aria-label={
-                    pin
-                      ? `Check-${pinMode} PIN ${pin.split("").join(" ")}`
-                      : `Check-${pinMode} PIN not issued yet`
-                  }
+                  title={`Read this out to your host to be checked ${pinMode}`}
+                  aria-label={`Check-${pinMode} PIN ${pin.split("").join(" ")}`}
                   className={`inline-flex items-center gap-2 whitespace-nowrap rounded-lg border px-3 py-1 text-[12.5px] font-semibold ${
                     pinMode === "out"
                       ? "border-ink/25 bg-ink/[0.06] text-ink"
@@ -541,13 +566,9 @@ function BookingRow({
                   PIN
                   <span
                     aria-hidden
-                    className={`font-mono text-[15px] font-bold tracking-[0.18em] ${
-                      // The placeholder is deliberately quieter than a real
-                      // code, so a glance tells "not yet" from "here it is".
-                      pin ? "text-ink" : "text-muted"
-                    }`}
+                    className="font-mono text-[15px] font-bold tracking-[0.18em] text-ink"
                   >
-                    {pin || "****"}
+                    {pin}
                   </span>
                 </span>
               )}

@@ -9,11 +9,17 @@ import { useLiveRefresh } from "@/lib/useLiveRefresh";
 import { useToast } from "@/lib/toast";
 import SettingsSidebar from "@/components/settings/SettingsSidebar";
 import BookingDetails, { StayActionButton } from "@/components/settings/BookingDetails";
+import {
+  PropertyLink,
+  RemovedNote,
+  REMOVED_IMG,
+} from "@/components/settings/RemovedProperty";
 import CountPill from "@/components/ui/CountPill";
 import StayPartChips from "@/components/ui/StayPartChips";
 import CheckInCountdownPill from "@/components/ui/CheckInCountdownPill";
 import StayCountdownPill from "@/components/ui/StayCountdownPill";
 import ForcedCheckOutPill from "@/components/ui/ForcedCheckOutPill";
+import AutoCheckOutNote from "@/components/ui/AutoCheckOutNote";
 import Img from "@/components/ui/Img";
 import SortMenu, {
   ACTION_SORTS,
@@ -162,20 +168,42 @@ function RequestRow({
           <div className={`grid ${ROW_GRID} items-center px-4 py-3 text-[13px]`}>
             {/* Property — the row's identity now that the tenant has moved
                 into the expanded detail where the rest of their contact is. */}
-            <Link
-              href={`/villa/${req.villaId}`}
+            {/* Once the host has taken this property down the row still names
+                it — it is what the guest booked — but there is no listing to
+                open any more, so nothing here is clickable and the thumbnail
+                goes grey. The note underneath is worded back at the host:
+                "You removed this property." */}
+            <PropertyLink
+              villaId={req.villaId}
+              removed={req.villaRemoved}
+              message={req.villaRemovedMessage}
               title={req.villaTitle}
               className="group flex min-w-0 items-center gap-2.5 pr-2"
             >
               <Img
                 src={req.villaCover}
                 alt={req.villaTitle}
-                className="h-9 w-9 shrink-0 rounded-lg object-cover"
+                className={`h-9 w-9 shrink-0 rounded-lg object-cover ${
+                  req.villaRemoved ? REMOVED_IMG : ""
+                }`}
               />
-              <span className="truncate text-body group-hover:text-primary">
-                {req.villaTitle}
+              <span className="flex min-w-0 flex-col">
+                <span
+                  className={`truncate ${
+                    req.villaRemoved ? "text-body/70" : "text-body group-hover:text-primary"
+                  }`}
+                >
+                  {req.villaTitle}
+                </span>
+                {req.villaRemoved && (
+                  <RemovedNote
+                    message={req.villaRemovedMessage}
+                    compact
+                    className="mt-1 self-start"
+                  />
+                )}
               </span>
-            </Link>
+            </PropertyLink>
             <span className="flex min-w-0 flex-col text-body">
               {/* What the property is held for NOW. Nights the guest handed
                   back are the host's to sell again, so a row that still bracketed
@@ -237,12 +265,19 @@ function RequestRow({
                   variant="text"
                 />
               ) : (
-                <span
-                  className={`text-[13px] font-semibold ${STATUS_TONE_CLASS[status.tone]} ${
-                    status.pending ? "animate-soft-pulse" : ""
-                  }`}
-                >
-                  {status.label}
+                <span className="flex min-w-0 flex-wrap items-baseline gap-x-1.5">
+                  <span
+                    className={`text-[13px] font-semibold ${STATUS_TONE_CLASS[status.tone]} ${
+                      status.pending ? "animate-soft-pulse" : ""
+                    }`}
+                  >
+                    {status.label}
+                  </span>
+                  {/* "Checked out" alone doesn't say who ended it, and in a
+                      history every finished stay says that. The ones the
+                      platform closed say so here, beside the label, rather than
+                      only inside the panel the host has to open first. */}
+                  <AutoCheckOutNote booking={req} />
                 </span>
               )}
               <StayCountdownPill booking={req} />

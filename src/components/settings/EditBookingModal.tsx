@@ -18,16 +18,23 @@ import {
   ChevronRight,
   Loader2,
   Lock,
+  Plus,
   Sparkles,
+  Trash2,
+  Undo2,
 } from "lucide-react";
 import {
   addToBooking,
   fetchBookingEditOptions,
   fetchChangesQuote,
+  fetchServiceRemovalQuote,
+  removeBookingServices,
   type AddonPayment,
   type Booking,
   type BookingEditOptions,
   type ChangesQuote,
+  type RemovableService,
+  type ServiceRemovalQuote,
 } from "@/lib/api";
 import { lastCheckInStarted, useServerWallClock } from "@/lib/booking";
 import { COUNTRIES } from "@/lib/countries";
@@ -86,7 +93,8 @@ const DAY_LOOK: Record<DayState, { cls: string; title?: string }> = {
   },
   given: {
     cls: "border-dashed border-amber-400/70 bg-amber-50 text-amber-700 hover:border-primary/60 hover:bg-primary/[0.07]",
-    title: "Cancelled by you — tap to take this night back",
+    // Never picked up by an extension reaching over it — only by its own tap.
+    title: "Cancelled by you — tap this night itself to take it back",
   },
   free: {
     cls: "border-line text-ink hover:border-primary/60 hover:bg-primary/[0.07]",
@@ -130,22 +138,24 @@ function daysInclusive(from: string, to: string): string[] {
  * neither should mean cancelling and booking again, which costs a cancellation
  * fee and risks losing the villa in between. So this screen grows a booking:
  *
- *   * EXTRA SERVICES — the villa's add-ons this stay doesn't have yet. What it
- *     already has is never listed and never touched: this only ever adds. When
- *     there is nothing left to add, the option isn't offered at all rather than
- *     opening onto an empty list.
+ *   * EXTRA SERVICES — the villa's add-ons this stay doesn't have yet, and, on
+ *     the same screen, the ones it has: a guest who ticked the airport pickup
+ *     at checkout can drop it and have the money back for the nights of it that
+ *     haven't started. Either list is drawn only when it has something in it.
  *   * NIGHTS — picked off a calendar of the villa's own availability, with the
  *     nights this booking already holds marked as its own rather than as dates
  *     to buy again.
  *
- * Both are paid for, on the spot, with the card already on the booking or with
- * another method the host takes. Shortening the stay is the other direction and
- * lives where it always did — the cancel screen, with its refund ladder — which
- * this hands off to rather than duplicating.
+ * What is ADDED is paid for, on the spot, with the card already on the booking
+ * or with another method the host takes. What is REMOVED is refunded, needs no
+ * payment method, and so has its own button rather than being netted off a
+ * charge — two different acts, never one confusing figure. Shortening the stay
+ * is the third direction and lives where it always did: the cancel screen, with
+ * its refund ladder, which this hands off to rather than duplicating.
  *
  * No money is ever worked out here. Every figure comes from the server's own
- * quote, priced by the same code the purchase runs, so what the guest reads is
- * exactly what the button does.
+ * quote, priced by the same code the button runs, so what the guest reads is
+ * exactly what happens.
  */
 export default function EditBookingModal({
   booking,
@@ -176,10 +186,19 @@ export default function EditBookingModal({
   const now = useServerWallClock(booking.serverNow);
   const extendOnly = lastCheckInStarted(booking, now);
   const extendOnlyRef = useRef(extendOnly);
-  extendOnlyRef.current = extendOnly;
+  // Kept in step from an effect, not written during render: the ref is
+  // initialised with the first value, and the one-off load below runs after
+  // this — so it reads what was true when the dialog opened either way.
+  useEffect(() => {
+    extendOnlyRef.current = extendOnly;
+  }, [extendOnly]);
 
   // --- What the guest has chosen ---
   const [picked, setPicked] = useState<string[]>([]);
+  // Services the guest is DROPPING. Its own state, and never mixed into the
+  // total above: one is money going out and the other money coming back, and a
+  // single net figure would hide both.
+  const [dropping, setDropping] = useState<string[]>([]);
   // The date the guest tapped on the calendar. Everything between the stay and
   // it is what gets added — see `selection` below, which is where that is
   // worked out; this is only the one date they chose.
@@ -223,6 +242,12 @@ export default function EditBookingModal({
     key: string;
     quote: ChangesQuote | null;
   } | null>(null);
+  // And the same arrangement for the refund, kept apart for the same reason the
+  // choice above is: it is a different act, with a different button.
+  const [refunded, setRefunded] = useState<{
+    key: string;
+    quote: ServiceRemovalQuote | null;
+  } | null>(null);
 
   // Body scroll lock + Escape to close, matching the cancel dialog.
   useEffect(() => {
@@ -251,7 +276,11 @@ export default function EditBookingModal({
         const next = await fetchBookingEditOptions(booking.id);
         if (!live) return;
         setOptions(next);
-        setTab(next.canAddServices && !extendOnlyRef.current ? "services" : "nights");
+        setTab(
+          (next.canAddServices || next.canRemoveServices) && !extendOnlyRef.current
+            ? "services"
+            : "nights"
+        );
         // Paying with the card already on file is the default, and the only
         // option worth defaulting to — but a booking without one has to choose.
         setUseSaved(!!next.savedPaymentMethod);
@@ -321,15 +350,19 @@ export default function EditBookingModal({
    * tapped backwards — and reaches the date they chose, taking every free night
    * in between with it.
    *
-   * Nights somebody else holds inside that stretch are simply left out. They
-   * show as taken, they are not selected, and the server skips them too: the
-   * stay extends around them and the guest checks out and back in, which is the
-   * same bargain checkout strikes on a range with a clash in the middle.
+   * Two kinds of night inside that stretch are left out, and for the same
+   * reason — neither is what "until here" asked for. Nights somebody else holds
+   * are not the guest's to buy. Nights the guest THEMSELVES gave back are not
+   * being asked for either: dropping them was a decision, and a run reaching
+   * past them must not quietly undo it. Both show unselected, and the server
+   * leaves both out too — the stay extends around them and the guest checks out
+   * and back in, the same bargain checkout strikes on a range with a clash in
+   * the middle. A given-back night comes back one tap at a time (see `refill`).
    *
    * `from`/`to` are the SPAN — what the server is asked about, so a first night
-   * that happens to be taken can still be skipped rather than making the whole
-   * request look detached from the stay. `days` are the nights actually being
-   * bought, which is what the calendar lights up.
+   * that happens to be taken or given back can still be passed over rather than
+   * making the whole request look detached from the stay. `days` are the nights
+   * actually being bought, which is what the calendar lights up.
    */
   const selection = useMemo(() => {
     const nights = options?.ownNights ?? [];
@@ -347,21 +380,22 @@ export default function EditBookingModal({
     return {
       from,
       to,
-      // A night the guest gave back is free like any other, so a range reaching
-      // across one takes it: the range has to JOIN the stay, and a hole punched
-      // in it where a given-back night sits would leave the rest detached. They
-      // are only picked ONE AT A TIME when no range is reaching them, which is
-      // every given-back night in the middle of a stay.
-      days: daysInclusive(from, to).filter((d) => {
-        const state = dayState(d);
-        return state === "free" || state === "given";
-      }),
+      // A night the guest GAVE BACK is never swept up by the run, however far
+      // the run reaches over it. Cancelling it was a decision of its own, and
+      // taking it back has to be one too — "extend me up to here" says where the
+      // stay now ends, not that the nights dropped along the way are wanted
+      // again. So it is passed over exactly as a night somebody else holds is,
+      // and the only way it comes back is a tap on the night itself. The range
+      // still JOINS the stay: `from`/`to` are the span, and the server measures
+      // the join on those bounds, so a hole in the middle detaches nothing.
+      days: daysInclusive(from, to).filter((d) => dayState(d) === "free"),
     };
   }, [target, options, dayState]);
 
-  // The range's own nights, and then everything being bought: the range plus the
-  // given-back nights reclaimed one by one. Two gestures, one purchase.
-  const ranged = useMemo(() => new Set(selection.days), [selection]);
+  // Everything being bought: the range plus the given-back nights reclaimed one
+  // by one. Two gestures that never overlap — the range holds only free nights,
+  // `refill` only given-back ones — so this is a plain concatenation and one
+  // purchase.
   const nights = useMemo(
     () => [...new Set([...selection.days, ...refill])].sort(),
     [selection.days, refill]
@@ -377,9 +411,9 @@ export default function EditBookingModal({
   // buying, only which half of it they're looking at.
   const servicesKey = picked.join(",");
   const nightsKey = checkIn && checkOut ? `${checkIn}:${checkOut}` : "";
-  // The reclaimed nights the range doesn't already cover — what the server has
-  // to be told about separately.
-  const extraKey = refill.filter((d) => !ranged.has(d)).sort().join(",");
+  // The reclaimed nights, which the range never covers — the server has to be
+  // told about each of them by name, because a range would not take them.
+  const extraKey = [...refill].sort().join(",");
   const choiceKey = `${servicesKey}|${nightsKey}|${extraKey}`;
   const chose = servicesKey !== "" || nightsKey !== "" || extraKey !== "";
 
@@ -411,6 +445,30 @@ export default function EditBookingModal({
     };
   }, [booking.id, choiceKey, chose]);
 
+  // The refund, priced the same way and against its own key: the server decides
+  // which nights of a service are still ahead of the guest, and that answer
+  // moves with its clock, not with anything this page could work out.
+  const dropKey = [...dropping].sort().join(",");
+  useEffect(() => {
+    if (!dropKey) return;
+    let live = true;
+    const timer = setTimeout(async () => {
+      try {
+        const quote = await fetchServiceRemovalQuote(booking.id, dropKey.split(","));
+        if (live) setRefunded({ key: dropKey, quote });
+      } catch (e) {
+        if (live) {
+          setRefunded({ key: dropKey, quote: null });
+          setError(e instanceof Error ? e.message : "Could not price that refund.");
+        }
+      }
+    }, 200);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [booking.id, dropKey]);
+
   const quote = priced?.key === choiceKey ? priced?.quote ?? null : null;
   // Nights being bought in this same breath. A service picked alongside them
   // runs over them too — the server prices it that way (see quote_services'
@@ -426,11 +484,22 @@ export default function EditBookingModal({
   const amount = quote?.allowed ? quote.amount : 0;
   const ready = !!quote?.allowed && !quoting;
 
+  const refundQuote = refunded?.key === dropKey ? refunded?.quote ?? null : null;
+  const refunding = !!dropKey && !refundQuote;
+  const refundAmount = refundQuote?.allowed ? refundQuote.amount : 0;
+
   // --- Choosing ---
 
   const toggleService = useCallback((name: string) => {
     setError("");
     setPicked((prev) =>
+      prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]
+    );
+  }, []);
+
+  const toggleDrop = useCallback((name: string) => {
+    setError("");
+    setDropping((prev) =>
       prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]
     );
   }, []);
@@ -473,12 +542,9 @@ export default function EditBookingModal({
         return;
       }
       if (kind === "given") {
-        // Already swept up by the run the guest is extending over — toggling it
-        // here would change nothing, so say that instead of doing nothing.
-        if (ranged.has(day)) {
-          setNote(`${prettyDate(day)} is already coming back with your new nights.`);
-          return;
-        }
+        // The only gesture that reclaims one. A run extending over this night
+        // deliberately leaves it alone (see `selection`), so this tap is never
+        // a no-op and never contradicts the range.
         setRefill((prev) =>
           prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]
         );
@@ -492,7 +558,7 @@ export default function EditBookingModal({
       setNote("");
       setTarget((prev) => (prev === day ? "" : day));
     },
-    [ranged, refill]
+    [refill]
   );
 
   // --- Paying ---
@@ -553,7 +619,7 @@ export default function EditBookingModal({
         checkIn,
         checkOut,
         payment(),
-        refill.filter((d) => !ranged.has(d))
+        refill
       );
       // One line for one purchase, however many halves it had.
       const nights = nightsQuote?.nightsCount ?? 0;
@@ -568,10 +634,49 @@ export default function EditBookingModal({
     }
   }
 
+  /**
+   * Hand the chosen services back and take the refund.
+   *
+   * No payment step, because nothing is being paid: the money goes back the way
+   * it came. Re-decided by the server as the button is pressed — a night whose
+   * check-in hour passed while this dialog was open is no longer refundable,
+   * and it is the server's clock that says so.
+   */
+  async function refund() {
+    if (busy || !refundQuote?.allowed) return;
+    setBusy(true);
+    setError("");
+    try {
+      const names = refundQuote.services.map((s) => s.name);
+      const updated = await removeBookingServices(booking.id, names);
+      onUpdated(
+        updated,
+        `${names.join(", ")} removed — ${money(refundQuote.amount)} refunded.`
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "That refund could not be made.");
+      setBusy(false);
+    }
+  }
+
   if (typeof document === "undefined") return null;
 
   const canServices = !!options?.canAddServices;
+  const canRemove = !!options?.canRemoveServices;
+  // The tab opens if EITHER list has something in it — a guest with every
+  // service the villa offers can still drop one, and a stay with none to drop
+  // can still buy one.
+  const canServicesTab = canServices || canRemove;
   const canNights = !!options?.canAddNights;
+  // The services the stay has that CAN'T be dropped: every night of them is
+  // already under way, so there is nothing left to refund. Named rather than
+  // hidden — "why isn't the breakfast in that list?" deserves an answer.
+  const dropNames = new Set(
+    (options?.removableServices ?? []).map((s) => s.name.toLowerCase())
+  );
+  const deliveredServices = (booking.extraServices ?? []).filter(
+    (s) => !s.removed && !dropNames.has(s.name.toLowerCase())
+  );
 
   return createPortal(
     <div
@@ -611,7 +716,7 @@ export default function EditBookingModal({
             {/* Where the guest is in the two steps. Two words and a rule between
                 them — enough to say "there is one more screen after this", which
                 is the only thing a two-step flow has to promise. */}
-            {options && (canServices || canNights) && (
+            {options && (canServicesTab || canNights) && (
               <div className="hidden shrink-0 items-center gap-2 sm:flex">
                 <StepDot label="Choose" done={step === "pay"} active={step === "choose"} />
                 <span className="h-px w-5 bg-line" aria-hidden />
@@ -641,7 +746,7 @@ export default function EditBookingModal({
             </p>
           )}
 
-          {options && !canServices && !canNights && (
+          {options && !canServicesTab && !canNights && (
             <div className="flex px-6 py-10 md:min-h-[418px] md:items-center md:justify-center">
               <p className="max-w-[420px] text-center text-[13.5px] leading-6 text-body">
                 {options.blockedReason ||
@@ -650,7 +755,7 @@ export default function EditBookingModal({
             </div>
           )}
 
-          {options && (canServices || canNights) && (
+          {options && (canServicesTab || canNights) && (
             <>
               {/* Which door. A tab is only ever drawn when it opens onto
                   something: a guest who already has every extra service the
@@ -660,7 +765,7 @@ export default function EditBookingModal({
                   taken away — a strip that disappears is 41px of height the
                   dialog would lose the moment the guest pressed Continue. */}
               <div className="flex gap-1 border-b border-line px-6 pb-3 pt-3.5">
-                {canServices && (
+                {canServicesTab && (
                   <TabButton
                     active={tab === "services"}
                     disabled={step === "pay"}
@@ -669,11 +774,11 @@ export default function EditBookingModal({
                       setError("");
                     }}
                     icon={<Sparkles size={14} aria-hidden />}
-                    label="Add extra services"
-                    // What is picked HERE, shown on the tab — the two halves are
-                    // paid for together, so the one the guest isn't looking at
-                    // must still say that it's in the total.
-                    count={picked.length}
+                    label="Extra services"
+                    // What is chosen HERE, shown on the tab — services bought
+                    // and services dropped alike, so the half the guest isn't
+                    // looking at still says it is waiting on them.
+                    count={picked.length + dropping.length}
                   />
                 )}
                 {canNights && (
@@ -736,37 +841,76 @@ export default function EditBookingModal({
                     />
                   ) : tab === "services" ? (
                     <>
-                      <div className="flex items-baseline justify-between gap-3">
-                        <p className="text-[12.5px] font-semibold uppercase tracking-[0.05em] text-muted">
-                          Add services
-                        </p>
-                        <p className="text-[11.5px] text-muted">
-                          Per night ·{" "}
-                          <span className="font-semibold text-body">
-                            {plural(serviceNights, "night")}
-                          </span>
-                        </p>
-                      </div>
-                      <div className="mt-2.5 grid gap-2 sm:grid-cols-2">
-                        {options.availableServices.map((service) => (
-                          <ServiceChoice
-                            key={service.name}
-                            name={service.name}
-                            price={service.price}
-                            nights={serviceNights}
-                            picked={picked.includes(service.name)}
-                            busy={busy}
-                            onTap={() => toggleService(service.name)}
-                          />
-                        ))}
-                      </div>
-                      {booking.extraServices?.length > 0 && (
+                      {canServices && (
+                        <>
+                          <div className="flex items-baseline justify-between gap-3">
+                            <p className="text-[12.5px] font-semibold uppercase tracking-[0.05em] text-muted">
+                              Add services
+                            </p>
+                            <p className="text-[11.5px] text-muted">
+                              Per night ·{" "}
+                              <span className="font-semibold text-body">
+                                {plural(serviceNights, "night")}
+                              </span>
+                            </p>
+                          </div>
+                          <div className="mt-2.5 grid gap-2 sm:grid-cols-2">
+                            {options.availableServices.map((service) => (
+                              <ServiceChoice
+                                key={service.name}
+                                name={service.name}
+                                price={service.price}
+                                nights={serviceNights}
+                                picked={picked.includes(service.name)}
+                                busy={busy}
+                                onTap={() => toggleService(service.name)}
+                              />
+                            ))}
+                          </div>
+                        </>
+                      )}
+
+                      {/* And the other direction, on the same screen: what the
+                          stay HAS, each with what handing it back is worth. Only
+                          the nights of it that haven't started are in that
+                          figure — the ones already under way were delivered, and
+                          the row says so rather than leaving the guest to work
+                          out why the refund is smaller than the line item. */}
+                      {canRemove && (
+                        <>
+                          <div
+                            className={`flex items-baseline justify-between gap-3 ${
+                              canServices ? "mt-4 border-t border-line pt-3.5" : ""
+                            }`}
+                          >
+                            <p className="text-[12.5px] font-semibold uppercase tracking-[0.05em] text-muted">
+                              Remove services
+                            </p>
+                            <p className="text-[11.5px] text-muted">
+                              Refunded for the nights ahead
+                            </p>
+                          </div>
+                          <div className="mt-2.5 grid gap-2 sm:grid-cols-2">
+                            {options.removableServices.map((service) => (
+                              <ServiceDrop
+                                key={service.name}
+                                service={service}
+                                picked={dropping.includes(service.name)}
+                                busy={busy}
+                                onTap={() => toggleDrop(service.name)}
+                              />
+                            ))}
+                          </div>
+                        </>
+                      )}
+
+                      {deliveredServices.length > 0 && (
                         <p className="mt-3 flex flex-wrap items-center gap-1.5 text-[11.5px] text-muted">
                           <Lock size={11} aria-hidden />
-                          Already yours:
-                          {booking.extraServices.map((s) => (
+                          Already delivered — no refund:
+                          {deliveredServices.map((s, i) => (
                             <span
-                              key={s.name}
+                              key={`${s.name}-${i}`}
                               className="rounded-md border border-line bg-page px-1.5 py-0.5 font-medium text-body"
                             >
                               {s.name}
@@ -813,14 +957,53 @@ export default function EditBookingModal({
                     from the picker beside it by a tinted card with its own
                     heading — the money is the answer, not another control. */}
                 <div className="mt-4 md:mt-0 md:w-[286px] md:shrink-0">
-                  <div className="overflow-hidden rounded-xl border border-line bg-gradient-to-b from-page to-white shadow-[0_1px_2px_rgba(20,20,45,0.04)]">
-                    <p className="border-b border-line/70 px-4 py-2 text-[10.5px] font-bold uppercase tracking-[0.07em] text-muted">
-                      What you&apos;re adding
-                    </p>
-                    <div className="px-4 py-3">
-                      <Summary quoting={quoting} quote={quote} chose={chose} />
+                  {/* The charge card is skipped entirely when the guest is only
+                      giving something back: "Pick nights or services to see the
+                      price" above a refund they have already chosen reads as a
+                      screen that hasn't noticed them. */}
+                  {(chose || step === "pay" || !dropKey) && (
+                    <div className="overflow-hidden rounded-xl border border-line bg-gradient-to-b from-page to-white shadow-[0_1px_2px_rgba(20,20,45,0.04)]">
+                      <p className="border-b border-line/70 px-4 py-2 text-[10.5px] font-bold uppercase tracking-[0.07em] text-muted">
+                        What you&apos;re adding
+                      </p>
+                      <div className="px-4 py-3">
+                        <Summary quoting={quoting} quote={quote} chose={chose} />
+                      </div>
                     </div>
-                  </div>
+                  )}
+
+                  {/* And what is coming back. Its own card and its own button:
+                      a refund is settled the moment it is asked for — there is
+                      no card to type in — so it never waits behind the payment
+                      step, and it is never netted off the figure above. */}
+                  {step === "choose" && !!dropKey && (
+                    <div className="mt-3 overflow-hidden rounded-xl border border-green-600/25 bg-green-50/40 shadow-[0_1px_2px_rgba(20,20,45,0.04)]">
+                      <p className="border-b border-green-600/15 px-4 py-2 text-[10.5px] font-bold uppercase tracking-[0.07em] text-green-700">
+                        What you&apos;re removing
+                      </p>
+                      <div className="px-4 py-3">
+                        <RefundSummary quoting={refunding} quote={refundQuote} />
+                        <button
+                          type="button"
+                          onClick={refund}
+                          disabled={busy || refunding || !refundQuote?.allowed}
+                          aria-busy={busy}
+                          className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-green-600/40 bg-white px-4 py-2 text-[12.5px] font-semibold text-green-700 transition-colors hover:border-green-600 hover:bg-green-600 hover:text-white disabled:cursor-not-allowed disabled:border-line disabled:bg-white disabled:text-muted"
+                        >
+                          {busy ? (
+                            <span className="spinner" aria-hidden />
+                          ) : (
+                            <Undo2 size={14} aria-hidden />
+                          )}
+                          {busy
+                            ? "Refunding…"
+                            : refundQuote?.allowed
+                              ? `Remove · refund ${money(refundAmount)}`
+                              : "Remove"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   {error && (
                     <p
@@ -987,7 +1170,7 @@ function ServiceChoice({
       aria-checked={picked}
       disabled={busy}
       onClick={onTap}
-      className={`flex items-center justify-between gap-3 rounded-xl border px-3.5 py-3 text-left transition-colors disabled:opacity-60 ${
+      className={`group flex items-center justify-between gap-3 rounded-xl border px-3.5 py-3 text-left transition-colors disabled:opacity-60 ${
         picked ? "border-primary bg-primary/[0.05]" : "border-line hover:border-primary/40"
       }`}
     >
@@ -997,18 +1180,153 @@ function ServiceChoice({
           {money(price)} × {nights} night{nights === 1 ? "" : "s"}
         </span>
       </span>
-      <span className="flex shrink-0 items-center gap-2">
+      <span className="flex shrink-0 items-center gap-2.5">
         <span className="text-[13px] font-bold text-ink">{money(price * nights)}</span>
+        {/* The verb as a glyph: a plus while it is still an offer, a tick once
+            it has been taken. Same square, same place, as the remove list's own
+            icon — so the two lists are told apart by WHICH icon, not by having
+            to read a label on one of them. */}
         <span
-          className={`flex h-[18px] w-[18px] items-center justify-center rounded border ${
-            picked ? "border-primary bg-primary text-white" : "border-line"
+          className={`flex h-7 w-7 items-center justify-center rounded-lg border transition-colors ${
+            picked
+              ? "border-primary bg-primary text-white"
+              : "border-line text-primary group-hover:border-primary/60"
           }`}
           aria-hidden
         >
-          {picked && <Check size={12} strokeWidth={3} />}
+          {picked ? <Check size={14} strokeWidth={3} /> : <Plus size={14} strokeWidth={2.5} />}
         </span>
       </span>
     </button>
+  );
+}
+
+/**
+ * One extra service the stay HAS, offered back with what handing it back is
+ * worth.
+ *
+ * The figure is only ever the nights that haven't started — the ones already
+ * under way were delivered and stay charged — and when there are any of those
+ * the row says so itself. A guest who reads "$20 × 5" on their booking and
+ * "$60 back" here is owed that sentence.
+ */
+function ServiceDrop({
+  service,
+  picked,
+  busy,
+  onTap,
+}: {
+  service: RemovableService;
+  picked: boolean;
+  busy: boolean;
+  onTap: () => void;
+}) {
+  return (
+    // A pressed BUTTON, not a checkbox. A tick box on this row said "chosen",
+    // which on the grid above means "add to my stay" — the exact opposite of
+    // what pressing it here does. So the icon carries the verb instead: a bin
+    // where the add list has a plus, and an undo arrow once it has been
+    // pressed. The row it acts on is struck through the moment it is, which is
+    // the other half of saying so.
+    <button
+      type="button"
+      aria-pressed={picked}
+      aria-label={picked ? `Keep ${service.name}` : `Remove ${service.name}`}
+      disabled={busy}
+      onClick={onTap}
+      className={`group flex items-center justify-between gap-3 rounded-xl border px-3.5 py-3 text-left transition-colors disabled:opacity-60 ${
+        picked
+          ? "border-red-300 bg-red-50/70"
+          : "border-line hover:border-red-300 hover:bg-red-50/30"
+      }`}
+    >
+      <span className="min-w-0">
+        <span
+          className={`block truncate text-[13px] font-semibold ${
+            picked ? "text-muted line-through" : "text-ink"
+          }`}
+        >
+          {service.name}
+        </span>
+        <span className="mt-0.5 block text-[11.5px] text-muted">
+          {picked ? (
+            <span className="font-semibold text-green-700">
+              {money(service.amount)} coming back
+            </span>
+          ) : (
+            <>
+              {money(service.price)} × {plural(service.nights, "night")} ahead
+              {service.kept > 0 && (
+                <span className="text-muted/80">
+                  {" "}
+                  · {plural(service.kept, "night")} already had
+                </span>
+              )}
+            </>
+          )}
+        </span>
+      </span>
+      {/* The verb as a glyph, in the same square the add list uses — a bin
+          where that one has a plus, and an undo arrow once it has been pressed.
+          Nothing here is ever a tick: a tick on this row would say "chosen",
+          which on the list above means the opposite of what pressing it does. */}
+      <span
+        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border transition-colors ${
+          picked
+            ? "border-line bg-white text-body"
+            : "border-red-200 bg-white text-red-600 group-hover:border-red-400"
+        }`}
+        aria-hidden
+      >
+        {picked ? <Undo2 size={14} /> : <Trash2 size={14} />}
+      </span>
+    </button>
+  );
+}
+
+/** What the removal hands back — the server's own figures, or the reason there
+ *  is nothing to hand back. */
+function RefundSummary({
+  quoting,
+  quote,
+}: {
+  quoting: boolean;
+  quote: ServiceRemovalQuote | null;
+}) {
+  if (quoting) {
+    return (
+      <p className="flex items-center gap-2 text-[12.5px] text-body">
+        <Loader2 size={14} className="animate-spin text-green-700" aria-hidden />
+        Working it out…
+      </p>
+    );
+  }
+  if (!quote) return null;
+  if (!quote.allowed) {
+    return (
+      <p className="flex items-start gap-2 text-[13px] leading-5 text-red-600">
+        <AlertTriangle size={15} className="mt-0.5 shrink-0" aria-hidden />
+        {quote.error}
+      </p>
+    );
+  }
+  return (
+    <div>
+      {quote.services.map((s) => (
+        <Line
+          key={s.name}
+          label={`${s.name} (${money(s.price)} × ${s.nights})`}
+          value={`+${money(s.amount)}`}
+        />
+      ))}
+      <div className="mt-2.5 flex items-center justify-between rounded-lg bg-green-600/[0.09] px-2.5 py-2">
+        <span className="text-[12.5px] font-semibold text-ink">Refund</span>
+        <span className="text-[16px] font-bold tabular-nums text-green-700">
+          {money(quote.amount)}
+        </span>
+      </div>
+      <p className="mt-2 text-[11.5px] leading-[16px] text-muted">{quote.message}</p>
+    </div>
   );
 }
 
@@ -1239,6 +1557,18 @@ function Summary({
         <p className="mt-2 text-[11.5px] leading-[16px] text-red-600">
           {nights.skipped.length} night{nights.skipped.length === 1 ? "" : "s"} taken
           and skipped.
+        </p>
+      )}
+      {/* Nights the guest gave back that the run passed over. Said out loud
+          rather than left as a gap on the calendar: they are the guest's own
+          nights, and "why did those not come back?" deserves an answer at the
+          moment the price is read, with the way back in it. */}
+      {nights && nights.declined.length > 0 && (
+        <p className="mt-2 text-[11.5px] leading-[16px] text-amber-700">
+          {nights.declined.length} night{nights.declined.length === 1 ? "" : "s"} you
+          cancelled {nights.declined.length === 1 ? "was" : "were"} left out — tap
+          {nights.declined.length === 1 ? " it" : " them"} on the calendar to take
+          {nights.declined.length === 1 ? " it" : " them"} back.
         </p>
       )}
       {nights && nights.kept.length > 0 && (
