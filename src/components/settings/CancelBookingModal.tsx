@@ -212,6 +212,24 @@ export default function CancelBookingModal({
     [rows, selected]
   );
   const effectiveSet = useMemo(() => new Set(effective), [effective]);
+  // The chosen nights grouped by the tier each one comes back at, best first.
+  //
+  // Every night is judged on ITS OWN notice — the distance from now to that
+  // night, not to the start of the stay — so a fortnight's booking can hand
+  // back its last night in full and its first at a tenth. One blended
+  // percentage over the lot is then a number that appears nowhere on the
+  // ladder, and the guest cannot check it against the chips they just tapped.
+  // So the bands are listed, and they add up to the figure below them.
+  const bands = useMemo(() => {
+    const counts = new Map<number, number>();
+    for (const row of rows) {
+      if (!row.cancellable || !effectiveSet.has(row.date)) continue;
+      counts.set(row.refundPercentage, (counts.get(row.refundPercentage) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .map(([percentage, nights]) => ({ percentage, nights }))
+      .sort((a, b) => b.percentage - a.percentage);
+  }, [rows, effectiveSet]);
   // Parts this selection would break in two, so the guest is told before the
   // button that they'd be leaving and coming back across the gap.
   const splitParts = useMemo(
@@ -477,11 +495,37 @@ export default function CancelBookingModal({
                     {quote.extrasValue > 0 && (
                       <Line label="Extras (full)" value={`+ ${money(quote.extrasValue)}`} />
                     )}
+                    {/* What the ladder kept. Labelled with a percentage only
+                        when ONE band covers the whole selection — otherwise the
+                        bands are named underneath, each with the nights it
+                        applies to, and the single figure is their sum. */}
                     <Line
-                      label={`Charge (${100 - quote.refundPercentage}%)`}
+                      label={
+                        bands.length === 1
+                          ? `Charge (${100 - bands[0].percentage}%)`
+                          : "Charge"
+                      }
                       value={`− ${money(quote.cancellationFee)}`}
                       tone="red"
                     />
+                    {bands.length > 1 && (
+                      <ul className="mt-0.5 space-y-0.5 border-l border-line pl-2">
+                        {bands.map((band) => (
+                          <li
+                            key={band.percentage}
+                            className="flex items-baseline justify-between gap-2 text-[11px] leading-4 text-muted"
+                          >
+                            <span>
+                              {band.nights} night{band.nights === 1 ? "" : "s"} at{" "}
+                              {band.percentage}% back
+                            </span>
+                            <span className="tabular-nums">
+                              {100 - band.percentage}% charge
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                     <div className="mt-2 flex items-center justify-between border-t border-line pt-2">
                       <span className="text-[13px] font-semibold text-ink">Refund</span>
                       <span

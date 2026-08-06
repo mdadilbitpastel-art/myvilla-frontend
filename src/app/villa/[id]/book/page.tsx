@@ -25,6 +25,7 @@ import {
   firstBookableDate,
   prettyDate,
   prettyTime,
+  serverWallNow,
   addDays as addIsoDays,
   type BookingWindow,
 } from "@/lib/bookingWindow";
@@ -751,17 +752,62 @@ function BookVillaContent() {
   // turned into the date it actually falls on for THESE dates. Every boundary
   // is the check-in hour on its day, which is what the deadline column says —
   // "15 days before check-in" is 2 PM that day, not midnight.
+  //
+  // And only the bands this booking can still reach. A stay booked ten days out
+  // never had a "15 days ahead or more" window: quoting one, dated before the
+  // guest was even on the page, offers a 100% refund by a deadline that went by
+  // last week. So each band is dated, and any whose deadline is already behind
+  // the SERVER's clock — the same clock `createBooking` judges a cancellation
+  // on — is dropped. The band the booking lands in leads the list, and says
+  // plainly that it runs from now.
   const checkInDay = fmtShort(stay.start);
   const checkInAtText = prettyTime(v?.checkInTime || "14:00");
-  const REFUND_LADDER = REFUND_TIERS.map(([hours, refund], i) => {
-    const days = hours / 24;
-    const prevDays = i === 0 ? 0 : REFUND_TIERS[i - 1][0] / 24;
+  // Computed plainly, not memoised: this sits below the page's early returns (a
+  // villa still loading renders none of it), so a hook here would be a hook that
+  // some renders skip.
+  const REFUND_LADDER = (() => {
+    const [ciH, ciM] = (v?.checkInTime || "14:00").split(":").map(Number);
+    // The band's own deadline as wall-clock time: the check-in hour, so many
+    // days before check-in. Compared against a wall-clock `now`, so the two are
+    // read the same way and no time zone comes into it.
+    const deadlineOf = (daysBefore: number) => {
+      const d = addDays(stay.start, -daysBefore);
+      d.setHours(ciH || 0, ciM || 0, 0, 0);
+      return d.getTime();
+    };
     const on = (d: number) => `${checkInAtText} on ${fmtShort(addDays(stay.start, -d))}`;
-    if (i === 0) return { refund, label: `${days} days ahead or more — up to ${on(days)}` };
-    if (hours === 0)
-      return { refund, label: `In the last 24 hours — after ${on(prevDays)}` };
-    return { refund, label: `${days} to ${prevDays} days ahead — until ${on(days)}` };
-  });
+    const rows = REFUND_TIERS.map(([hours, refund], i) => {
+      const days = hours / 24;
+      const prevDays = i === 0 ? 0 : REFUND_TIERS[i - 1][0] / 24;
+      const label =
+        i === 0
+          ? `${days} days ahead or more — up to ${on(days)}`
+          : hours === 0
+            ? `In the last 24 hours — after ${on(prevDays)}`
+            : `${days} to ${prevDays} days ahead — until ${on(days)}`;
+      return {
+        refund,
+        deadline: deadlineOf(days),
+        label,
+        // How the band reads when the booking starts inside it: its far
+        // boundary is in the past, so naming it would date the row before
+        // today. What is true is that it runs from this moment to its deadline.
+        openLabel: i === 0 ? label : `From now until ${on(days)}`,
+      };
+    });
+
+    // Before the window lands — or before the page's own clock has started —
+    // there is nothing to judge against, and the render must not go reading a
+    // clock itself: showing the whole ladder for a moment is better than
+    // filtering it against a time this render invented.
+    const now = nowTick ? serverWallNow(bookingWindow, nowTick.getTime()) : null;
+    if (!now) return rows;
+    const live = rows.filter((r) => r.deadline > now.getTime());
+    // Every band gone means check-in itself has passed — nothing here is
+    // cancellable, and the row under this list says exactly that.
+    if (live.length === 0) return live;
+    return [{ ...live[0], label: live[0].openLabel }, ...live.slice(1)];
+  })();
 
   function validate(): { field: FieldKey; message: string } | null {
     // An open date editor is an unfinished decision: the draft in it is not the
@@ -1515,9 +1561,13 @@ function BookVillaContent() {
             </div>
           </dl>
           <p className="mt-3 text-[13px] leading-6 text-body">
-            You don&apos;t have to give up the whole stay: from My Bookings you can hand
-            back only the nights you no longer need — priced by the same scale — and keep
-            the rest.
+            The deadlines above are your ARRIVAL&apos;s. Every night is judged on its
+            own notice against the same scale, so the later nights of a long stay sit
+            in a kinder band than the first — and give back more.
+            <br />
+            You don&apos;t have to give up the whole stay either: from My Bookings you
+            can hand back only the nights you no longer need, priced night by night, and
+            keep the rest.
             <br />
             {/* TODO: link to the cancellation-policy page once it exists. */}
             <button type="button" className="font-semibold text-ink underline underline-offset-2">

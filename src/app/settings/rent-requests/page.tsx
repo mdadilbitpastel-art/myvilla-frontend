@@ -14,7 +14,7 @@ import {
   RemovedNote,
   REMOVED_IMG,
 } from "@/components/settings/RemovedProperty";
-import CountPill from "@/components/ui/CountPill";
+import SectionTabs from "@/components/ui/SectionTabs";
 import StayPartChips from "@/components/ui/StayPartChips";
 import CheckInCountdownPill from "@/components/ui/CheckInCountdownPill";
 import StayCountdownPill from "@/components/ui/StayCountdownPill";
@@ -31,7 +31,6 @@ import {
   fetchVillaBookings,
   startCheckIn,
   verifyCheckIn,
-  allowLateCheckIn,
   startCheckOut,
   verifyCheckOut,
   checkOutNow,
@@ -100,7 +99,6 @@ function RequestRow({
   expanded,
   onToggle,
   onCheckIn,
-  onAllowLate,
   onCheckOut,
   onRefresh,
   working,
@@ -109,7 +107,6 @@ function RequestRow({
   expanded: boolean;
   onToggle: (id: string) => void;
   onCheckIn: (id: string) => void;
-  onAllowLate: (id: string) => void;
   onCheckOut: (id: string) => void;
   /** Re-read the list — used when a stay's forced check-out falls due, since
    *  the close itself happens on the server's next read of that booking. */
@@ -306,7 +303,6 @@ function RequestRow({
                 booking={req}
                 onCheckIn={onCheckIn}
                 onCheckOut={onCheckOut}
-                onAllowLate={onAllowLate}
                 busy={working}
               />
               <button
@@ -341,7 +337,6 @@ function RequestRow({
               onCollapse={() => onToggle(req.id)}
               onCheckIn={onCheckIn}
               onCheckOut={onCheckOut}
-              onAllowLate={onAllowLate}
               working={working}
             />
           </div>
@@ -385,6 +380,16 @@ export default function RentRequestsPage() {
   // soonest. The history is a record and leads with the most recent.
   const [sort, setSort] = useState<SortKey>("action");
   const [historySort, setHistorySort] = useState<SortKey>("newest");
+  // Which of the two tables is showing. Both are already in hand — the tab
+  // picks which one is drawn, and nothing is fetched to change between them.
+  const [tab, setTab] = useState<"active" | "history">("active");
+
+  // Switching closes whatever row was open: it isn't in the table you just
+  // moved to, and left open it would scroll itself back into view on return.
+  const showTab = useCallback((next: "active" | "history") => {
+    setTab(next);
+    setExpandedId(null);
+  }, []);
 
   // `silent` refreshes are background polls — a transient network blip there
   // must not swap the list the owner is reading for an error banner.
@@ -561,22 +566,10 @@ export default function RentRequestsPage() {
     }
   }, [applyUpdate, pinBookingId, pinMode, toast]);
 
-  // The host taking a no-show guest in anyway. Re-opens the check-in button;
-  // the booking stays a no-show and the refund stays 0%.
-  const doAllowLate = useCallback(
-    async (id: string) => {
-      setWorkingId(id);
-      try {
-        applyUpdate(await allowLateCheckIn(id));
-        toast.success("Late check-in allowed — you can now verify the guest's PIN.");
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not allow a late check-in.");
-      } finally {
-        setWorkingId(null);
-      }
-    },
-    [applyUpdate, toast]
-  );
+  // There was a `doAllowLate` here — the host taking a no-show guest in anyway.
+  // The window closing now cancels the booking for nothing back, so there is no
+  // stay left to take them into and no decision left to offer. The row says
+  // what happened instead of asking the host what to do about it.
 
   // The booking the PIN dialog is about, read back out of the list rather than
   // held separately: a poll or a mutation that refreshes the row must refresh
@@ -616,8 +609,11 @@ export default function RentRequestsPage() {
       const life = lifecycleOf(r);
       const live =
         life === "upcoming" || life === "awaiting_checkin" || life === "staying";
+      // Parts the host still has an arrival to run for — not merely ones left
+      // waiting on one. A window that shut with nobody in it is not a part
+      // still to come (see stayProgress's `dueLater`).
       const partsLeft =
-        !Number.isNaN(listNow) && stayProgress(r, listNow).remaining > 0;
+        !Number.isNaN(listNow) && stayProgress(r, listNow).dueLater > 0;
       if (life !== "cancelled" && (live || partsLeft)) {
         active.push(r);
       } else {
@@ -704,114 +700,142 @@ export default function RentRequestsPage() {
           )}
 
           {/* Header — its own band across the top of the card: the card's top
-              padding is cancelled and an even py-4 takes its place, so the
-              title sits centred in the band like the other account tabs. */}
+              padding is cancelled and an even py-4 takes its place, so what
+              sits in the band is centred in it like the other account tabs. The
+              two tables are tabs in it now — the stays still to come, and the
+              record of the ones that are over — with the sort belonging to
+              whichever is showing on the right. */}
           <div
             className={`-mx-6 flex items-center justify-between border-b border-line px-6 py-4 sm:-mx-8 sm:px-8 ${
               // Only reach up into the card's padding when nothing is above it.
               error ? "" : "-mt-6 sm:-mt-8"
             }`}
           >
-            {/* A booking is confirmed the moment it's made, so these are simply
-                the upcoming stays on the owner's villas — nothing to action. */}
-            <h2 className="flex items-center gap-2 text-[16px] font-bold text-ink">
-              Upcoming Bookings
-              <CountPill value={active.length} />
-            </h2>
-            <SortMenu value={sort} options={ACTION_SORTS} onChange={setSort} />
+            {/* A booking is confirmed the moment it's made, so the first tab is
+                simply the upcoming stays on the owner's villas — nothing to
+                action. The second is what stays on record: finished stays, and
+                the ones that were called off. */}
+            <SectionTabs
+              idPrefix="rent-requests"
+              value={tab}
+              onChange={showTab}
+              tabs={[
+                {
+                  key: "active" as const,
+                  label: "Upcoming Bookings",
+                  shortLabel: "Upcoming",
+                  count: active.length,
+                },
+                {
+                  key: "history" as const,
+                  label: "Booking History",
+                  shortLabel: "History",
+                  count: history.length,
+                },
+              ]}
+            />
+            {tab === "active" ? (
+              <SortMenu value={sort} options={ACTION_SORTS} onChange={setSort} />
+            ) : (
+              <SortMenu value={historySort} options={HISTORY_SORTS} onChange={setHistorySort} />
+            )}
           </div>
 
           {/* Table (scrolls horizontally on small screens) */}
-          <div className="overflow-x-auto">
-          <ColumnHeadings />
+          {tab === "active" && (
+            <div
+              role="tabpanel"
+              id="rent-requests-panel-active"
+              aria-labelledby="rent-requests-tab-active"
+              className="overflow-x-auto"
+            >
+              <ColumnHeadings />
 
-          {/* Rows */}
-          <div className="mt-2.5 space-y-3">
-            {requests === null && error ? (
-              // A failed load is terminal — don't keep a loader spinning under
-              // the error banner.
-              <div className="rounded-lg border border-dashed border-line px-4 py-8 text-center">
-                <p className="text-[13px] text-muted">We couldn&apos;t load your rent requests.</p>
-                <button
-                  type="button"
-                  onClick={retryLoad}
-                  className="mt-4 rounded-lg bg-primary px-5 py-2.5 text-[13px] font-semibold text-white transition-colors hover:bg-primary-dark"
-                >
-                  Try again
-                </button>
-              </div>
-            ) : requests === null ? (
-              <>
-                {Array.from({ length: 3 }, (_, i) => (
-                  <div key={i} className="skeleton h-[48px] min-w-[860px]" />
-                ))}
-              </>
-            ) : active.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-line px-4 py-6 text-center text-[13px] text-muted">
-                No upcoming bookings yet. When someone books one of your villas,
-                it&apos;ll show up here.
-              </div>
-            ) : (
-              active.map((req) => (
-                <RequestRow
-                  key={req.id}
-                  req={req}
-                  expanded={expandedId === req.id}
-                  onToggle={toggleExpand}
-                  onCheckIn={doCheckIn}
-                  onAllowLate={doAllowLate}
-                  onCheckOut={doCheckOut}
-                  onRefresh={refreshNow}
-                  working={workingId === req.id}
-                />
-              ))
-            )}
-          </div>
-          </div>
-
-          {/* Booking history — cancelled and finished stays stay on record here
-              instead of vanishing from the owner's view. */}
-          <div className="mt-9 flex items-center justify-between">
-            <h2 className="flex items-center gap-2 text-[16px] font-bold text-ink">
-              Booking History
-              <CountPill value={history.length} />
-            </h2>
-            <SortMenu value={historySort} options={HISTORY_SORTS} onChange={setHistorySort} />
-          </div>
-
-          <div className="overflow-x-auto">
-            <ColumnHeadings />
-
-            <div className="mt-2.5 space-y-3">
-              {requests === null ? (
-                error ? null : (
+              {/* Rows */}
+              <div className="mt-2.5 space-y-3">
+                {requests === null && error ? (
+                  // A failed load is terminal — don't keep a loader spinning
+                  // under the error banner.
+                  <div className="rounded-lg border border-dashed border-line px-4 py-8 text-center">
+                    <p className="text-[13px] text-muted">We couldn&apos;t load your rent requests.</p>
+                    <button
+                      type="button"
+                      onClick={retryLoad}
+                      className="mt-4 rounded-lg bg-primary px-5 py-2.5 text-[13px] font-semibold text-white transition-colors hover:bg-primary-dark"
+                    >
+                      Try again
+                    </button>
+                  </div>
+                ) : requests === null ? (
                   <>
-                    {Array.from({ length: 2 }, (_, i) => (
+                    {Array.from({ length: 3 }, (_, i) => (
                       <div key={i} className="skeleton h-[48px] min-w-[860px]" />
                     ))}
                   </>
-                )
-              ) : history.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-line px-4 py-6 text-center text-[13px] text-muted">
-                  No past or cancelled bookings.
-                </div>
-              ) : (
-                history.map((req) => (
-                  <RequestRow
-                    key={req.id}
-                    req={req}
-                    expanded={expandedId === req.id}
-                    onToggle={toggleExpand}
-                    onCheckIn={doCheckIn}
-                    onAllowLate={doAllowLate}
-                    onCheckOut={doCheckOut}
-                    onRefresh={refreshNow}
-                    working={workingId === req.id}
-                  />
-                ))
-              )}
+                ) : active.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-line px-4 py-6 text-center text-[13px] text-muted">
+                    No upcoming bookings yet. When someone books one of your villas,
+                    it&apos;ll show up here.
+                  </div>
+                ) : (
+                  active.map((req) => (
+                    <RequestRow
+                      key={req.id}
+                      req={req}
+                      expanded={expandedId === req.id}
+                      onToggle={toggleExpand}
+                      onCheckIn={doCheckIn}
+                      onCheckOut={doCheckOut}
+                      onRefresh={refreshNow}
+                      working={workingId === req.id}
+                    />
+                  ))
+                )}
+              </div>
             </div>
-          </div>
+          )}
+
+          {/* Booking history — cancelled and finished stays stay on record here
+              instead of vanishing from the owner's view. */}
+          {tab === "history" && (
+            <div
+              role="tabpanel"
+              id="rent-requests-panel-history"
+              aria-labelledby="rent-requests-tab-history"
+              className="overflow-x-auto"
+            >
+              <ColumnHeadings />
+
+              <div className="mt-2.5 space-y-3">
+                {requests === null ? (
+                  error ? null : (
+                    <>
+                      {Array.from({ length: 2 }, (_, i) => (
+                        <div key={i} className="skeleton h-[48px] min-w-[860px]" />
+                      ))}
+                    </>
+                  )
+                ) : history.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-line px-4 py-6 text-center text-[13px] text-muted">
+                    No past or cancelled bookings.
+                  </div>
+                ) : (
+                  history.map((req) => (
+                    <RequestRow
+                      key={req.id}
+                      req={req}
+                      expanded={expandedId === req.id}
+                      onToggle={toggleExpand}
+                      onCheckIn={doCheckIn}
+                      onCheckOut={doCheckOut}
+                      onRefresh={refreshNow}
+                      working={workingId === req.id}
+                    />
+                  ))
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

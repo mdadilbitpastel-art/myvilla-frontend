@@ -1159,8 +1159,9 @@ function VillaDetailsStep({
           </div>
 
           {/* How long a late guest can still be let in. Past this the booking
-              becomes a no-show on its own and the check-in button disappears,
-              so it is the host's own call on how much slack to leave. */}
+              cancels itself and the nights go back on this calendar, so it is
+              the host's own call on how long to hold a room for someone who
+              may not be coming. */}
           <div className="mt-4 max-w-[420px]">
             <FieldLabel>Late arrival grace period</FieldLabel>
             <select
@@ -1177,8 +1178,9 @@ function VillaDetailsStep({
               ))}
             </select>
             <p className="mt-1.5 text-[12px] text-muted">
-              How long past your check-in time you can still check a guest in. After
-              that the booking is marked a no-show and no refund is due.
+              How long past your check-in time you can still check a guest in.
+              After that the booking is cancelled as a no-show with no refund,
+              and its remaining nights go straight back on your calendar.
             </p>
           </div>
 

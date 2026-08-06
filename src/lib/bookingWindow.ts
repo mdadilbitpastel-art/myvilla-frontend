@@ -128,6 +128,23 @@ export function slideWindow(w: BookingWindow, nowMs: number = Date.now()): Booki
 }
 
 /**
+ * The moment it is right now on the SERVER's clock, as plain wall-clock time —
+ * the stamp it sent, advanced by how long this page has been open. Null when it
+ * sent none.
+ *
+ * Everything about a booking is judged against this rather than the browser's
+ * clock (see slideWindow), so anything asking "has that hour gone by?" — the
+ * window turning over, a cancellation deadline that has already passed — has to
+ * ask it here to get the same answer the server would give.
+ */
+export function serverWallNow(w: BookingWindow | null, nowMs: number = Date.now()): Date | null {
+  if (!w) return null;
+  const stamped = parseWallClock(w.serverNow);
+  if (!stamped) return null;
+  return new Date(stamped.getTime() + Math.max(0, nowMs - w.fetchedAt));
+}
+
+/**
  * The date it is right now on the SERVER's clock — the day the guest is living
  * in as far as booking is concerned. "" when the stamp is missing.
  *
@@ -135,10 +152,8 @@ export function slideWindow(w: BookingWindow, nowMs: number = Date.now()): Booki
  * everything about the window is judged server-side (see slideWindow).
  */
 export function serverDate(w: BookingWindow | null, nowMs: number = Date.now()): string {
-  if (!w) return "";
-  const stamped = parseWallClock(w.serverNow);
-  if (!stamped) return "";
-  return iso(new Date(stamped.getTime() + Math.max(0, nowMs - w.fetchedAt)));
+  const now = serverWallNow(w, nowMs);
+  return now ? iso(now) : "";
 }
 
 /** Can a stay start on this date? */

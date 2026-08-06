@@ -12,7 +12,7 @@ import BookingDetails from "@/components/settings/BookingDetails";
 import { PropertyLink } from "@/components/settings/RemovedProperty";
 import CancelBookingModal from "@/components/settings/CancelBookingModal";
 import EditBookingModal from "@/components/settings/EditBookingModal";
-import CountPill from "@/components/ui/CountPill";
+import SectionTabs from "@/components/ui/SectionTabs";
 import StayPartChips from "@/components/ui/StayPartChips";
 import CheckInCountdownPill from "@/components/ui/CheckInCountdownPill";
 import StayCountdownPill from "@/components/ui/StayCountdownPill";
@@ -521,136 +521,145 @@ function BookingRow({
           </div>
 
           {/* The foot of the card: what is happening now on the left, what you
-              can do about it on the right. */}
-          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-t border-line bg-page/50 px-4 py-3 sm:px-5">
-            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
-              {/* How long until it starts — the thing this page is opened for
-                  while the stay is still ahead. */}
-              {countdown && (
-                <CheckInCountdownPill
-                  countdown={countdown}
-                  checkIn={booking.checkIn}
-                  role="guest"
-                  variant="text"
-                />
-              )}
-              {/* And once it has started, how much of it is left. */}
-              <StayCountdownPill booking={booking} />
-              {/* The check-out hour has gone by with the stay still open. It
-                  closes itself half an hour later — the guest sees exactly when
-                  their booking stops being live, rather than finding it closed. */}
-              <ForcedCheckOutPill booking={booking} onDue={onRefresh} />
-              {/* And once it has: the guest was not at the door for this
-                  departure and nobody read them a code, so the card has to be
-                  the thing that tells them their stay was closed — in the foot,
-                  where the countdown they last saw stood, without opening
-                  anything. */}
-              <AutoCheckOutNote booking={booking} variant="note" />
+              can do about it on the right — with any full sentence that has to
+              be said sitting on its own line above the pair.
 
-              {/* The stay code, where it can be reached without opening
-                  anything — a code you have to hunt for is a code that expires
-                  first. Green arriving, black leaving: the same pair the host's
-                  dialog uses, so both sides of the conversation are looking at
-                  the same colour. */}
-              {pinMode && (
-                <span
-                  title={`Read this out to your host to be checked ${pinMode}`}
-                  aria-label={`Check-${pinMode} PIN ${pin.split("").join(" ")}`}
-                  className={`inline-flex items-center gap-2 whitespace-nowrap rounded-lg border px-3 py-1 text-[12.5px] font-semibold ${
-                    pinMode === "out"
-                      ? "border-ink/25 bg-ink/[0.06] text-ink"
-                      : "border-[#2f9e44]/30 bg-[#2f9e44]/[0.07] text-[#2f9e44]"
-                  }`}
-                >
-                  <KeyRound size={13} aria-hidden />
-                  PIN
+              A sentence does not belong in that left-hand run of chips: it is
+              wide enough to use up the row on its own, and what it pushes off
+              is the buttons on the right — which land on a second line, at the
+              left, where nothing else on the card sits. So the line above is
+              the sentence's, and the row below stays what it was. */}
+          <div className="flex flex-col gap-3 border-t border-line bg-page/50 px-4 py-3 sm:px-5">
+            {/* The guest was not at the door for this departure and nobody read
+                them a code, so the card has to be the thing that tells them
+                their stay was closed — without opening anything. Renders
+                nothing at all unless the platform really did close it. */}
+            <AutoCheckOutNote booking={booking} variant="note" className="self-start" />
+
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+              <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+                {/* How long until it starts — the thing this page is opened for
+                    while the stay is still ahead. */}
+                {countdown && (
+                  <CheckInCountdownPill
+                    countdown={countdown}
+                    checkIn={booking.checkIn}
+                    role="guest"
+                    variant="text"
+                  />
+                )}
+                {/* And once it has started, how much of it is left. */}
+                <StayCountdownPill booking={booking} />
+                {/* The check-out hour has gone by with the stay still open. It
+                    closes itself half an hour later — the guest sees exactly when
+                    their booking stops being live, rather than finding it closed. */}
+                <ForcedCheckOutPill booking={booking} onDue={onRefresh} />
+
+                {/* The stay code, where it can be reached without opening
+                    anything — a code you have to hunt for is a code that expires
+                    first. Green arriving, black leaving: the same pair the host's
+                    dialog uses, so both sides of the conversation are looking at
+                    the same colour. */}
+                {pinMode && (
                   <span
-                    aria-hidden
-                    className="font-mono text-[15px] font-bold tracking-[0.18em] text-ink"
+                    title={`Read this out to your host to be checked ${pinMode}`}
+                    aria-label={`Check-${pinMode} PIN ${pin.split("").join(" ")}`}
+                    className={`inline-flex items-center gap-2 whitespace-nowrap rounded-lg border px-3 py-1 text-[12.5px] font-semibold ${
+                      pinMode === "out"
+                        ? "border-ink/25 bg-ink/[0.06] text-ink"
+                        : "border-[#2f9e44]/30 bg-[#2f9e44]/[0.07] text-[#2f9e44]"
+                    }`}
                   >
-                    {pin}
+                    <KeyRound size={13} aria-hidden />
+                    PIN
+                    <span
+                      aria-hidden
+                      className="font-mono text-[15px] font-bold tracking-[0.18em] text-ink"
+                    >
+                      {pin}
+                    </span>
                   </span>
-                </span>
-              )}
+                )}
 
-              {/* The stay is over and there is a word to leave about it. */}
-              {!pinMode && booking.reviewRating > 0 && (
-                <span
-                  title={`You rated this stay ${booking.reviewRating} out of 5`}
-                  className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-star/10 px-2.5 py-1.5 text-[12.5px] font-semibold text-[#b8860b]"
-                >
-                  <Star size={13} className="fill-star text-star" aria-hidden />
-                  Rated {booking.reviewRating.toFixed(1)}
-                </span>
-              )}
-              {!pinMode && booking.reviewRating === 0 && booking.canReview && (
+                {/* The stay is over and there is a word to leave about it. */}
+                {!pinMode && booking.reviewRating > 0 && (
+                  <span
+                    title={`You rated this stay ${booking.reviewRating} out of 5`}
+                    className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-star/10 px-2.5 py-1.5 text-[12.5px] font-semibold text-[#b8860b]"
+                  >
+                    <Star size={13} className="fill-star text-star" aria-hidden />
+                    Rated {booking.reviewRating.toFixed(1)}
+                  </span>
+                )}
+                {!pinMode && booking.reviewRating === 0 && booking.canReview && (
+                  <button
+                    type="button"
+                    onClick={() => onToggle(booking.id)}
+                    className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-star/15 px-3 py-1.5 text-[12.5px] font-semibold text-[#b8860b] transition-colors hover:bg-star/25"
+                  >
+                    <Star size={13} className="fill-star text-star" aria-hidden />
+                    Rate stay
+                  </button>
+                )}
+              </div>
+
+              <div className="flex shrink-0 items-center gap-2">
+                {/* Add to the stay. First, so the foot reads in the order a guest
+                    thinks in — more of this trip, then less of it — and only when
+                    there is genuinely something to add. */}
+                {canEdit && (
+                  <button
+                    type="button"
+                    onClick={() => onEdit(booking)}
+                    aria-label={`Add services or nights to ${booking.villaTitle} booking`}
+                    title={
+                      extendOnly
+                        ? "Stay longer — add nights to this booking"
+                        : "Add extra services or more nights"
+                    }
+                    className="inline-flex shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-lg border border-line bg-white px-3 py-[5px] text-[12.5px] font-medium text-body transition-colors hover:border-primary hover:bg-primary/5 hover:text-primary"
+                  >
+                    <Plus size={13} className="shrink-0" aria-hidden />
+                    {extendOnly ? "Extend" : "Edit"}
+                  </button>
+                )}
+
+                {/* The word stays "Cancel" at every width, but what it cancels is
+                    not always the whole stay: once the guest has checked in, only
+                    the nights they haven't reached are still theirs to give back.
+                    The dialog opens on exactly that; the tooltip says so first.
+                    It only turns red under the cursor — late enough to be a
+                    confirmation, early enough to stop a mis-aimed tap. */}
+                {canCancel && (
+                  <button
+                    type="button"
+                    onClick={() => onCancel(booking)}
+                    disabled={cancelling}
+                    aria-busy={cancelling}
+                    aria-label={`Cancel ${booking.villaTitle} booking`}
+                    title={
+                      gate.open
+                        ? "Cancel this booking"
+                        : "Give back the nights you haven't stayed"
+                    }
+                    className="inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-line bg-white px-3.5 py-[5px] text-[12.5px] font-medium text-body transition-colors hover:border-[#e5484d]/60 hover:bg-[#e5484d]/5 hover:text-[#e5484d] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {cancelling && <span className="spinner shrink-0" aria-hidden />}
+                    Cancel
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={() => onToggle(booking.id)}
-                  className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-star/15 px-3 py-1.5 text-[12.5px] font-semibold text-[#b8860b] transition-colors hover:bg-star/25"
+                  aria-expanded={expanded}
+                  aria-label={`View ${booking.villaTitle} booking details`}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/5 px-3 py-[5px] text-[12.5px] font-semibold text-primary transition-colors hover:bg-primary hover:text-white"
                 >
-                  <Star size={13} className="fill-star text-star" aria-hidden />
-                  Rate stay
+                  View details
+                  <ChevronDown size={15} className="shrink-0" aria-hidden />
                 </button>
-              )}
-            </div>
-
-            <div className="flex shrink-0 items-center gap-2">
-              {/* Add to the stay. First, so the foot reads in the order a guest
-                  thinks in — more of this trip, then less of it — and only when
-                  there is genuinely something to add. */}
-              {canEdit && (
-                <button
-                  type="button"
-                  onClick={() => onEdit(booking)}
-                  aria-label={`Add services or nights to ${booking.villaTitle} booking`}
-                  title={
-                    extendOnly
-                      ? "Stay longer — add nights to this booking"
-                      : "Add extra services or more nights"
-                  }
-                  className="inline-flex shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-lg border border-line bg-white px-3 py-[5px] text-[12.5px] font-medium text-body transition-colors hover:border-primary hover:bg-primary/5 hover:text-primary"
-                >
-                  <Plus size={13} className="shrink-0" aria-hidden />
-                  {extendOnly ? "Extend" : "Edit"}
-                </button>
-              )}
-
-              {/* The word stays "Cancel" at every width, but what it cancels is
-                  not always the whole stay: once the guest has checked in, only
-                  the nights they haven't reached are still theirs to give back.
-                  The dialog opens on exactly that; the tooltip says so first.
-                  It only turns red under the cursor — late enough to be a
-                  confirmation, early enough to stop a mis-aimed tap. */}
-              {canCancel && (
-                <button
-                  type="button"
-                  onClick={() => onCancel(booking)}
-                  disabled={cancelling}
-                  aria-busy={cancelling}
-                  aria-label={`Cancel ${booking.villaTitle} booking`}
-                  title={
-                    gate.open
-                      ? "Cancel this booking"
-                      : "Give back the nights you haven't stayed"
-                  }
-                  className="inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-line bg-white px-3.5 py-[5px] text-[12.5px] font-medium text-body transition-colors hover:border-[#e5484d]/60 hover:bg-[#e5484d]/5 hover:text-[#e5484d] disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {cancelling && <span className="spinner shrink-0" aria-hidden />}
-                  Cancel
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={() => onToggle(booking.id)}
-                aria-expanded={expanded}
-                aria-label={`View ${booking.villaTitle} booking details`}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/5 px-3 py-[5px] text-[12.5px] font-semibold text-primary transition-colors hover:bg-primary hover:text-white"
-              >
-                View details
-                <ChevronDown size={15} className="shrink-0" aria-hidden />
-              </button>
+              </div>
             </div>
           </div>
         </div>
@@ -709,7 +718,20 @@ export default function MyBookingsPage() {
   // with the most recent instead.
   const [activeSort, setActiveSort] = useState<SortKey>("action");
   const [historySort, setHistorySort] = useState<SortKey>("newest");
+  // Which of the two lists the card is showing. Both are already loaded — the
+  // tab only decides which one is drawn, so switching costs nothing and asks
+  // the server nothing.
+  const [tab, setTab] = useState<"active" | "history">("active");
   const errorRef = useRef<HTMLDivElement>(null);
+
+  // Changing tabs closes whatever was open. The expanded row is not in the list
+  // you just switched to, and leaving it open means coming back to a card that
+  // silently scrolls itself into view — the panel remembers a state the reader
+  // has moved on from.
+  const showTab = useCallback((next: "active" | "history") => {
+    setTab(next);
+    setExpandedId(null);
+  }, []);
 
   // Set by ?booked=1: the greeting card below only belongs on the trip the
   // user has just paid for, not on every visit to this page.
@@ -794,8 +816,12 @@ export default function MyBookingsPage() {
       const life = lifecycleOf(b);
       const live =
         life === "upcoming" || life === "awaiting_checkin" || life === "staying";
+      // Parts the guest is still DUE for — not merely outstanding. A stay
+      // nobody arrived for waits on an arrival that is never coming, and
+      // counting that as a part still to come kept a no-show in this table for
+      // the rest of its dates (see stayProgress's `dueLater`).
       const partsLeft =
-        !Number.isNaN(listNow) && stayProgress(b, listNow).remaining > 0;
+        !Number.isNaN(listNow) && stayProgress(b, listNow).dueLater > 0;
       if (life !== "cancelled" && (live || partsLeft)) {
         active.push(b);
       } else {
@@ -932,96 +958,123 @@ export default function MyBookingsPage() {
             </div>
           )}
 
-          {/* Active bookings header — sits in its own band across the top of
-              the card, cancelling the card's top padding and carrying an even
-              py-4 of its own, so the title is centred in it rather than pushed
-              down by two paddings stacked. Matches the other account tabs. */}
+          {/* The header band across the top of the card, cancelling the card's
+              top padding and carrying an even py-4 of its own so what sits in it
+              is centred rather than pushed down by two paddings stacked. It
+              holds the two tabs on the left and the sort for whichever list is
+              showing on the right — one sort control, always the one that acts
+              on what you can see. */}
           <div
             className={`-mx-6 flex items-center justify-between border-b border-line px-6 py-4 sm:-mx-8 sm:px-8 ${
               // Only reach up into the card's padding when nothing is above it.
               loadError ? "" : "-mt-6 sm:-mt-8"
             }`}
           >
-            {/* Label first, count as a pill after it — "00 Active Bookings"
-                read as a zero-padded code rather than as a total. */}
-            <h2 className="flex items-center gap-2 text-[16px] font-bold text-ink">
-              Active Bookings
-              <CountPill value={active.length} />
-            </h2>
-            <SortMenu value={activeSort} options={ACTION_SORTS} onChange={setActiveSort} />
+            <SectionTabs
+              idPrefix="bookings"
+              value={tab}
+              onChange={showTab}
+              tabs={[
+                {
+                  key: "active" as const,
+                  label: "Active Bookings",
+                  shortLabel: "Active",
+                  count: active.length,
+                },
+                {
+                  key: "history" as const,
+                  label: "Booking History",
+                  shortLabel: "History",
+                  count: history.length,
+                },
+              ]}
+            />
+            {tab === "active" ? (
+              <SortMenu value={activeSort} options={ACTION_SORTS} onChange={setActiveSort} />
+            ) : (
+              <SortMenu value={historySort} options={HISTORY_SORTS} onChange={setHistorySort} />
+            )}
           </div>
 
-          {justBooked && newest && (
+          {/* The greeting belongs to the stay just paid for, which is an active
+              one — so it rides with that tab rather than sitting over a list of
+              finished stays. */}
+          {tab === "active" && justBooked && newest && (
             <WhatsAppGreeting booking={newest} onDismiss={() => setJustBooked(false)} />
           )}
 
           {/* Active bookings, one card each. No column headings: a card is not
               a row in a table, and every fact on it is labelled where it sits. */}
-          <div>
-            <div className="mt-6 space-y-4">
-              {bookings === null ? (
-                <SkeletonRows count={3} />
-              ) : active.length === 0 ? (
-                <EmptyLine text="No active bookings yet. Book a villa to see it here." />
-              ) : (
-                active.map((b) => (
-                  <BookingRow
-                    key={b.id}
-                    booking={b}
-                    onCancel={onCancel}
-                    onEdit={onEdit}
-                    cancelling={cancelTarget?.id === b.id}
-                    onReview={(rating, comment) => onReview(b, rating, comment)}
-                    reviewBusy={reviewingId === b.id}
-                    expanded={expandedId === b.id}
-                    onToggle={toggleExpand}
-                    onRefresh={refreshNow}
-                  />
-                ))
-              )}
+          {tab === "active" && (
+            <div
+              role="tabpanel"
+              id="bookings-panel-active"
+              aria-labelledby="bookings-tab-active"
+            >
+              <div className="mt-6 space-y-4">
+                {bookings === null ? (
+                  <SkeletonRows count={3} />
+                ) : active.length === 0 ? (
+                  <EmptyLine text="No active bookings yet. Book a villa to see it here." />
+                ) : (
+                  active.map((b) => (
+                    <BookingRow
+                      key={b.id}
+                      booking={b}
+                      onCancel={onCancel}
+                      onEdit={onEdit}
+                      cancelling={cancelTarget?.id === b.id}
+                      onReview={(rating, comment) => onReview(b, rating, comment)}
+                      reviewBusy={reviewingId === b.id}
+                      expanded={expandedId === b.id}
+                      onToggle={toggleExpand}
+                      onRefresh={refreshNow}
+                    />
+                  ))
+                )}
+              </div>
             </div>
-          </div>
-
-          {/* Booking history header */}
-          <div className="mt-9 flex items-center justify-between">
-            <h2 className="flex items-center gap-2 text-[16px] font-bold text-ink">
-              Booking History
-              <CountPill value={history.length} />
-            </h2>
-            <SortMenu value={historySort} options={HISTORY_SORTS} onChange={setHistorySort} />
-          </div>
+          )}
 
           {/* History — the same cards, for stays that are over. */}
-          <div>
-            <div className="mt-6 space-y-4">
-              {bookings === null ? (
-                <SkeletonRows count={2} />
-              ) : history.length === 0 ? (
-                <EmptyLine text="No past bookings." />
-              ) : (
-                history.map((b) => (
-                  <BookingRow
-                    key={b.id}
-                    booking={b}
-                    onCancel={onCancel}
-                    onEdit={onEdit}
-                    cancelling={false}
-                    onReview={(rating, comment) => onReview(b, rating, comment)}
-                    reviewBusy={reviewingId === b.id}
-                    expanded={expandedId === b.id}
-                    onToggle={toggleExpand}
-                    onRefresh={refreshNow}
-                  />
-                ))
-              )}
+          {tab === "history" && (
+            <div
+              role="tabpanel"
+              id="bookings-panel-history"
+              aria-labelledby="bookings-tab-history"
+            >
+              <div className="mt-6 space-y-4">
+                {bookings === null ? (
+                  <SkeletonRows count={2} />
+                ) : history.length === 0 ? (
+                  <EmptyLine text="No past bookings." />
+                ) : (
+                  history.map((b) => (
+                    <BookingRow
+                      key={b.id}
+                      booking={b}
+                      onCancel={onCancel}
+                      onEdit={onEdit}
+                      cancelling={false}
+                      onReview={(rating, comment) => onReview(b, rating, comment)}
+                      reviewBusy={reviewingId === b.id}
+                      expanded={expandedId === b.id}
+                      onToggle={toggleExpand}
+                      onRefresh={refreshNow}
+                    />
+                  ))
+                )}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Note */}
           <p className="mt-6 max-w-[720px] text-[11px] leading-5 text-muted">
-            Note: Cancelling a booking may carry a charge, and the charge grows as the
-            check-in date approaches — free 15 days or more ahead, 10% inside 15 days, 25%
-            inside 7 days, 50% inside 3 days, and nothing refunded in the last 24 hours.
+            Note: Cancelling carries a charge that grows as the night approaches, and
+            EVERY NIGHT is judged on its own notice — free 15 days or more ahead, a 10%
+            charge inside 15 days, 50% inside 7 days, 90% inside 3 days, and nothing
+            refunded in the last 24 hours. So a long stay can hand back its later nights
+            in full while its first few cost something.
             You can also hand back only some of your nights and keep the rest of the stay.
             Once a stay has started, the night you&apos;re in is yours, but the nights after
             it can still be given up — they go back on the calendar, with no refund.

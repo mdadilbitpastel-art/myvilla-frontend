@@ -50,9 +50,12 @@ type BookingLike = {
   // Scheduled wall-clock start/end, for the live "how late is this?" reading.
   checkInAt?: string;
   checkOutAt?: string;
-  // When the check-in window shuts, and the host's decision to reopen it.
+  // When the check-in window shuts. Nothing reopens it: the booking is
+  // cancelled as it closes (see the no-show branch in `checkInGate`).
   graceEndsAt?: string;
-  lateCheckInAllowed?: boolean;
+  // Set when that is what happened, which is how a cancelled booking is told
+  // apart from one somebody actually called off.
+  noShowAt?: string;
   // The server's own reading of the check-in button, at the moment the payload
   // was built. `checkInGate` re-derives it live from the clock instead of
   // trusting it forever, but falls back to it when the times are missing.
@@ -121,8 +124,10 @@ export function bookingStatus(b: BookingLike, nowMs?: number): BookingStatus {
       };
     }
   }
-  if (life === "no_show" && b.lateCheckInAllowed) {
-    return { label: "No show · late check-in allowed", tone: "orange" };
+  // A booking that ran out of guest reads as what it is, not as a plain
+  // cancellation: nobody chose this, and both sides are told so on the panel.
+  if (life === "cancelled" && b.noShowAt) {
+    return { label: "No show · cancelled", tone: "red" };
   }
   return STATUS_BY_LIFECYCLE[life];
 }
@@ -571,7 +576,8 @@ export type CheckInTone = "grey" | "green" | "yellow" | "hidden";
 
 export type CheckInGate = {
   /** Is there a check-in button at all? False once the window has shut with
-   *  nobody checked in — the stay is a no-show and the host has to decide. */
+   *  nobody checked in — that cancels the booking, and there is nothing left
+   *  for the host to press. */
   visible: boolean;
   /** May the host press it right now? */
   open: boolean;
@@ -586,17 +592,10 @@ export type CheckInGate = {
   /** Short countdown for inside the button while the window closes, e.g.
    *  "42m left". "" when there's nothing pressing to say. */
   badge: string;
-  /** The window shut without a check-in. The host may still allow a late one. */
+  /** The window shut without a check-in. Nothing follows from it here — the
+   *  server has already cancelled the booking — but the gate still says so, so
+   *  that the button is hidden for the right reason rather than by accident. */
   noShow: boolean;
-  /**
-   * The stay's own check-out has passed with nobody ever checked in — so there
-   * is nothing left to arrive for, and not even the host's late-check-in
-   * decision applies. Distinct from `noShow`, which is true from the moment the
-   * window shuts: both are "hidden" gates, but only one of them is still
-   * offerable. (Mirrors the server, which refuses a late check-in past
-   * `check_out_datetime()` before it ever consults `late_check_in_allowed`.)
-   */
-  stayEnded: boolean;
 };
 
 /**
@@ -638,7 +637,6 @@ export function checkInGate(
     checkInAt?: string;
     checkOutAt?: string;
     graceEndsAt?: string;
-    lateCheckInAllowed?: boolean;
     checkinMessage?: string;
     // Enough of the booking to tell whether it is still live. Only consulted
     // when there is no scheduled check-in hour to reason from — see below.
@@ -663,7 +661,6 @@ export function checkInGate(
     hoursLate: 0,
     badge: "",
     noShow: false,
-    stayEnded: false,
   };
   // No clock yet (first paint, before the list lands) or no scheduled times.
   if (Number.isNaN(nowMs) || Number.isNaN(opensAt)) {
@@ -680,7 +677,6 @@ export function checkInGate(
         open: false,
         tone: "hidden",
         noShow: true,
-        stayEnded: true,
         reason: "This booking is closed — there is no check-in left to take.",
       };
     }
@@ -737,30 +733,15 @@ export function checkInGate(
   // A payload carrying a check-in hour but no check-out hour can't be read that
   // way, so it falls back to the booking's own state: if it has already settled,
   // treat the stay as ended rather than offering a late arrival on it forever.
+  // The window has shut with nobody in it. There is nothing here for the host
+  // to do and nothing to offer them: the server cancels the booking at this
+  // exact moment (Booking.sync_no_show), so the next payload comes back
+  // cancelled — and until it does, the honest thing to draw is no button.
+  //
+  // Whether the stay's own end has passed too used to decide something, because
+  // a late arrival was still offerable inside it. It is not offerable at all
+  // now, so the two only differ in what they say.
   const stayOver = Number.isNaN(stayEndsAt) ? isSettled(b) : nowMs >= stayEndsAt;
-  if (stayOver) {
-    return {
-      ...base,
-      visible: false,
-      open: false,
-      tone: "hidden",
-      hoursLate,
-      noShow: true,
-      stayEnded: true,
-      reason: "The guest never checked in and the stay has now ended.",
-    };
-  }
-
-  // The window has shut but the stay is still running. The host can take the
-  // guest in, but that is now a decision they make rather than the normal flow.
-  if (b.lateCheckInAllowed) {
-    return {
-      ...base,
-      hoursLate,
-      noShow: true,
-      reason: "Late check-in allowed — verify the guest's PIN to check them in.",
-    };
-  }
   return {
     ...base,
     visible: false,
@@ -768,7 +749,9 @@ export function checkInGate(
     tone: "hidden",
     hoursLate,
     noShow: true,
-    reason: "The guest did not check in within the allowed check-in window.",
+    reason: stayOver
+      ? "The guest never checked in and the stay has now ended."
+      : "The guest did not check in before the arrival window closed — this booking has been cancelled.",
   };
 }
 
@@ -801,8 +784,8 @@ export const REFUND_TIERS: ReadonlyArray<
 > = [
   [15 * 24, 100, CANCEL_MSG_FREE],
   [7 * 24, 90, "Cancelling now carries a 10% charge — 90% is refunded."],
-  [3 * 24, 75, "Cancelling now carries a 25% charge — 75% is refunded."],
-  [NO_REFUND_WINDOW_HOURS, 50, "Cancelling now carries a 50% charge — half is refunded."],
+  [3 * 24, 50, "Cancelling now carries a 50% charge — half is refunded."],
+  [NO_REFUND_WINDOW_HOURS, 10, "Cancelling now carries a 90% charge — 10% is refunded."],
   [0, 0, CANCEL_MSG_NO_REFUND],
 ] as const;
 
@@ -947,6 +930,16 @@ export type StayProgress = {
   /** Parts still to come, INCLUDING the one under way. Zero is what makes a
    *  stay settled: nothing left to arrive for, vacate, or wait on. */
   remaining: number;
+  /** Parts the guest is still genuinely DUE for: under way, or yet to open.
+   *
+   *  `remaining` counts a part whose hour has come with nobody arrived for it
+   *  too — which is right for "is anything outstanding?" and wrong for "is this
+   *  booking still live?". A stay nobody turned up for sits in exactly that
+   *  state for the rest of its dates: the window has shut, it is a no-show, and
+   *  counting it as a part still to come kept it in the Active list for days
+   *  under a "No show" label. This is the narrower question, and it is what the
+   *  active/history split asks. */
+  dueLater: number;
   /** 1-based index of the part happening now, 0 when between parts or done.
    *  Only ever set once the check-in PIN has been confirmed. */
   currentIndex: number;
@@ -1009,7 +1002,11 @@ export function stayProgress(
 
   const life = lifecycleOf(b);
   const cancelled = life === "cancelled";
-  const noShow = life === "no_show";
+  // Nobody ever came. Either the lifecycle still says so, or it has already
+  // moved on to `cancelled` because the missed window cancelled the booking —
+  // `noShowAt` is what tells that apart from a stay somebody called off, and
+  // both sides are owed the difference.
+  const noShow = life === "no_show" || (cancelled && !!b.noShowAt);
   // A recorded departure closes the whole stay, however many parts it had.
   const closedOut = life === "completed";
   const clockKnown = !Number.isNaN(nowMs);
@@ -1072,13 +1069,27 @@ export function stayProgress(
     (p) =>
       p.status === "current" || p.status === "upcoming" || p.status === "awaiting"
   ).length;
+  // Deliberately without "awaiting": a part waiting on an arrival that never
+  // came is not a part still to come (see `dueLater`).
+  const dueLater = parts.filter(
+    (p) => p.status === "current" || p.status === "upcoming"
+  ).length;
   const currentIndex = parts.find((p) => p.status === "current")?.index ?? 0;
   const awaitingIndex = parts.find((p) => p.status === "awaiting")?.index ?? 0;
   const total = parts.length;
   const allDone = completed === total && total > 0;
 
   let label = "";
-  if (cancelled) label = "Cancelled";
+  // A cancelled booking has every part cancelled with it — including the one
+  // whose hour is passing right now. There is no "awaiting" left anywhere on
+  // it: nobody is due, because there is no longer a stay for them to be due
+  // for. Which of the two cancellations it was is worth a word, though.
+  if (cancelled)
+    label = noShow
+      ? total > 1
+        ? `No-show — cancelled, all ${total} parts`
+        : "No-show — cancelled"
+      : "Cancelled";
   else if (missed === total)
     label = total > 1 ? `No-show — all ${total} parts missed` : "No-show";
   else if (allDone) label = `All ${total} parts complete`;
@@ -1110,6 +1121,7 @@ export function stayProgress(
     completed,
     missed,
     remaining,
+    dueLater,
     currentIndex,
     awaitingIndex,
     allDone,

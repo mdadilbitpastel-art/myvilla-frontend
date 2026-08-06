@@ -1019,10 +1019,13 @@ export type Booking = {
   checkinMessage: string;
   /** When the check-in window shuts — naive wall-clock, like checkInAt. */
   graceEndsAt: string;
-  /** Stamped when that window closed with nobody checked in ("" until then),
-   *  and whether the host has since chosen to take the guest in regardless. */
+  /** Stamped when that window closed with nobody checked in ("" until then).
+   *  That same moment cancels the booking, so this is what separates a stay
+   *  nobody called off from one somebody did. */
   noShowAt: string;
-  lateCheckInAllowed: boolean;
+  /** What to say about that, worded for whoever asked — the host reads about
+   *  their calendar, the guest about their money. "" when it isn't one. */
+  noShowMessage: string;
   /** The live check-in PIN. `checkinPin` / `checkinPinExpiresIn` are filled in
    *  for the GUEST alone — the host reading the same booking gets "" and 0, by
    *  design: they have to be told the code. The host's half is the two below. */
@@ -1352,7 +1355,7 @@ const BOOKING_SELECTION = `
                   stayValue cancellationFee refundAmount refundPercentage extrasRefund message createdAt }
   bookingStatus checkinAvailable buttonState buttonVisible
   gracePeriodRemainingMinutes otpRequired checkinMessage graceEndsAt
-  noShowAt lateCheckInAllowed
+  noShowAt noShowMessage
   checkinPin checkinPinExpiresIn checkinPinPending checkinPinAttemptsLeft
   checkoutAvailable checkoutMessage checkoutEarlyNow earlyCheckOut releasedNights
   checkoutOverdue autoCheckOutAt autoCheckOutSecondsLeft forcedCheckOut forcedCheckOutAt
@@ -1654,19 +1657,10 @@ export async function verifyCheckIn(
   return data.verifyCheckIn;
 }
 
-/**
- * Take a no-show guest in anyway. Re-opens the (still PIN-verified) check-in
- * button; the booking stays a no-show on the record and the refund stays 0%.
- */
-export async function allowLateCheckIn(id: string): Promise<Booking> {
-  const data = await gql<{ allowLateCheckIn: Booking }>(
-    `mutation AllowLateCheckIn($id: ID!) {
-       allowLateCheckIn(id: $id) { ${BOOKING_SELECTION} }
-     }`,
-    { id }
-  );
-  return data.allowLateCheckIn;
-}
+/* There was an `allowLateCheckIn` here — the host taking a no-show guest in
+ * anyway. The mutation behind it is gone: a missed arrival window now cancels
+ * the booking outright, so there is no stay left to take anybody into, and the
+ * nights are already back on the host's calendar for somebody who will come. */
 
 /**
  * Host-side check-out, step 1 — the mirror of `startCheckIn`.

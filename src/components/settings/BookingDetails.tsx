@@ -302,14 +302,11 @@ export function StayActionButton({
   booking,
   onCheckIn,
   onCheckOut,
-  onAllowLate,
   busy,
 }: {
   booking: Booking;
   onCheckIn: (id: string) => void;
   onCheckOut: (id: string) => void;
-  /** Take a no-show guest in anyway. Omit to leave a no-show with no action. */
-  onAllowLate?: (id: string) => void;
   busy: boolean;
 }) {
   // The server's clock, ticking — never the browser's. The button opens at an
@@ -335,8 +332,7 @@ export function StayActionButton({
   }, [tip]);
 
   // Over and done with — checked out or cancelled. There is no arrival left to
-  // take and no departure left to close, so this renders nothing at all: not the
-  // green button, and not the "Allow late check-in" one below it either.
+  // take and no departure left to close, so this renders nothing at all.
   if (bookingClosed(booking)) return null;
 
   const gate = checkInGate(booking, now);
@@ -344,27 +340,13 @@ export function StayActionButton({
   if (action !== "check_in" && action !== "check_out") return null;
 
   const isIn = action === "check_in";
-  // The window has shut with nobody checked in: the ordinary check-in button is
-  // gone. The stay is a no-show, and taking the guest in is now a deliberate
-  // decision — offered as its own quieter action, never as the default one.
-  if (isIn && !gate.visible) {
-    // Past the stay's own check-out, there is no arrival left to allow — the
-    // server refuses it, so the button would only ever produce an error.
-    if (!onAllowLate || gate.stayEnded) return null;
-    return (
-      <button
-        type="button"
-        disabled={busy}
-        aria-busy={busy}
-        title={gate.reason}
-        onClick={() => onAllowLate(booking.id)}
-        className="inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-[#e8912a] px-3 py-[5px] text-[12.5px] font-semibold text-[#b26a10] transition-colors hover:bg-[#e8912a]/10 disabled:cursor-not-allowed disabled:opacity-60"
-      >
-        {busy ? <span className="spinner" aria-hidden /> : <Clock size={14} aria-hidden />}
-        Allow late check-in
-      </button>
-    );
-  }
+  // The window has shut with nobody checked in, and that ENDS the booking: the
+  // server cancels it outright for nothing back (Booking.sync_no_show). So
+  // there is no action here — not check-in, and not "take them in anyway"
+  // either. A button offering the host that decision was offering one they no
+  // longer have, and while it stood the villa stayed off the market waiting on
+  // it. What happened is SAID instead, on the panel — see `NoShowNote`.
+  if (isIn && !gate.visible) return null;
 
   // Check-out keeps its one look — black, the colour its PIN dialog and the
   // guest's departure code carry. Blue put it in the same family as every link
@@ -454,6 +436,36 @@ export function StayActionButton({
         </span>
       )}
     </span>
+  );
+}
+
+/**
+ * The strip that explains a booking nobody turned up for.
+ *
+ * Its own component and not a variant of `RemovedNote`, because the two say
+ * opposite things: a removed listing ends with "this booking is unaffected",
+ * and this one IS the booking being affected. Red rather than grey for the same
+ * reason — neither side should have to read the sentence to know which of the
+ * two they are looking at.
+ *
+ * `message` arrives already worded for the reader (Booking.no_show_message on
+ * the server), so nothing here decides what it says. What it adds is WHEN,
+ * which is the first thing either of them asks: the guest wants the hour they
+ * missed, the host wants to know how long the villa has been free again.
+ */
+function NoShowNote({ message, at }: { message: string; at?: string }) {
+  if (!message) return null;
+  const when = fmtDateTime(at || "");
+  return (
+    <div className="flex items-start gap-2 rounded-xl bg-red-50 px-3 py-2.5 text-[12.5px] leading-5 text-body">
+      <AlertTriangle size={14} className="mt-0.5 shrink-0 text-red-500" aria-hidden />
+      <p>
+        <span className="font-semibold text-red-700">{message}</span>
+        {when && (
+          <span className="text-muted"> The arrival window closed on {when}.</span>
+        )}
+      </p>
+    </div>
   );
 }
 
@@ -664,7 +676,6 @@ export default function BookingDetails({
   onCollapse,
   onCheckIn,
   onCheckOut,
-  onAllowLate,
   working = false,
   onCancel,
   cancelling = false,
@@ -676,7 +687,6 @@ export default function BookingDetails({
   onCollapse?: () => void;
   onCheckIn?: (id: string) => void;
   onCheckOut?: (id: string) => void;
-  onAllowLate?: (id: string) => void;
   working?: boolean;
   // Guest side: cancel this booking. Rendered at the foot of the expanded
   // panel when provided — never in its header.
@@ -1005,7 +1015,6 @@ export default function BookingDetails({
               booking={booking}
               onCheckIn={onCheckIn}
               onCheckOut={onCheckOut}
-              onAllowLate={onAllowLate}
               busy={working}
             />
           )}
@@ -1107,6 +1116,16 @@ export default function BookingDetails({
           message={booking.villaRemovedMessage}
           at={booking.villaRemovedAt}
         />
+      )}
+
+      {/* Nobody came. Shown to BOTH sides, and it has to be — this is the one
+          cancellation neither of them made, so a bare "Cancelled" pill would
+          leave each wondering what the other did. The sentence itself comes
+          from the server already worded for whoever asked (`noShowMessage`):
+          the host reads about their property and their calendar, the guest
+          about their money. Neither is shown the other's. */}
+      {booking.noShowMessage && (
+        <NoShowNote message={booking.noShowMessage} at={booking.noShowAt} />
       )}
 
       {/* The live stay codes, and only while the stay is live: a code left on a
