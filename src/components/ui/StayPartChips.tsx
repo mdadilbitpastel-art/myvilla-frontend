@@ -17,20 +17,24 @@ function range(checkIn: string, checkOut: string): string {
     : `${a.getDate()} ${month(a)} – ${b.getDate()} ${month(b)}`;
 }
 
-// The amber every LIVE chip is drawn in — the part being stayed in, the one
-// waiting on a check-in, and the one the guest is next due back for.
+// The amber a chip that is WAITING is drawn in — the part whose hour has come
+// with nobody checked in, and the part the guest is next due back for.
 //
-// One colour for all three, and specifically the amber the check-in countdown
-// already uses (#e8912a), because the chip that breathes is always saying the
-// same thing: this is the part happening now. It used to depend on which kind
-// of "now" it was — the current part came out in the brand blue while the other
-// two were amber — so a row of stays blinked in two unrelated colours and the
-// difference read as a difference in urgency rather than in state.
-//
-// What distinguishes the three is what always distinguished them: the mark
-// (filled dot vs hollow) and the tooltip. The colour's job here is only to say
-// "live", so it is the same everywhere it says it.
+// Amber for both, and specifically the amber the check-in countdown already
+// uses (#e8912a), because they are the same fact said twice: an arrival is
+// owed. The current part is NOT one of these — see LIVE_GREEN. It used to be
+// drawn in the brand blue, which matched nothing else on the row.
 const LIVE_AMBER = "border-[#e8912a]/35 bg-[#e8912a]/[0.14] text-[#94560c]";
+
+// And the part the guest is actually IN. Green, because that is what green
+// means everywhere else in this app — the check-in window standing open, the
+// "Staying" status, a stay going right — and an arrival that is owed is a
+// different thing from an arrival that has happened.
+//
+// Deeper than the `completed` green beside it (green-100 over green-50, a
+// darker edge and darker text), so the part being slept in doesn't read as one
+// more part behind us. The marks separate them anyway: ● against ✓.
+const LIVE_GREEN = "border-green-600/45 bg-green-100 text-green-800";
 
 // One look per state. The mark carries the meaning at a glance — a tick is done,
 // a filled dot is happening, a hollow one hasn't started, a cross never will —
@@ -43,7 +47,7 @@ const LOOK: Record<StayPart["status"], { mark: string; cls: string; word: string
   },
   current: {
     mark: "●",
-    cls: LIVE_AMBER,
+    cls: LIVE_GREEN,
     word: "Guest is in this part now",
   },
   awaiting: {
@@ -70,9 +74,8 @@ const LOOK: Record<StayPart["status"], { mark: string; cls: string; word: string
 };
 
 /**
- * The look for the part the guest is next due back for. Same `LIVE_AMBER` as
- * the two states above, for the same reason: this chip breathes, so it is
- * saying "live", and every chip that says that says it in one colour.
+ * The look for the part the guest is next due back for — the same `LIVE_AMBER`
+ * as `awaiting`, and for the same reason: both are an arrival that is owed.
  *
  * It needs naming separately only because it is a state that is NOT live by
  * default — an upcoming part is grey until it turns out to be the next one.
@@ -105,15 +108,23 @@ export default function StayPartChips({
   // — the one they are due back for. Only ever one, and only ever ahead of or
   // under the guest: a strip where three chips breathe at once is a strip nobody
   // can read past, and it would be pointing at nothing in particular.
+  //
+  // `null` when the stay has nothing live left — every part checked out, missed
+  // or cancelled. This used to fall back to the first chip, which is how a
+  // no-showed stay sat in Booking History with part 1 still breathing for
+  // attention: movement is a claim that something is happening, and on a stay
+  // that is over there is nothing left for it to be about.
   const live =
     progress.parts.find(
       (p) => p.status === "current" || p.status === "awaiting"
-    )?.index ?? progress.parts.find((p) => p.status === "upcoming")?.index ?? 0;
+    )?.index ??
+    progress.parts.find((p) => p.status === "upcoming")?.index ??
+    null;
   return (
     <span className={`mt-1 flex flex-wrap items-center gap-1 ${className}`}>
       {progress.parts.map((p) => {
         const look = LOOK[p.status];
-        const isLive = p.index === live;
+        const isLive = live !== null && p.index === live;
         // A part still to come that is the NEXT one takes the arrival colour;
         // the ones behind it in the queue stay grey.
         const cls = isLive && p.status === "upcoming" ? LIVE_UPCOMING : look.cls;

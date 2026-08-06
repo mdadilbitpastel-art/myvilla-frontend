@@ -577,6 +577,63 @@ textarea:disabled {
   animation: softPulse 2.6s ease-in-out infinite;
 }
 
+/* The stay's LAST NIGHT on the "add nights" calendar.
+
+   That square is the landmark the whole grid is read against — the extension
+   starts on the date after it — but it is also the one green square the guest
+   cannot tap, so it sat there being the most important thing on the calendar
+   and the quietest. This is what makes it findable without making it look
+   available: a ring that swells out of the square and fades, over a fill that
+   breathes one shade of green.
+
+   Nothing here is a "blink". The ring lives on a pseudo-element and the fill
+   moves only between green-100 and green-200, so the square never changes size,
+   never moves its neighbours, and never drops out and back in — three squares
+   along in a seven-column grid, a hard flash would be unreadable.
+
+   The ring is deliberately allowed past the square's own edge and into the 3px
+   gap: a halo that stopped at the border would just be a second border. */
+@keyframes lastNightRing {
+  0% {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+  /* Gone well before the cycle ends, so there is a beat of stillness between
+     one ring and the next rather than a continuous churn. */
+  65%,
+  100% {
+    opacity: 0;
+    transform: scale(1.3);
+  }
+}
+
+@keyframes lastNightFill {
+  0%,
+  100% {
+    background-color: rgb(220 252 231); /* green-100 — its resting fill */
+  }
+  50% {
+    background-color: rgb(187 247 208); /* green-200 */
+  }
+}
+
+.last-night {
+  position: relative;
+  animation: lastNightFill 2.4s ease-in-out infinite;
+}
+
+.last-night::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 1.5px solid rgb(22 163 74 / 0.7); /* green-600 */
+  /* The square is not clickable, and the ring overlaps its neighbours as it
+     grows — it must never eat a tap meant for the date beside it. */
+  pointer-events: none;
+  animation: lastNightRing 2.4s ease-out infinite;
+}
+
 /* Hero carousel zoom. A single continuous zoom wraps ALL slides at once, so
    every slide is always at the same scale — a slide swap is a pure crossfade
    with no scale change to perceive. It is strictly one-directional (scale only
@@ -769,6 +826,8 @@ textarea:disabled {
   .hero-zoom,
   .animate-marquee,
   .animate-soft-pulse,
+  .last-night,
+  .last-night::after,
   .img-fade {
     animation: none !important;
     transition: none !important;

@@ -22,6 +22,7 @@ import {
   Sparkles,
   Trash2,
   Undo2,
+  X,
 } from "lucide-react";
 import {
   addToBooking,
@@ -75,8 +76,14 @@ type DayState = "last" | "gone" | "own" | "taken" | "given" | "free" | "outside"
 const DAY_LOOK: Record<DayState, { cls: string; title?: string }> = {
   last: {
     // Not selectable — it is already bought — so it is marked rather than
-    // offered: the deepest green on the grid, ringed, with the date in bold.
-    cls: "cursor-default border-green-600 bg-green-100 font-bold text-green-800 ring-1 ring-inset ring-green-600/35",
+    // offered: the deepest green on the grid, the date in bold, and a ring that
+    // swells out of it and fades (`.last-night`, in globals.css). It is the
+    // square the whole calendar is read against — "the extension starts after
+    // THIS one" — and it was also the one green square that can't be tapped, so
+    // without the movement it was the most important thing on the grid and the
+    // easiest to skim past. The old static inset ring is gone: the animated one
+    // stands where it stood, so the square gains motion, not a third edge.
+    cls: "last-night cursor-default border-green-600 bg-green-100 font-bold text-green-800",
     title: "Your last night — the stay ends here. Add nights from the next date on.",
   },
   gone: {
@@ -723,6 +730,22 @@ export default function EditBookingModal({
                 <StepDot label="Pay" active={step === "pay"} />
               </div>
             )}
+            {/* The way out, in the header, ALWAYS. Everything below it is
+                conditional — the panel can be loading, or refusing, or have
+                nothing to offer — and a dialog whose only exit lives inside one
+                of those branches is a dialog a guest can get stuck in. The
+                backdrop and Escape close it too, but neither is something you
+                can see. Shut only while a payment is actually in flight, which
+                is a second or two with a spinner on it. */}
+            <button
+              type="button"
+              onClick={() => !busy && onClose()}
+              disabled={busy}
+              aria-label="Close"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-page hover:text-ink disabled:opacity-50"
+            >
+              <X size={17} aria-hidden />
+            </button>
           </div>
 
           {/* Every state below stands in the same box. The dialog's height is
@@ -752,6 +775,22 @@ export default function EditBookingModal({
                 {options.blockedReason ||
                   "There is nothing left to add to this booking."}
               </p>
+            </div>
+          )}
+
+          {/* Loading, refused, or nothing left to offer — three states with no
+              controls of their own. They get a footer all the same, so the way
+              out is where the eye already is when a panel turns out to be
+              empty. */}
+          {(!options || !!loadError || !(canServicesTab || canNights)) && (
+            <div className="flex items-center justify-end border-t border-line bg-page/60 px-6 py-3.5">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-lg border border-line bg-white px-4 py-2.5 text-[13px] font-semibold text-body transition-colors hover:border-primary/40 hover:text-ink"
+              >
+                Close
+              </button>
             </div>
           )}
 

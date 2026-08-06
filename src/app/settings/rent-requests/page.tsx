@@ -216,10 +216,15 @@ function RequestRow({
                 counted the party in at the door that count IS who is in the
                 property, so it replaces the booked number rather than sitting
                 beside it. Until then the booking's own is all there is. */}
+            {/* One colour for every row, whichever of the two figures it is.
+                The count used to turn green once the host had counted the party
+                in, which made a column of numbers read as a column of statuses:
+                a green 4 beside a black 4 looked like a difference in the
+                GUESTS, when the only difference is where the number came from.
+                The status column already says where the stay is, and the
+                tooltip below still says which figure this is. */}
             <span
-              className={`flex items-center gap-1.5 text-[13px] font-medium ${GUESTS_INDENT} ${
-                req.checkedInGuests > 0 ? "text-green-600" : "text-body"
-              }`}
+              className={`flex items-center gap-1.5 text-[13px] font-medium text-body ${GUESTS_INDENT}`}
               title={
                 req.checkedInGuests > 0
                   ? `${req.checkedInGuests} guest${
