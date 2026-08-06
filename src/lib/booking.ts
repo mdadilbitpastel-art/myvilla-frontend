@@ -783,8 +783,8 @@ export const REFUND_TIERS: ReadonlyArray<
   readonly [hoursBefore: number, refundPercentage: number, message: string]
 > = [
   [15 * 24, 100, CANCEL_MSG_FREE],
-  [7 * 24, 90, "Cancelling now carries a 10% charge — 90% is refunded."],
-  [3 * 24, 50, "Cancelling now carries a 50% charge — half is refunded."],
+  [7 * 24, 50, "Cancelling now carries a 50% charge — half is refunded."],
+  [3 * 24, 25, "Cancelling now carries a 75% charge — 25% is refunded."],
   [NO_REFUND_WINDOW_HOURS, 10, "Cancelling now carries a 90% charge — 10% is refunded."],
   [0, 0, CANCEL_MSG_NO_REFUND],
 ] as const;

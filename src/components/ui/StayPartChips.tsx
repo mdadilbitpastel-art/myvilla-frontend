@@ -17,6 +17,21 @@ function range(checkIn: string, checkOut: string): string {
     : `${a.getDate()} ${month(a)} – ${b.getDate()} ${month(b)}`;
 }
 
+// The amber every LIVE chip is drawn in — the part being stayed in, the one
+// waiting on a check-in, and the one the guest is next due back for.
+//
+// One colour for all three, and specifically the amber the check-in countdown
+// already uses (#e8912a), because the chip that breathes is always saying the
+// same thing: this is the part happening now. It used to depend on which kind
+// of "now" it was — the current part came out in the brand blue while the other
+// two were amber — so a row of stays blinked in two unrelated colours and the
+// difference read as a difference in urgency rather than in state.
+//
+// What distinguishes the three is what always distinguished them: the mark
+// (filled dot vs hollow) and the tooltip. The colour's job here is only to say
+// "live", so it is the same everywhere it says it.
+const LIVE_AMBER = "border-[#e8912a]/35 bg-[#e8912a]/[0.14] text-[#94560c]";
+
 // One look per state. The mark carries the meaning at a glance — a tick is done,
 // a filled dot is happening, a hollow one hasn't started, a cross never will —
 // and the colour only reinforces it, so the strip still reads in grayscale.
@@ -28,12 +43,12 @@ const LOOK: Record<StayPart["status"], { mark: string; cls: string; word: string
   },
   current: {
     mark: "●",
-    cls: "border-primary/25 bg-primary/10 text-primary",
+    cls: LIVE_AMBER,
     word: "Guest is in this part now",
   },
   awaiting: {
     mark: "●",
-    cls: "border-amber-200 bg-amber-50 text-amber-800",
+    cls: LIVE_AMBER,
     word: "Check-in not confirmed yet",
   },
   upcoming: {
@@ -55,16 +70,17 @@ const LOOK: Record<StayPart["status"], { mark: string; cls: string; word: string
 };
 
 /**
- * The look for the part the guest is next due back for — the one chip in the
- * strip that breathes.
+ * The look for the part the guest is next due back for. Same `LIVE_AMBER` as
+ * the two states above, for the same reason: this chip breathes, so it is
+ * saying "live", and every chip that says that says it in one colour.
  *
- * Amber, and specifically the amber the check-in countdown is drawn in
- * (#e8912a), because it is the same fact said a second way: this is the arrival
- * that is coming. Left at the ordinary "still to come" grey, the one chip
- * pulsing for attention was also the palest thing on the row — movement saying
- * "look here" and colour saying "nothing to see".
+ * It needs naming separately only because it is a state that is NOT live by
+ * default — an upcoming part is grey until it turns out to be the next one.
+ * Left at that grey, the one chip pulsing for attention was also the palest
+ * thing on the row: movement saying "look here" and colour saying "nothing to
+ * see".
  */
-const LIVE_UPCOMING = "border-[#e8912a]/35 bg-[#e8912a]/[0.14] text-[#94560c]";
+const LIVE_UPCOMING = LIVE_AMBER;
 
 /**
  * The parts of a split stay, one chip each — what the single "1/2 parts done"

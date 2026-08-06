@@ -1326,6 +1326,11 @@ export type NightsCancellationQuote = {
    *  whatever the ladder charges on the stay — already inside `refundAmount`,
    *  named separately so the summary can show why the refund beats the tier. */
   extrasValue: number;
+  /** Of `stayValue`, the platform fee on those nights — kept in full whatever
+   *  the ladder allows, because it bought the booking and the booking
+   *  happened. Already inside `cancellationFee`, named so the summary can show
+   *  why the refund is smaller than the tier alone would give. */
+  serviceFee: number;
   /** The selection is every night still held — a whole-stay cancellation. */
   full: boolean;
   allowed: boolean;
@@ -1433,7 +1438,7 @@ export async function fetchNightsCancellationQuote(
     `query NightsCancellationQuote($id: ID!, $nights: [String!]!) {
        nightsCancellationQuote(id: $id, nights: $nights) {
          nights nightsCount stayValue cancellationFee refundAmount
-         refundPercentage extrasValue full allowed message error
+         refundPercentage extrasValue serviceFee full allowed message error
        }
      }`,
     { id, nights }

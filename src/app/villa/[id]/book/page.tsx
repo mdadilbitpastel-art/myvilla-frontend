@@ -25,11 +25,9 @@ import {
   firstBookableDate,
   prettyDate,
   prettyTime,
-  serverWallNow,
   addDays as addIsoDays,
   type BookingWindow,
 } from "@/lib/bookingWindow";
-import { REFUND_TIERS } from "@/lib/booking";
 import DateField from "@/components/ui/DateField";
 import { villaCover } from "@/lib/home";
 import { computeStayPricing, TAX_RATE } from "@/lib/pricing";
@@ -49,19 +47,14 @@ const COUNTRIES = [
 
 const money = (n: number) => `$${n.toFixed(2)}`;
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// The day of the week an ISO date falls on — "Tue". From a fixed table for the
-// same reason as MONTHS: it must read identically wherever the page renders.
+// The day of the week an ISO date falls on — "Tue". From a fixed table rather
+// than toLocaleDateString, whose output depends on the locale of whoever
+// renders it: it must read identically wherever the page renders.
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 function fmtWeekday(iso: string) {
   const [y, m, d] = iso.split("-").map(Number);
   if (!y) return "";
   return WEEKDAYS[new Date(y, m - 1, d).getDay()];
-}
-// "Feb 01" — spelled out from a fixed table rather than toLocaleDateString,
-// whose output depends on the locale of whoever renders it.
-function fmtShort(d: Date) {
-  return `${MONTHS[d.getMonth()]} ${String(d.getDate()).padStart(2, "0")}`;
 }
 const addDays = (d: Date, n: number) => {
   const out = new Date(d);
@@ -746,68 +739,6 @@ function BookVillaContent() {
     (applied?.code || searchParams.get("coupon")
       ? `&coupon=${encodeURIComponent(applied?.code || searchParams.get("coupon") || "")}`
       : "");
-
-  // The sliding cancellation scale, in this stay's own terms: the server's
-  // ladder (REFUND_TIERS, mirrored in lib/booking) with each band's threshold
-  // turned into the date it actually falls on for THESE dates. Every boundary
-  // is the check-in hour on its day, which is what the deadline column says —
-  // "15 days before check-in" is 2 PM that day, not midnight.
-  //
-  // And only the bands this booking can still reach. A stay booked ten days out
-  // never had a "15 days ahead or more" window: quoting one, dated before the
-  // guest was even on the page, offers a 100% refund by a deadline that went by
-  // last week. So each band is dated, and any whose deadline is already behind
-  // the SERVER's clock — the same clock `createBooking` judges a cancellation
-  // on — is dropped. The band the booking lands in leads the list, and says
-  // plainly that it runs from now.
-  const checkInDay = fmtShort(stay.start);
-  const checkInAtText = prettyTime(v?.checkInTime || "14:00");
-  // Computed plainly, not memoised: this sits below the page's early returns (a
-  // villa still loading renders none of it), so a hook here would be a hook that
-  // some renders skip.
-  const REFUND_LADDER = (() => {
-    const [ciH, ciM] = (v?.checkInTime || "14:00").split(":").map(Number);
-    // The band's own deadline as wall-clock time: the check-in hour, so many
-    // days before check-in. Compared against a wall-clock `now`, so the two are
-    // read the same way and no time zone comes into it.
-    const deadlineOf = (daysBefore: number) => {
-      const d = addDays(stay.start, -daysBefore);
-      d.setHours(ciH || 0, ciM || 0, 0, 0);
-      return d.getTime();
-    };
-    const on = (d: number) => `${checkInAtText} on ${fmtShort(addDays(stay.start, -d))}`;
-    const rows = REFUND_TIERS.map(([hours, refund], i) => {
-      const days = hours / 24;
-      const prevDays = i === 0 ? 0 : REFUND_TIERS[i - 1][0] / 24;
-      const label =
-        i === 0
-          ? `${days} days ahead or more — up to ${on(days)}`
-          : hours === 0
-            ? `In the last 24 hours — after ${on(prevDays)}`
-            : `${days} to ${prevDays} days ahead — until ${on(days)}`;
-      return {
-        refund,
-        deadline: deadlineOf(days),
-        label,
-        // How the band reads when the booking starts inside it: its far
-        // boundary is in the past, so naming it would date the row before
-        // today. What is true is that it runs from this moment to its deadline.
-        openLabel: i === 0 ? label : `From now until ${on(days)}`,
-      };
-    });
-
-    // Before the window lands — or before the page's own clock has started —
-    // there is nothing to judge against, and the render must not go reading a
-    // clock itself: showing the whole ladder for a moment is better than
-    // filtering it against a time this render invented.
-    const now = nowTick ? serverWallNow(bookingWindow, nowTick.getTime()) : null;
-    if (!now) return rows;
-    const live = rows.filter((r) => r.deadline > now.getTime());
-    // Every band gone means check-in itself has passed — nothing here is
-    // cancellable, and the row under this list says exactly that.
-    if (live.length === 0) return live;
-    return [{ ...live[0], label: live[0].openLabel }, ...live.slice(1)];
-  })();
 
   function validate(): { field: FieldKey; message: string } | null {
     // An open date editor is an unfinished decision: the draft in it is not the
@@ -1527,62 +1458,15 @@ function BookVillaContent() {
             </div>
           </div>
 
-          {/* Cancellation policy */}
-          <h2 className="mt-8 text-[15px] font-bold text-ink">Cancellation Policy</h2>
-          <p className="mt-3 text-[13px] leading-6 text-body">
-            What comes back depends on how near the stay is when you cancel — every
-            deadline below is {checkInAtText}, this booking&apos;s own check-in hour.
-          </p>
-          <dl className="mt-2.5 divide-y divide-line overflow-hidden rounded-xl border border-line text-[13px]">
-            {REFUND_LADDER.map((tier) => (
-              <div
-                key={tier.label}
-                className="flex items-baseline justify-between gap-4 px-3.5 py-2"
-              >
-                <dt className="text-body">{tier.label}</dt>
-                <dd
-                  className={`shrink-0 font-semibold ${
-                    tier.refund === 100
-                      ? "text-green-600"
-                      : tier.refund === 0
-                        ? "text-red-600"
-                        : "text-ink"
-                  }`}
-                >
-                  {tier.refund}% refund
-                </dd>
-              </div>
-            ))}
-            <div className="flex items-baseline justify-between gap-4 bg-page px-3.5 py-2">
-              <dt className="text-body">
-                From {checkInAtText} on {checkInDay}
-              </dt>
-              <dd className="shrink-0 font-semibold text-muted">Can no longer be cancelled</dd>
-            </div>
-          </dl>
-          <p className="mt-3 text-[13px] leading-6 text-body">
-            The deadlines above are your ARRIVAL&apos;s. Every night is judged on its
-            own notice against the same scale, so the later nights of a long stay sit
-            in a kinder band than the first — and give back more.
-            <br />
-            You don&apos;t have to give up the whole stay either: from My Bookings you
-            can hand back only the nights you no longer need, priced night by night, and
-            keep the rest.
-            <br />
-            {/* TODO: link to the cancellation-policy page once it exists. */}
-            <button type="button" className="font-semibold text-ink underline underline-offset-2">
-              Learn More
-            </button>
-          </p>
-          <p className="mt-3 text-[13px] leading-6 text-body">
-            Our Extenuating Circumstances policy does not cover travel disruptions caused
-            by COVID-19.
-            <br />
-            {/* TODO: link to the extenuating-circumstances page once it exists. */}
-            <button type="button" className="font-semibold text-ink underline underline-offset-2">
-              Learn More
-            </button>
-          </p>
+          {/* The cancellation ladder used to be spelled out here — the whole
+              banded table, dated against this booking's own check-in hour, plus
+              the extenuating-circumstances note under it. It has gone. What
+              comes back is a fact about a decision the guest is not making on
+              this page: they are buying the stay, and the one figure that
+              matters to them here is what it costs. The terms they are agreeing
+              to are linked below, and the live, dated version — priced against
+              the clock at the moment it is actually being weighed up — is in the
+              Cancel dialog on the booking itself, where it cannot be stale. */}
 
           <hr className="my-5 border-line" />
 

@@ -495,6 +495,17 @@ export default function CancelBookingModal({
                     {quote.extrasValue > 0 && (
                       <Line label="Extras (full)" value={`+ ${money(quote.extrasValue)}`} />
                     )}
+                    {/* And the other way: the platform's fee on those nights is
+                        kept whatever the band allows — it bought the booking,
+                        and the booking happened. Named, because a refund
+                        SMALLER than the percentage suggests is otherwise a
+                        figure the guest cannot check. */}
+                    {quote.serviceFee > 0 && (
+                      <Line
+                        label="Service fee (kept)"
+                        value={`− ${money(quote.serviceFee)}`}
+                      />
+                    )}
                     {/* What the ladder kept. Labelled with a percentage only
                         when ONE band covers the whole selection — otherwise the
                         bands are named underneath, each with the nights it

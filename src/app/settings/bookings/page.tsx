@@ -1071,10 +1071,13 @@ export default function MyBookingsPage() {
           {/* Note */}
           <p className="mt-6 max-w-[720px] text-[11px] leading-5 text-muted">
             Note: Cancelling carries a charge that grows as the night approaches, and
-            EVERY NIGHT is judged on its own notice — free 15 days or more ahead, a 10%
-            charge inside 15 days, 50% inside 7 days, 90% inside 3 days, and nothing
+            EVERY NIGHT is judged on its own notice — free 15 days or more ahead, a 50%
+            charge inside 15 days, 75% inside 7 days, 90% inside 3 days, and nothing
             refunded in the last 24 hours. So a long stay can hand back its later nights
-            in full while its first few cost something.
+            in full while its first few cost something, and that stays true once you have
+            checked in: the night you are in is yours, the ones ahead are still on the
+            scale. Extra services on a cancelled night come back whole; the service fee
+            does not come back at all.
             You can also hand back only some of your nights and keep the rest of the stay.
             Once a stay has started, the night you&apos;re in is yours, but the nights after
             it can still be given up — they go back on the calendar, with no refund.
