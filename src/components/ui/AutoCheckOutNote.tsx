@@ -12,7 +12,13 @@ import type { Booking } from "@/lib/api";
  * them says "Checked out" and nothing says which of those departures nobody
  * actually witnessed. So the fact travels with the row, not only with the
  * panel: a short tag beside the status for the host scanning their history, and
- * a plain sentence on the guest's own card, which is where they find out at all.
+ * a chip on the guest's own card, which is where they find out at all.
+ *
+ * Both variants are one nowrap line. The guest's used to be the full sentence,
+ * and a sentence is wide enough to use up a card's foot on its own — it pushed
+ * the buttons beside it onto a second row, and then off to the left where
+ * nothing else on the card sits. So the fact is a chip like every other chip in
+ * that run, with the sentence itself on hover and for a screen reader.
  *
  * Renders nothing unless the platform really did close the stay.
  */
@@ -33,15 +39,20 @@ export default function AutoCheckOutNote({
   const at = wallTime(booking.forcedCheckOutAt || booking.checkedOutAt);
 
   if (variant === "note") {
+    const full = `You were checked out automatically${
+      at ? ` at ${at}` : ""
+    } — your check-out hour had passed with the stay still open.`;
     return (
       <span
         role="status"
-        className={`inline-flex items-start gap-1.5 rounded-lg bg-ink/[0.05] px-2.5 py-1.5 text-[12.5px] font-medium leading-4 text-body ${className}`}
+        title={full}
+        aria-label={full}
+        className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-ink/[0.05] px-2.5 py-1.5 text-[12.5px] font-semibold text-body ${className}`}
       >
-        <AlertTriangle size={13} className="mt-px shrink-0 text-muted" aria-hidden />
-        <span>
-          You were checked out automatically{at && ` at ${at}`} — your check-out
-          hour had passed with the stay still open.
+        <AlertTriangle size={13} className="shrink-0 text-muted" aria-hidden />
+        <span aria-hidden>
+          Auto check-out
+          {at && <span className="font-medium text-muted"> · {at}</span>}
         </span>
       </span>
     );

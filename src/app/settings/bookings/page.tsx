@@ -521,21 +521,10 @@ function BookingRow({
           </div>
 
           {/* The foot of the card: what is happening now on the left, what you
-              can do about it on the right — with any full sentence that has to
-              be said sitting on its own line above the pair.
-
-              A sentence does not belong in that left-hand run of chips: it is
-              wide enough to use up the row on its own, and what it pushes off
-              is the buttons on the right — which land on a second line, at the
-              left, where nothing else on the card sits. So the line above is
-              the sentence's, and the row below stays what it was. */}
-          <div className="flex flex-col gap-3 border-t border-line bg-page/50 px-4 py-3 sm:px-5">
-            {/* The guest was not at the door for this departure and nobody read
-                them a code, so the card has to be the thing that tells them
-                their stay was closed — without opening anything. Renders
-                nothing at all unless the platform really did close it. */}
-            <AutoCheckOutNote booking={booking} variant="note" className="self-start" />
-
+              can do about it on the right. Everything on the left is a chip —
+              nothing in here is allowed to be a full sentence, because a
+              sentence uses up the row on its own and pushes the buttons off it. */}
+          <div className="border-t border-line bg-page/50 px-4 py-3 sm:px-5">
             <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
               <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
                 {/* How long until it starts — the thing this page is opened for
@@ -554,6 +543,12 @@ function BookingRow({
                     closes itself half an hour later — the guest sees exactly when
                     their booking stops being live, rather than finding it closed. */}
                 <ForcedCheckOutPill booking={booking} onDue={onRefresh} />
+                {/* And what is left once that countdown has run out. The guest
+                    was not at the door for this departure and nobody read them
+                    a code, so the card has to be the thing that tells them the
+                    stay was closed — without opening anything. Renders nothing
+                    at all unless the platform really did close it. */}
+                <AutoCheckOutNote booking={booking} variant="note" />
 
                 {/* The stay code, where it can be reached without opening
                     anything — a code you have to hunt for is a code that expires
